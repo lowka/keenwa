@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
+use std::fmt::Display;
 use std::rc::Rc;
 use std::sync::{Arc, Once};
 
@@ -7,7 +8,7 @@ use crate::catalog::mutable::MutableCatalog;
 use crate::catalog::{CatalogRef, TableBuilder, DEFAULT_SCHEMA};
 use crate::cost::simple::SimpleCostEstimator;
 use crate::datatypes::DataType;
-use crate::memo::{InputNode, MemoExpr, MemoExprFormatter};
+use crate::memo::{InputNode, MemoExpr, MemoExprFormatter, StringMemoFormatter};
 use crate::meta::Metadata;
 use crate::operators::physical::PhysicalExpr;
 use crate::operators::Operator;
@@ -221,11 +222,8 @@ impl ResultCallback for TestResultBuilder {
         let group_id = ctx.group_id();
         let mut buf = String::new();
         buf.push_str(format!("{:02} ", group_id).as_str());
-        let mut formatter = BestExprFormatter {
-            buf: &mut buf,
-            input_index: 0,
-            ctx,
-        };
+        let fmt = StringMemoFormatter::new(&mut buf);
+        let mut formatter = BestExprFormatter::new(fmt, ctx);
         expr.format_expr(&mut formatter);
         let mut content = self.content.borrow_mut();
         content.push_front(buf);
@@ -252,9 +250,23 @@ struct BestExprFormatter<'a, 'c, C>
 where
     C: BestExprContext,
 {
-    buf: &'a mut String,
+    // buf: &'a mut String,
+    fmt: StringMemoFormatter<'a>,
     ctx: &'c C,
     input_index: usize,
+}
+
+impl<'a, 'c, C> BestExprFormatter<'a, 'c, C>
+where
+    C: BestExprContext,
+{
+    fn new(fmt: StringMemoFormatter<'a>, ctx: &'c C) -> Self {
+        BestExprFormatter {
+            fmt,
+            ctx,
+            input_index: 0,
+        }
+    }
 }
 
 impl<'a, 'c, C> MemoExprFormatter for BestExprFormatter<'a, 'c, C>
@@ -262,45 +274,51 @@ where
     C: BestExprContext,
 {
     fn write_name(&mut self, name: &str) {
-        self.buf.push_str(name);
+        self.fmt.write_name(name);
     }
 
     fn write_source(&mut self, source: &str) {
-        self.buf.push(' ');
-        self.buf.push_str(source);
+        self.fmt.write_source(source);
     }
 
     fn write_input<E>(&mut self, _name: &str, _input: &InputNode<E>)
     where
         E: MemoExpr,
     {
-        self.buf.push(' ');
+        self.fmt.push(' ');
 
         let i = self.input_index;
         let input_group_id = self.ctx.input_group_id(i);
         let input_required = self.ctx.input_required(i);
 
         if i == 0 {
-            self.buf.push('[');
+            self.fmt.push('[');
         }
         match input_required.as_option() {
             None | Some(None) => {}
             Some(Some(ordering)) => {
-                self.buf.push_str(format!("ord:{:?}=", ordering.columns()).as_str());
+                self.fmt.push_str(format!("ord:{:?}=", ordering.columns()).as_str());
             }
         }
-        self.buf.push_str(format!("{:02}", input_group_id).as_str());
+        self.fmt.push_str(format!("{:02}", input_group_id).as_str());
 
         self.input_index += 1;
         if self.input_index == self.ctx.inputs_num() {
-            self.buf.push(']');
+            self.fmt.push(']');
         }
     }
 
-    fn write_property(&mut self, name: &str, value: String) {
-        self.buf.push(' ');
-        self.buf.push_str(name);
-        self.buf.push('=');
-        self.buf.push_str(value.as_str());
+    fn write_value<D>(&mut self, name: &str, value: D)
+    where
+        D: Display,
+    {
+        self.fmt.write_value(name, value);
+    }
+
+    fn write_values<D>(&mut self, name: &str, values: &[D])
+    where
+        D: Display,
+    {
+        self.fmt.write_values(name, values);
     }
 }

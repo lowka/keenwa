@@ -716,3 +716,34 @@ fn test_join_associativity_axb_xc() {
 "#,
     );
 }
+
+#[test]
+fn test_enforce_grouping() {
+    let query = LogicalExpr::Aggregate {
+        input: LogicalExpr::Get {
+            source: "A".into(),
+            columns: vec![1, 2],
+        }
+        .into(),
+        aggr_exprs: vec![Expr::Aggregate {
+            func: AggregateFunction::Count,
+            args: vec![Expr::Column(1)],
+            filter: None,
+        }],
+        group_exprs: vec![Expr::Column(2)],
+    }
+    .to_operator();
+
+    let mut tester = OptimizerTester::new();
+    tester.add_rules(|_| vec![Box::new(HashAggregateRule)]);
+
+    tester.set_table_access_cost("A", 100);
+
+    tester.optimize(
+        query,
+        r#"
+01 HashAggregate [00] aggrs=[count(col:1)] groups=[col:2]
+00 Scan A cols=[1, 2]
+"#,
+    );
+}

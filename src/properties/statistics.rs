@@ -38,6 +38,11 @@ impl Statistics {
         Statistics::new(0.0, selectivity)
     }
 
+    /// Creates a new statisticcs with row_count set to the given value.
+    pub fn from_row_count(row_count: f64) -> Self {
+        Statistics::new(row_count, 1.0)
+    }
+
     /// The estimated number of rows returned by an operator.
     pub fn row_count(&self) -> f64 {
         self.row_count
@@ -84,6 +89,14 @@ impl StatisticsBuilder for CatalogStatisticsBuilder {
                 let row_count = selectivity * input_statistics.row_count();
                 Some(Statistics::new(row_count, selectivity))
             }
+            LogicalExpr::Aggregate { group_exprs, .. } => {
+                let max_groups = if group_exprs.is_empty() {
+                    1.0
+                } else {
+                    group_exprs.len() as f64
+                };
+                Some(Statistics::from_row_count(max_groups))
+            }
             LogicalExpr::Join { left, .. } => {
                 let logical = left.attrs().logical();
                 let statistics = logical.statistics().unwrap();
@@ -105,5 +118,78 @@ impl StatisticsBuilder for CatalogStatisticsBuilder {
             }
             LogicalExpr::Expr { .. } => Some(Statistics::new(1.0, 1.0)),
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::catalog::mutable::MutableCatalog;
+    use crate::catalog::TableBuilder;
+    use crate::datatypes::DataType;
+    use crate::operators::expressions::{AggregateFunction, Expr};
+    use crate::operators::logical::LogicalExpr;
+    use crate::properties::statistics::{CatalogStatisticsBuilder, Statistics, StatisticsBuilder};
+    use std::sync::Arc;
+
+    fn new_statistics_builder(tables: Vec<(&str, usize)>) -> impl StatisticsBuilder {
+        let catalog = MutableCatalog::new();
+
+        for (name, row_count) in tables {
+            let table = TableBuilder::new(name)
+                .add_column(format!("{}1", name).as_str(), DataType::Int32)
+                .add_column(format!("{}2", name).as_str(), DataType::Int32)
+                .build();
+
+            catalog.add_table("s", table);
+        }
+
+        CatalogStatisticsBuilder::new(Arc::new(catalog))
+    }
+
+    fn new_aggregate(groups: Vec<Expr>) -> LogicalExpr {
+        LogicalExpr::Aggregate {
+            input: LogicalExpr::Get {
+                source: "A".to_string(),
+                columns: vec![1],
+            }
+            .into(),
+            aggr_exprs: vec![Expr::Aggregate {
+                func: AggregateFunction::Avg,
+                args: vec![Expr::Column(1)],
+                filter: None,
+            }],
+            group_exprs: groups,
+        }
+    }
+
+    #[test]
+    fn test_aggregate_statistics_no_groups() {
+        let statistics_builder = new_statistics_builder(vec![("A", 0)]);
+
+        let aggr = new_aggregate(vec![]);
+        let stats = compute_statistics(&statistics_builder, &aggr, None);
+        expect_statistics(&stats, 1.0, 1.0);
+    }
+
+    #[test]
+    fn test_aggregate_statistics_multiple_groups() {
+        let statistics_builder = new_statistics_builder(vec![("A", 0)]);
+
+        let aggr = new_aggregate(vec![Expr::Column(1), Expr::Column(2)]);
+        let stats = compute_statistics(&statistics_builder, &aggr, None);
+        expect_statistics(&stats, 2.0, 1.0);
+    }
+
+    fn compute_statistics(
+        statistics_builder: &impl StatisticsBuilder,
+        expr: &LogicalExpr,
+        statistics: Option<Statistics>,
+    ) -> Statistics {
+        statistics_builder.build_statistics(expr, statistics.as_ref()).expect("No statistics")
+    }
+
+    fn expect_statistics(statistics: &Statistics, row_count: f64, selectivity: f64) {
+        assert_eq!(statistics.row_count(), row_count, "row_count");
+        assert_eq!(statistics.selectivity(), selectivity, "selectivity");
     }
 }

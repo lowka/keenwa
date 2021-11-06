@@ -20,6 +20,11 @@ pub enum PhysicalExpr {
         input: InputExpr,
         filter: Expr,
     },
+    HashAggregate {
+        input: InputExpr,
+        aggr_exprs: Vec<Expr>,
+        group_exprs: Vec<Expr>,
+    },
     HashJoin {
         left: InputExpr,
         right: InputExpr,
@@ -56,6 +61,9 @@ impl PhysicalExpr {
             PhysicalExpr::Select { input, .. } => {
                 ctx.visit_input(expr_ctx, input);
             }
+            PhysicalExpr::HashAggregate { input, .. } => {
+                ctx.visit_input(expr_ctx, input);
+            }
             PhysicalExpr::HashJoin { left, right, .. } => {
                 ctx.visit_input(expr_ctx, left);
                 ctx.visit_input(expr_ctx, right);
@@ -87,6 +95,18 @@ impl PhysicalExpr {
                 PhysicalExpr::Select {
                     input: inputs.swap_remove(0),
                     filter: filter.clone(),
+                }
+            }
+            PhysicalExpr::HashAggregate {
+                aggr_exprs,
+                group_exprs,
+                ..
+            } => {
+                assert_eq!(1, inputs.len(), "HashAggregate operator expects 1 input but got {:?}", inputs);
+                PhysicalExpr::HashAggregate {
+                    input: inputs.swap_remove(0),
+                    aggr_exprs: aggr_exprs.clone(),
+                    group_exprs: group_exprs.clone(),
                 }
             }
             PhysicalExpr::HashJoin { condition, .. } => {
@@ -154,6 +174,7 @@ impl PhysicalExpr {
             PhysicalExpr::IndexScan { .. } => None,
             PhysicalExpr::Sort { .. } => None,
             PhysicalExpr::Expr { .. } => None,
+            PhysicalExpr::HashAggregate { .. } => None,
         }
     }
 
@@ -171,6 +192,16 @@ impl PhysicalExpr {
                 digest.append_expr_type("p:Select");
                 digest.append_input("input", input);
                 digest.append_value(format!("filter={}", filter).as_str());
+            }
+            PhysicalExpr::HashAggregate {
+                input,
+                aggr_exprs,
+                group_exprs,
+            } => {
+                digest.append_expr_type("p:HashAggregate");
+                digest.append_input("input", input);
+                digest.append_property("aggrs", aggr_exprs);
+                digest.append_property("groups", group_exprs);
             }
             PhysicalExpr::HashJoin { left, right, condition } => {
                 digest.append_expr_type("p:HashJoin");
@@ -214,19 +245,19 @@ impl PhysicalExpr {
             PhysicalExpr::Projection { input, columns } => {
                 f.write_name("Projection");
                 f.write_input("input", input);
-                f.write_property("cols", format!("{:?}", columns))
+                f.write_value("cols", format!("{:?}", columns))
             }
             PhysicalExpr::Select { input, filter } => {
                 f.write_name("Select");
                 f.write_input("input", input);
-                f.write_property("filter", format!("{}", filter))
+                f.write_value("filter", format!("{}", filter))
             }
             PhysicalExpr::HashJoin { left, right, condition } => {
                 f.write_name("HashJoin");
                 f.write_input("left", left);
                 f.write_input("right", right);
                 match condition {
-                    JoinCondition::Using(using) => f.write_property("using", format!("{:?}", using.columns())),
+                    JoinCondition::Using(using) => f.write_value("using", format!("{:?}", using.columns())),
                 }
             }
             PhysicalExpr::MergeSortJoin { left, right, condition } => {
@@ -234,26 +265,36 @@ impl PhysicalExpr {
                 f.write_input("left", left);
                 f.write_input("right", right);
                 match condition {
-                    JoinCondition::Using(using) => f.write_property("using", format!("{:?}", using.columns())),
+                    JoinCondition::Using(using) => f.write_value("using", format!("{:?}", using.columns())),
                 }
             }
             PhysicalExpr::Scan { source, columns } => {
                 f.write_name("Scan");
                 f.write_source(source);
-                f.write_property("cols", format!("{:?}", columns))
+                f.write_value("cols", format!("{:?}", columns))
             }
             PhysicalExpr::IndexScan { source, columns } => {
                 f.write_name("IndexScan");
                 f.write_source(source);
-                f.write_property("cols", format!("{:?}", columns))
+                f.write_value("cols", format!("{:?}", columns))
             }
             PhysicalExpr::Sort { input, ordering } => {
                 f.write_name("Sort");
                 f.write_input("input", input);
-                f.write_property("ord", format!("{:?}", ordering.columns()))
+                f.write_value("ord", format!("{:?}", ordering.columns()))
             }
             PhysicalExpr::Expr { expr } => {
                 f.write_name(format!("Expr {}", expr).as_str());
+            }
+            PhysicalExpr::HashAggregate {
+                input,
+                aggr_exprs,
+                group_exprs,
+            } => {
+                f.write_name("HashAggregate");
+                f.write_input("input", input);
+                f.write_values("aggrs", &aggr_exprs);
+                f.write_values("groups", &group_exprs);
             }
         }
     }

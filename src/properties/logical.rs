@@ -1,4 +1,5 @@
 use crate::meta::ColumnId;
+use crate::operators::expressions::Expr;
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;
 use crate::operators::{InputExpr, OperatorExpr};
@@ -89,6 +90,17 @@ impl LogicalPropertiesBuilder {
                 let empty = Vec::with_capacity(0);
                 collect_columns_from_inputs(vec![input], &empty)
             }
+            LogicalExpr::Aggregate {
+                input,
+                aggr_exprs,
+                group_exprs,
+            } => {
+                let mut required = Vec::new();
+                collect_columns_from_exprs(aggr_exprs, &mut required);
+                // TODO: validate group exprs
+                collect_columns_from_exprs(group_exprs, &mut required);
+                collect_columns_from_inputs(vec![input], &required)
+            }
             LogicalExpr::Join { left, right, condition } => {
                 let required = condition.columns();
                 collect_columns_from_inputs(vec![left, right], required)
@@ -107,6 +119,17 @@ impl LogicalPropertiesBuilder {
             PhysicalExpr::Select { input, .. } => {
                 let empty = Vec::with_capacity(0);
                 collect_columns_from_inputs(vec![input], &empty);
+            }
+            PhysicalExpr::HashAggregate {
+                input,
+                aggr_exprs,
+                group_exprs,
+            } => {
+                let mut required = Vec::new();
+                collect_columns_from_exprs(aggr_exprs, &mut required);
+                // TODO: validate group exprs
+                collect_columns_from_exprs(group_exprs, &mut required);
+                collect_columns_from_inputs(vec![input], &required);
             }
             PhysicalExpr::HashJoin { left, right, condition } => {
                 let required = condition.columns();
@@ -147,4 +170,27 @@ fn collect_columns_from_inputs(inputs: Vec<&InputExpr>, used: &[ColumnId]) -> Ve
     );
 
     columns
+}
+
+fn collect_columns_from_exprs(exprs: &[Expr], columns: &mut Vec<ColumnId>) {
+    for expr in exprs {
+        collect_columns_from_expr(expr, columns);
+    }
+}
+
+fn collect_columns_from_expr(expr: &Expr, columns: &mut Vec<ColumnId>) {
+    match expr {
+        Expr::Column(id) => columns.push(*id),
+        Expr::Scalar(_) => {}
+        Expr::BinaryExpr { lhs, rhs, .. } => {
+            collect_columns_from_expr(lhs, columns);
+            collect_columns_from_expr(rhs, columns);
+        }
+        Expr::Not(expr) => {
+            collect_columns_from_expr(expr, columns);
+        }
+        Expr::Aggregate { args, .. } => {
+            collect_columns_from_exprs(args, columns);
+        }
+    }
 }

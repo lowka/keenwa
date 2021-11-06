@@ -1,4 +1,4 @@
-use crate::memo::{InputNode, MemoExpr, MemoExprCallback, MemoExprFormatter};
+use crate::memo::{InputNode, MemoExpr, MemoExprCallback, MemoExprFormatter, StringMemoFormatter};
 use crate::meta::Metadata;
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;
@@ -10,6 +10,7 @@ use crate::rules::{Rule, RuleContext, RuleId, RuleIterator, RuleResult, RuleSet}
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
 use std::collections::HashMap;
+use std::fmt::Display;
 use std::rc::Rc;
 
 /// Provides methods to test [optimization rules].
@@ -135,7 +136,8 @@ where
 /// ```
 fn format_expr(expr: &Operator) -> String {
     let mut buf = String::new();
-    let mut fmt = FormatHeader { buf: &mut buf };
+    let fmt = StringMemoFormatter::new(&mut buf);
+    let mut fmt = FormatHeader { fmt };
     expr.format_expr(&mut fmt);
 
     let mut fmt = FormatInputs {
@@ -148,17 +150,16 @@ fn format_expr(expr: &Operator) -> String {
 }
 
 struct FormatHeader<'b> {
-    buf: &'b mut String,
+    fmt: StringMemoFormatter<'b>,
 }
 
 impl MemoExprFormatter for FormatHeader<'_> {
     fn write_name(&mut self, name: &str) {
-        self.buf.push_str(name);
+        self.fmt.write_name(name);
     }
 
     fn write_source(&mut self, source: &str) {
-        self.buf.push(' ');
-        self.buf.push_str(source);
+        self.fmt.write_source(source);
     }
 
     fn write_input<E>(&mut self, _name: &str, _input: &InputNode<E>)
@@ -168,11 +169,18 @@ impl MemoExprFormatter for FormatHeader<'_> {
         //inputs are written by another formatter
     }
 
-    fn write_property(&mut self, name: &str, value: String) {
-        self.buf.push(' ');
-        self.buf.push_str(name);
-        self.buf.push('=');
-        self.buf.push_str(value.as_str());
+    fn write_value<D>(&mut self, name: &str, value: D)
+    where
+        D: Display,
+    {
+        self.fmt.write_value(name, value);
+    }
+
+    fn write_values<D>(&mut self, name: &str, values: &[D])
+    where
+        D: Display,
+    {
+        self.fmt.write_values(name, values);
     }
 }
 
@@ -211,13 +219,15 @@ impl MemoExprFormatter for FormatInputs<'_> {
         self.buf.push_str(": ");
         match input {
             InputNode::Expr(expr) => {
-                let mut header = FormatHeader { buf: self.buf };
+                let fmt = StringMemoFormatter::new(self.buf);
+                let mut header = FormatHeader { fmt };
                 expr.format_expr(&mut header);
                 expr.format_expr(self);
             }
             InputNode::Group(group) => {
                 let expr = group.mexpr().mexpr();
-                let mut header = FormatHeader { buf: self.buf };
+                let fmt = StringMemoFormatter::new(self.buf);
+                let mut header = FormatHeader { fmt };
                 expr.format_expr(&mut header);
                 expr.format_expr(self);
             }
@@ -225,8 +235,18 @@ impl MemoExprFormatter for FormatInputs<'_> {
         self.depth -= 1;
     }
 
-    fn write_property(&mut self, _name: &str, _value: String) {
-        // properties are written by another formatter
+    fn write_value<D>(&mut self, _name: &str, _value: D)
+    where
+        D: Display,
+    {
+        // values are written by another formatter
+    }
+
+    fn write_values<D>(&mut self, _name: &str, _values: &[D])
+    where
+        D: Display,
+    {
+        // values are written by another formatter
     }
 }
 

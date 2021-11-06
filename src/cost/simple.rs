@@ -28,6 +28,17 @@ impl CostEstimator for SimpleCostEstimator {
                 let filter_cost = (row_count / 10.0) as usize;
                 filter_cost + input_cost
             }
+            PhysicalExpr::HashAggregate {
+                aggr_exprs,
+                group_exprs,
+                ..
+            } => {
+                let input_cost = ctx.input_cost(0);
+                let input_stats = ctx.input_statistics(0).unwrap();
+                let row_count = input_stats.row_count() as usize;
+
+                input_cost + aggr_exprs.len() * row_count + group_exprs.len() * row_count
+            }
             PhysicalExpr::HashJoin { .. } => {
                 let left_cost = ctx.input_cost(0);
                 let left_stats = ctx.input_statistics(0).unwrap();

@@ -253,3 +253,41 @@ impl Rule for IndexOnlyScanRule {
         }
     }
 }
+
+pub struct HashAggregateRule;
+
+impl Rule for HashAggregateRule {
+    fn name(&self) -> String {
+        "HashAggregateRule".into()
+    }
+
+    fn rule_type(&self) -> RuleType {
+        RuleType::Implementation
+    }
+
+    fn matches(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Option<RuleMatch> {
+        if let LogicalExpr::Aggregate { .. } = expr {
+            Some(RuleMatch::Expr)
+        } else {
+            None
+        }
+    }
+
+    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, String> {
+        if let LogicalExpr::Aggregate {
+            input,
+            aggr_exprs,
+            group_exprs,
+        } = expr
+        {
+            let expr = PhysicalExpr::HashAggregate {
+                input: input.clone(),
+                aggr_exprs: aggr_exprs.clone(),
+                group_exprs: group_exprs.clone(),
+            };
+            Ok(RuleResult::Implementation(expr))
+        } else {
+            Err(format!("Expected Aggregate but got {:?}", expr))
+        }
+    }
+}

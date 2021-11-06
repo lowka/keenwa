@@ -779,7 +779,8 @@ pub(crate) fn format_memo<T>(memo: &Memo<T>) -> String
 where
     T: MemoExpr,
 {
-    let mut f = StringMemoFormatter { buf: String::new() };
+    let mut buf = String::new();
+    let mut f = StringMemoFormatter::new(&mut buf);
 
     for group in memo.groups.iter().rev() {
         f.push_str(format!("{} ", group.group_id).as_str());
@@ -794,7 +795,7 @@ where
         f.push('\n');
     }
 
-    f.buf
+    buf
 }
 
 /// Provides methods to build a textual representation of an expression.
@@ -811,24 +812,35 @@ pub trait MemoExprFormatter {
         T: MemoExpr;
 
     /// Writes a value of some attribute of an expression.
-    fn write_property(&mut self, name: &str, value: String);
+    fn write_value<D>(&mut self, name: &str, value: D)
+    where
+        D: Display;
+
+    /// Writes values of some attribute of an expression.
+    fn write_values<D>(&mut self, name: &str, values: &[D])
+    where
+        D: Display;
 }
 
-struct StringMemoFormatter {
-    buf: String,
+pub(crate) struct StringMemoFormatter<'b> {
+    buf: &'b mut String,
 }
 
-impl StringMemoFormatter {
-    fn push(&mut self, c: char) {
+impl<'b> StringMemoFormatter<'b> {
+    pub fn new(buf: &'b mut String) -> Self {
+        StringMemoFormatter { buf }
+    }
+
+    pub fn push(&mut self, c: char) {
         self.buf.push(c);
     }
 
-    fn push_str(&mut self, s: &str) {
+    pub fn push_str(&mut self, s: &str) {
         self.buf.push_str(s);
     }
 }
 
-impl MemoExprFormatter for StringMemoFormatter {
+impl MemoExprFormatter for StringMemoFormatter<'_> {
     fn write_name(&mut self, name: &str) {
         self.buf.push_str(name);
     }
@@ -855,11 +867,31 @@ impl MemoExprFormatter for StringMemoFormatter {
         }
     }
 
-    fn write_property(&mut self, name: &str, value: String) {
+    fn write_value<D>(&mut self, name: &str, value: D)
+    where
+        D: Display,
+    {
         self.buf.push(' ');
         self.buf.push_str(name);
         self.buf.push('=');
-        self.buf.push_str(value.as_str());
+        self.buf.push_str(value.to_string().as_str());
+    }
+
+    fn write_values<D>(&mut self, name: &str, values: &[D])
+    where
+        D: Display,
+    {
+        self.buf.push(' ');
+        self.buf.push_str(name);
+        self.buf.push('=');
+        self.buf.push('[');
+        for (i, value) in values.iter().enumerate() {
+            if i > 0 {
+                self.buf.push_str(", ");
+            }
+            self.buf.push_str(&value.to_string());
+        }
+        self.buf.push(']');
     }
 }
 
@@ -903,8 +935,18 @@ impl<'f, 'a> MemoExprFormatter for DisplayMemoExprFormatter<'f, 'a> {
         }
     }
 
-    fn write_property(&mut self, _name: &str, _value: String) {
-        // Do not print properties for Display trait,
+    fn write_value<D>(&mut self, _name: &str, _value: D)
+    where
+        D: Display,
+    {
+        // Do not print value for Display trait
+    }
+
+    fn write_values<D>(&mut self, _name: &str, _values: &[D])
+    where
+        D: Display,
+    {
+        // Do not print values for Display trait
     }
 }
 
@@ -1367,7 +1409,8 @@ mod test {
     }
 
     fn format_test_memo(memo: &Memo<TestOperator>, include_attrs: bool) -> String {
-        let mut f = StringMemoFormatter { buf: String::new() };
+        let mut buf = String::new();
+        let mut f = StringMemoFormatter::new(&mut buf);
         for group in memo.groups.iter().rev() {
             f.push_str(format!("{} ", group.group_id).as_str());
             for (i, expr) in group.exprs.iter().enumerate() {
@@ -1380,13 +1423,13 @@ mod test {
                     expr.mexpr().format_expr(&mut f);
                     if include_attrs {
                         if let Some(attrs) = group.attrs.as_ref() {
-                            f.write_property("a", format!("{}", attrs.a))
+                            f.write_value("a", format!("{}", attrs.a))
                         }
                     }
                 }
             }
             f.push('\n');
         }
-        f.buf
+        buf
     }
 }

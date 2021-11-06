@@ -17,6 +17,11 @@ pub enum LogicalExpr {
         input: InputExpr,
         filter: Expr,
     },
+    Aggregate {
+        input: InputExpr,
+        aggr_exprs: Vec<Expr>,
+        group_exprs: Vec<Expr>,
+    },
     Join {
         left: InputExpr,
         right: InputExpr,
@@ -46,6 +51,9 @@ impl LogicalExpr {
             }
             LogicalExpr::Get { .. } => {}
             LogicalExpr::Expr { .. } => {}
+            LogicalExpr::Aggregate { input, .. } => {
+                ctx.visit_input(expr_ctx, input);
+            }
         }
     }
 
@@ -84,6 +92,18 @@ impl LogicalExpr {
                 assert_eq!(0, inputs.len(), "Expr operator expects 0 inputs but got {:?}", inputs);
                 LogicalExpr::Expr { expr: expr.clone() }
             }
+            LogicalExpr::Aggregate {
+                aggr_exprs,
+                group_exprs,
+                ..
+            } => {
+                assert_eq!(1, inputs.len(), "Aggregate operator expects 1 input but got {:?}", inputs);
+                LogicalExpr::Aggregate {
+                    input: inputs.swap_remove(0),
+                    aggr_exprs: aggr_exprs.clone(),
+                    group_exprs: group_exprs.clone(),
+                }
+            }
         }
     }
 
@@ -117,6 +137,16 @@ impl LogicalExpr {
                 digest.append_expr_type("l:Expr");
                 digest.append_value(format!("{}", expr).as_str());
             }
+            LogicalExpr::Aggregate {
+                input,
+                aggr_exprs,
+                group_exprs,
+            } => {
+                digest.append_expr_type("l:Aggregate");
+                digest.append_input("input", input);
+                digest.append_property("aggrs", aggr_exprs);
+                digest.append_property("groups", group_exprs);
+            }
         }
     }
 
@@ -128,12 +158,12 @@ impl LogicalExpr {
             LogicalExpr::Projection { input, columns } => {
                 f.write_name("Projection");
                 f.write_input("input", input);
-                f.write_property("cols", format!("{:?}", columns));
+                f.write_value("cols", format!("{:?}", columns));
             }
             LogicalExpr::Select { input, filter } => {
                 f.write_name("Select");
                 f.write_input("input", input);
-                f.write_property("filter", format!("{}", filter));
+                f.write_value("filter", format!("{}", filter));
             }
             LogicalExpr::Join { left, right, condition } => {
                 f.write_name("Join");
@@ -141,17 +171,27 @@ impl LogicalExpr {
                 f.write_input("right", right);
                 match condition {
                     JoinCondition::Using(using) => {
-                        f.write_property("using", format!("{:?}", using.columns()));
+                        f.write_value("using", format!("{:?}", using.columns()));
                     }
                 }
             }
             LogicalExpr::Get { source, columns } => {
                 f.write_name("Get");
                 f.write_source(source);
-                f.write_property("cols", format!("{:?}", columns));
+                f.write_value("cols", format!("{:?}", columns));
             }
             LogicalExpr::Expr { expr } => {
                 f.write_name(format!("Expr {}", expr).as_str());
+            }
+            LogicalExpr::Aggregate {
+                input,
+                aggr_exprs,
+                group_exprs,
+            } => {
+                f.write_name("Aggregate");
+                f.write_input("input", input);
+                f.write_values("aggrs", &aggr_exprs);
+                f.write_values("groups", &group_exprs);
             }
         }
     }
