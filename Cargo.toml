@@ -6,6 +6,7 @@ edition = "2018"
 [dependencies]
 rand = "0.8.4"
 log = "0.4.14"
+itertools = "0.10.1"
 
 [dev-dependencies]
 criterion = {version = "0.3.3"}

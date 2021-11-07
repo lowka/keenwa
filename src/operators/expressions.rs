@@ -1,5 +1,6 @@
 use crate::meta::ColumnId;
 use crate::operators::scalar::ScalarValue;
+use itertools::Itertools;
 use std::fmt::{Display, Formatter};
 
 /// Expressions supported by the optimizer.
@@ -95,14 +96,7 @@ impl Display for DisplayArgs<'_> {
         if self.0.len() == 1 {
             write!(f, "{}", self.0[0])
         } else {
-            write!(f, "[")?;
-            for (i, expr) in self.0.iter().enumerate() {
-                if i > 0 {
-                    write!(f, ", ")?;
-                }
-                write!(f, "{}", expr)?;
-            }
-            write!(f, "]")
+            write!(f, "[{}]", self.0.iter().join(", ").as_str())
         }
     }
 }

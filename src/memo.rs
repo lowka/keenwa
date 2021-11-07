@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use std::fmt::{Display, Formatter, Write};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
@@ -818,14 +819,8 @@ impl MemoExprFormatter for StringMemoFormatter<'_> {
         }
         self.buf.push(' ');
         self.buf.push_str(name);
-        self.buf.push('=');
-        self.buf.push('[');
-        for (i, value) in values.iter().enumerate() {
-            if i > 0 {
-                self.buf.push_str(", ");
-            }
-            self.buf.push_str(&value.to_string());
-        }
+        self.buf.push_str("=[");
+        self.push_str(values.iter().join(", ").as_str());
         self.buf.push(']');
     }
 }

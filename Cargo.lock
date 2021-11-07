@@ -263,6 +263,7 @@ name = "keenwa"
 version = "0.0.1"
 dependencies = [
  "criterion",
+ "itertools",
  "log",
  "pretty_env_logger",
  "rand",

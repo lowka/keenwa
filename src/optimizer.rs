@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::{Debug, Display, Formatter};
@@ -767,13 +768,7 @@ impl Display for BestExpr {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{{ expr: {}", self.expr)?;
         write!(f, " cost: {}", self.cost)?;
-        write!(f, " input_ctx: [",)?;
-        for (i, ctx) in self.inputs.iter().enumerate() {
-            if i > 0 {
-                write!(f, ", ")?;
-            }
-            write!(f, "{}", ctx)?;
-        }
+        write!(f, " input_ctx: [{}]", self.inputs.iter().join(", "))?;
         write!(f, "] }}")
     }
 }
@@ -903,14 +898,8 @@ impl InputContexts {
 
 impl Display for InputContexts {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[ inputs=[")?;
-        for (i, ctx) in self.inputs.iter().enumerate() {
-            if i > 0 {
-                write!(f, ", ")?;
-            }
-            write!(f, "{}", ctx)?;
-        }
-        write!(f, "] current_index={}", self.current_index)?;
+        write!(f, "[ inputs=[{}]", self.inputs.iter().join(", "))?;
+        write!(f, " current_index={}", self.current_index)?;
         write!(f, "]")
     }
 }
