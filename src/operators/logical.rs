@@ -1,4 +1,4 @@
-use crate::memo::{ExprContext, MemoExprDigest, MemoExprFormatter, TraversalContext};
+use crate::memo::{ExprContext, MemoExprFormatter, TraversalContext};
 use crate::meta::ColumnId;
 use crate::operators::expressions::Expr;
 use crate::operators::join::JoinCondition;
@@ -107,86 +107,43 @@ impl LogicalExpr {
         }
     }
 
-    pub(crate) fn make_digest<D>(&self, digest: &mut D)
-    where
-        D: MemoExprDigest,
-    {
-        match self {
-            LogicalExpr::Projection { input, columns } => {
-                digest.append_expr_type("l:Projection");
-                digest.append_input("input", input);
-                digest.append_property("cols", columns);
-            }
-            LogicalExpr::Select { input, filter } => {
-                digest.append_expr_type("l:Select");
-                digest.append_input("input", input);
-                digest.append_value(format!("filter={}", filter).as_str());
-            }
-            LogicalExpr::Join { left, right, condition } => {
-                digest.append_expr_type("l:Join");
-                digest.append_input("left", left);
-                digest.append_input("right", right);
-                digest.append_value(format!("condition={:?}", condition).as_str());
-            }
-            LogicalExpr::Get { source, columns } => {
-                digest.append_expr_type("l:Get");
-                digest.append_value(source);
-                digest.append_property("cols", columns);
-            }
-            LogicalExpr::Expr { expr } => {
-                digest.append_expr_type("l:Expr");
-                digest.append_value(format!("{}", expr).as_str());
-            }
-            LogicalExpr::Aggregate {
-                input,
-                aggr_exprs,
-                group_exprs,
-            } => {
-                digest.append_expr_type("l:Aggregate");
-                digest.append_input("input", input);
-                digest.append_property("aggrs", aggr_exprs);
-                digest.append_property("groups", group_exprs);
-            }
-        }
-    }
-
     pub(crate) fn format_expr<F>(&self, f: &mut F)
     where
         F: MemoExprFormatter,
     {
         match self {
             LogicalExpr::Projection { input, columns } => {
-                f.write_name("Projection");
+                f.write_name("LogicalProjection");
                 f.write_input("input", input);
-                f.write_value("cols", format!("{:?}", columns));
+                f.write_values("cols", columns);
             }
             LogicalExpr::Select { input, filter } => {
-                f.write_name("Select");
+                f.write_name("LogicalSelect");
                 f.write_input("input", input);
-                f.write_value("filter", format!("{}", filter));
+                f.write_value("filter", filter);
             }
             LogicalExpr::Join { left, right, condition } => {
-                f.write_name("Join");
+                f.write_name("LogicalJoin");
                 f.write_input("left", left);
                 f.write_input("right", right);
                 match condition {
-                    JoinCondition::Using(using) => f.write_value("using", format!("{}", using)),
+                    JoinCondition::Using(using) => f.write_value("using", using),
                 }
             }
             LogicalExpr::Get { source, columns } => {
-                f.write_name("Get");
+                f.write_name("LogicalGet");
                 f.write_source(source);
-                f.write_value("cols", format!("{:?}", columns));
+                f.write_values("cols", columns);
             }
             LogicalExpr::Expr { expr } => {
-                f.write_name(format!("Expr {}", expr).as_str());
+                f.write_name(format!("Logica lExpr {}", expr).as_str());
             }
             LogicalExpr::Aggregate {
                 input,
                 aggr_exprs,
                 group_exprs,
             } => {
-                f.write_name("Aggregate");
+                f.write_name("LogicalAggregate");
                 f.write_input("input", input);
                 f.write_values("aggrs", &aggr_exprs);
                 f.write_values("groups", &group_exprs);

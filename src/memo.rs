@@ -141,11 +141,6 @@ pub trait MemoExpr: Debug + Clone {
     /// Creates a new expression from this expression by replacing its input expressions with the new ones.
     fn with_new_inputs(&self, inputs: Vec<InputNode<Self>>) -> Self;
 
-    /// Computes a unique representation of this expression.
-    fn make_digest<D>(&self, digest: &mut D)
-    where
-        D: MemoExprDigest;
-
     /// Builds a textual representation of this expression.
     fn format_expr<F>(&self, f: &mut F)
     where
@@ -550,21 +545,6 @@ where
     }
 }
 
-/// A helper trait that provides methods to build a unique representation of an expression.
-pub trait MemoExprDigest {
-    fn append_expr_type(&mut self, type_name: &str);
-
-    fn append_property<T>(&mut self, name: &str, value: &T)
-    where
-        T: Debug;
-
-    fn append_input<T>(&mut self, name: &str, input: &InputNode<T>)
-    where
-        T: MemoExpr;
-
-    fn append_value(&mut self, attr: &str);
-}
-
 /// Provides methods to traverse an expression tree and copy it into a memo.
 pub struct TraversalContext<'a, T>
 where
@@ -640,7 +620,6 @@ where
             })
             .collect();
 
-        let mut digest = StringMemoExprDigest::new();
         let ExprContext {
             inputs: input_nodes,
             attrs,
@@ -648,9 +627,9 @@ where
         } = expr_ctx;
 
         let expr = expr.with_new_inputs(input_nodes);
-        expr.make_digest(&mut digest);
+        let digest = make_digest(&expr);
 
-        let (expr_id, added) = match self.memo.expr_cache.entry(digest.buf) {
+        let (expr_id, added) = match self.memo.expr_cache.entry(digest) {
             Entry::Occupied(o) => {
                 let expr_id = o.get();
                 (*expr_id, false)
@@ -728,52 +707,6 @@ where
     }
 }
 
-struct StringMemoExprDigest {
-    buf: String,
-}
-
-impl StringMemoExprDigest {
-    fn new() -> Self {
-        StringMemoExprDigest { buf: String::new() }
-    }
-}
-
-impl MemoExprDigest for StringMemoExprDigest {
-    fn append_expr_type(&mut self, type_name: &str) {
-        self.buf.push_str(type_name);
-    }
-
-    fn append_property<T>(&mut self, name: &str, value: &T)
-    where
-        T: Debug,
-    {
-        self.buf.push(' ');
-        self.buf.push_str(name);
-        self.buf.push('=');
-        self.buf.push_str(format!("{:?}", value).as_str());
-    }
-
-    fn append_input<T>(&mut self, name: &str, input: &InputNode<T>)
-    where
-        T: MemoExpr,
-    {
-        self.buf.push(' ');
-        self.buf.push_str(name);
-        self.buf.push('=');
-        match input {
-            InputNode::Group(g) => self.buf.push_str(format!("{:01}", g.id()).as_str()),
-            InputNode::Expr(e) => {
-                panic!("Input expressions are not supported: {:?}", e);
-            }
-        }
-    }
-
-    fn append_value(&mut self, attr: &str) {
-        self.buf.push(' ');
-        self.buf.push_str(attr);
-    }
-}
-
 /// Builds a textual representation of the given memo.
 pub(crate) fn format_memo<T>(memo: &Memo<T>) -> String
 where
@@ -786,9 +719,8 @@ where
         f.push_str(format!("{} ", group.group_id).as_str());
         for (i, expr) in group.exprs.iter().enumerate() {
             if i > 0 {
-                f.push('\n');
-                // 3 spaces
-                f.push_str("   ");
+                // newline + 3 spaces
+                f.push_str("\n   ");
             }
             expr.mexpr().format_expr(&mut f);
         }
@@ -860,7 +792,7 @@ impl MemoExprFormatter for StringMemoFormatter<'_> {
             self.buf.push('=');
         }
         match input {
-            InputNode::Expr(_) => panic!("Expr inputs inside a memo are not allowed"),
+            InputNode::Expr(expr) => panic!("Input expressions are not supported: {:?}", expr),
             InputNode::Group(group) => {
                 self.buf.push_str(format!("{}", group.id()).as_str());
             }
@@ -881,6 +813,9 @@ impl MemoExprFormatter for StringMemoFormatter<'_> {
     where
         D: Display,
     {
+        if values.is_empty() {
+            return;
+        }
         self.buf.push(' ');
         self.buf.push_str(name);
         self.buf.push('=');
@@ -948,6 +883,16 @@ impl<'f, 'a> MemoExprFormatter for DisplayMemoExprFormatter<'f, 'a> {
     {
         // Do not print values for Display trait
     }
+}
+
+fn make_digest<T>(expr: &T) -> String
+where
+    T: MemoExpr,
+{
+    let mut buf = String::new();
+    let mut fmt = StringMemoFormatter::new(&mut buf);
+    expr.format_expr(&mut fmt);
+    buf
 }
 
 #[cfg(test)]
@@ -1028,25 +973,6 @@ mod test {
             TestOperator {
                 expr,
                 attrs: self.attrs.clone(),
-            }
-        }
-
-        fn make_digest<D>(&self, digest: &mut D)
-        where
-            D: MemoExprDigest,
-        {
-            match &self.expr {
-                TestExpr::Leaf(s) => {
-                    digest.append_expr_type(format!("Leaf {}", s).as_str());
-                }
-                TestExpr::Node { input } => {
-                    digest.append_expr_type("Node");
-                    digest.append_input("input", input);
-                }
-                TestExpr::Nodes { inputs } => {
-                    digest.append_expr_type("Node");
-                    digest.append_property("inputs", inputs);
-                }
             }
         }
 
@@ -1415,15 +1341,14 @@ mod test {
             f.push_str(format!("{} ", group.group_id).as_str());
             for (i, expr) in group.exprs.iter().enumerate() {
                 if i > 0 {
-                    f.push('\n');
-                    // 3 spaces
-                    f.push_str("   ");
+                    // new line + 3 spaces
+                    f.push_str("\n   ");
                     expr.mexpr().format_expr(&mut f);
                 } else {
                     expr.mexpr().format_expr(&mut f);
                     if include_attrs {
                         if let Some(attrs) = group.attrs.as_ref() {
-                            f.write_value("a", format!("{}", attrs.a))
+                            f.write_value("a", &attrs.a)
                         }
                     }
                 }

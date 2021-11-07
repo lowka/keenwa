@@ -1,6 +1,4 @@
-use crate::memo::{
-    Attributes, InputNode, MemoExpr, MemoExprCallback, MemoExprDigest, MemoExprFormatter, TraversalContext,
-};
+use crate::memo::{Attributes, InputNode, MemoExpr, MemoExprCallback, MemoExprFormatter, TraversalContext};
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;
 use crate::properties::logical::LogicalProperties;
@@ -172,16 +170,6 @@ impl MemoExpr for Operator {
         };
         let attrs = self.attributes.clone();
         Operator::new(expr, attrs)
-    }
-
-    fn make_digest<D>(&self, digest: &mut D)
-    where
-        D: MemoExprDigest,
-    {
-        match self.expr() {
-            OperatorExpr::Logical(expr) => expr.make_digest(digest),
-            OperatorExpr::Physical(expr) => expr.make_digest(digest),
-        }
     }
 
     fn format_expr<F>(&self, f: &mut F)

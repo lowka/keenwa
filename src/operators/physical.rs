@@ -1,4 +1,4 @@
-use crate::memo::{ExprContext, MemoExprDigest, MemoExprFormatter, TraversalContext};
+use crate::memo::{ExprContext, MemoExprFormatter, TraversalContext};
 use crate::meta::ColumnId;
 use crate::operators::expressions::Expr;
 use crate::operators::join::JoinCondition;
@@ -176,65 +176,6 @@ impl PhysicalExpr {
         }
     }
 
-    pub(crate) fn make_digest<D>(&self, digest: &mut D)
-    where
-        D: MemoExprDigest,
-    {
-        match self {
-            PhysicalExpr::Projection { input, columns } => {
-                digest.append_expr_type("p:Projection");
-                digest.append_input("input", input);
-                digest.append_property("cols", columns);
-            }
-            PhysicalExpr::Select { input, filter } => {
-                digest.append_expr_type("p:Select");
-                digest.append_input("input", input);
-                digest.append_value(format!("filter={}", filter).as_str());
-            }
-            PhysicalExpr::HashAggregate {
-                input,
-                aggr_exprs,
-                group_exprs,
-            } => {
-                digest.append_expr_type("p:HashAggregate");
-                digest.append_input("input", input);
-                digest.append_property("aggrs", aggr_exprs);
-                digest.append_property("groups", group_exprs);
-            }
-            PhysicalExpr::HashJoin { left, right, condition } => {
-                digest.append_expr_type("p:HashJoin");
-                digest.append_input("left", left);
-                digest.append_input("right", right);
-                digest.append_value(format!("condition={:?}", condition).as_str());
-            }
-            PhysicalExpr::MergeSortJoin { left, right, condition } => {
-                digest.append_expr_type("p:MergeSortJoin");
-                digest.append_input("left", left);
-                digest.append_input("right", right);
-                digest.append_value(format!("condition={:?}", condition).as_str());
-            }
-            PhysicalExpr::Scan { source, columns } => {
-                digest.append_expr_type("p:Scan");
-                digest.append_value(source);
-                digest.append_property("cols", columns);
-            }
-            PhysicalExpr::IndexScan { source, columns } => {
-                digest.append_expr_type("p:IndexScan");
-                digest.append_value(source);
-                digest.append_property("cols", columns);
-            }
-            PhysicalExpr::Sort { input, ordering } => {
-                digest.append_expr_type("p:Sort");
-                digest.append_input("input", input);
-                digest.append_value(format!("ordering={}", ordering).as_str());
-            }
-            PhysicalExpr::Expr { expr } => {
-                digest.append_expr_type("p:Expr");
-                digest.append_value(format!("{}", expr).as_str());
-            }
-        }
-    }
-
     pub(crate) fn format_expr<F>(&self, f: &mut F)
     where
         F: MemoExprFormatter,
@@ -243,19 +184,19 @@ impl PhysicalExpr {
             PhysicalExpr::Projection { input, columns } => {
                 f.write_name("Projection");
                 f.write_input("input", input);
-                f.write_value("cols", format!("{:?}", columns))
+                f.write_values("cols", columns)
             }
             PhysicalExpr::Select { input, filter } => {
                 f.write_name("Select");
                 f.write_input("input", input);
-                f.write_value("filter", format!("{}", filter))
+                f.write_value("filter", filter)
             }
             PhysicalExpr::HashJoin { left, right, condition } => {
                 f.write_name("HashJoin");
                 f.write_input("left", left);
                 f.write_input("right", right);
                 match condition {
-                    JoinCondition::Using(using) => f.write_value("using", format!("{}", using)),
+                    JoinCondition::Using(using) => f.write_value("using", format!("{}", using).as_str()),
                 };
             }
             PhysicalExpr::MergeSortJoin { left, right, condition } => {
@@ -263,23 +204,23 @@ impl PhysicalExpr {
                 f.write_input("left", left);
                 f.write_input("right", right);
                 match condition {
-                    JoinCondition::Using(using) => f.write_value("using", format!("{}", using)),
+                    JoinCondition::Using(using) => f.write_value("using", format!("{}", using).as_str()),
                 }
             }
             PhysicalExpr::Scan { source, columns } => {
                 f.write_name("Scan");
                 f.write_source(source);
-                f.write_value("cols", format!("{:?}", columns))
+                f.write_values("cols", columns)
             }
             PhysicalExpr::IndexScan { source, columns } => {
                 f.write_name("IndexScan");
                 f.write_source(source);
-                f.write_value("cols", format!("{:?}", columns))
+                f.write_values("cols", columns)
             }
             PhysicalExpr::Sort { input, ordering } => {
                 f.write_name("Sort");
                 f.write_input("input", input);
-                f.write_value("ord", format!("{:?}", ordering.columns()))
+                f.write_value("ord", format!("{:?}", ordering.columns()).as_str())
             }
             PhysicalExpr::Expr { expr } => {
                 f.write_name(format!("Expr {}", expr).as_str());

@@ -184,9 +184,9 @@ mod tests {
         tester.apply(
             &expr,
             r#"
-Join using=[(3, 1)]
-  left: Get B cols=[3, 4]
-  right: Get A cols=[1, 2]
+LogicalJoin using=[(3, 1)]
+  left: LogicalGet B cols=[3, 4]
+  right: LogicalGet A cols=[1, 2]
 "#,
         );
     }
@@ -221,11 +221,11 @@ Join using=[(3, 1)]
         tester.apply(
             &expr,
             r#"
-Join using=[(1, 4)]
-  left: Get A cols=[1, 2]
-  right: Join using=[(4, 6)]
-      left: Get B cols=[3, 4]
-      right: Get C cols=[5, 6]
+LogicalJoin using=[(1, 4)]
+  left: LogicalGet A cols=[1, 2]
+  right: LogicalJoin using=[(4, 6)]
+      left: LogicalGet B cols=[3, 4]
+      right: LogicalGet C cols=[5, 6]
 "#,
         );
     }
@@ -260,11 +260,11 @@ Join using=[(1, 4)]
         tester.apply(
             &expr,
             r#"
-Join using=[(1, 6)]
-  left: Join using=[(1, 3)]
-      left: Get A cols=[1, 2]
-      right: Get B cols=[3, 4]
-  right: Get C cols=[5, 6]
+LogicalJoin using=[(1, 6)]
+  left: LogicalJoin using=[(1, 3)]
+      left: LogicalGet A cols=[1, 2]
+      right: LogicalGet B cols=[3, 4]
+  right: LogicalGet C cols=[5, 6]
 "#,
         );
     }
