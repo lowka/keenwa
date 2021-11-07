@@ -97,7 +97,7 @@ fn memo_bench(c: &mut Criterion) {
                 columns: vec![2],
             }
             .into(),
-            condition: JoinCondition::new(vec![1, 2]),
+            condition: JoinCondition::using(vec![(1, 2)]),
         }
         .into(),
         filter: Expr::BinaryExpr {

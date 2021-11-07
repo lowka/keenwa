@@ -68,15 +68,10 @@ pub fn expr_retains_property(expr: &PhysicalExpr, required: &PhysicalProperties)
     match (expr, required.as_option()) {
         (_, None) => true,
         (PhysicalExpr::Select { .. }, Some(_)) => true,
-        (
-            PhysicalExpr::MergeSortJoin {
-                left, right, condition, ..
-            },
-            Some(ordering),
-        ) => {
-            let left_columns = left.attrs().logical().output_columns();
-            let right_columns = right.attrs().logical().output_columns();
-            let (left, right) = JoinCondition::filter_columns(condition, left_columns, right_columns);
+        (PhysicalExpr::MergeSortJoin { condition, .. }, Some(ordering)) => {
+            let (left, right) = match condition {
+                JoinCondition::Using(using) => using.as_columns_pair(),
+            };
             let left_ordering = OrderingChoice::new(left);
             let right_ordering = OrderingChoice::new(right);
 
@@ -104,15 +99,10 @@ pub fn expr_retains_property(expr: &PhysicalExpr, required: &PhysicalProperties)
 pub fn expr_provides_property(expr: &PhysicalExpr, required: &PhysicalProperties) -> bool {
     match (expr, required.as_option()) {
         (_, None) => true,
-        (
-            PhysicalExpr::MergeSortJoin {
-                left, right, condition, ..
-            },
-            Some(ordering),
-        ) => {
-            let left_columns = left.attrs().logical().output_columns();
-            let right_columns = right.attrs().logical().output_columns();
-            let (left, right) = JoinCondition::filter_columns(condition, left_columns, right_columns);
+        (PhysicalExpr::MergeSortJoin { condition, .. }, Some(ordering)) => {
+            let (left, right) = match condition {
+                JoinCondition::Using(using) => using.as_columns_pair(),
+            };
             let left_ordering = OrderingChoice::new(left);
             let right_ordering = OrderingChoice::new(right);
 

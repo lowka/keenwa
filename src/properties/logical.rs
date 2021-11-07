@@ -1,5 +1,6 @@
 use crate::meta::ColumnId;
 use crate::operators::expressions::Expr;
+use crate::operators::join::JoinCondition;
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;
 use crate::operators::{InputExpr, OperatorExpr};
@@ -85,10 +86,10 @@ impl LogicalPropertiesBuilder {
 
     fn build_for_logical(&self, expr: &LogicalExpr, statistics: Option<Statistics>) -> LogicalProperties {
         let columns = match expr {
-            LogicalExpr::Projection { input, columns } => collect_columns_from_inputs(vec![input], columns),
+            LogicalExpr::Projection { input, columns } => collect_columns_from_input(input, columns),
             LogicalExpr::Select { input, .. } => {
                 let empty = Vec::with_capacity(0);
-                collect_columns_from_inputs(vec![input], &empty)
+                collect_columns_from_input(input, &empty)
             }
             LogicalExpr::Aggregate {
                 input,
@@ -99,12 +100,9 @@ impl LogicalPropertiesBuilder {
                 collect_columns_from_exprs(aggr_exprs, &mut required);
                 // TODO: validate group exprs
                 collect_columns_from_exprs(group_exprs, &mut required);
-                collect_columns_from_inputs(vec![input], &required)
+                collect_columns_from_input(input, &required)
             }
-            LogicalExpr::Join { left, right, condition } => {
-                let required = condition.columns();
-                collect_columns_from_inputs(vec![left, right], required)
-            }
+            LogicalExpr::Join { left, right, condition } => collect_columns_from_join_condition(left, right, condition),
             LogicalExpr::Get { columns, .. } => columns.clone(),
             LogicalExpr::Expr { .. } => Vec::with_capacity(0),
         };
@@ -114,11 +112,11 @@ impl LogicalPropertiesBuilder {
     fn build_for_physical(&self, expr: &PhysicalExpr) -> LogicalProperties {
         match expr {
             PhysicalExpr::Projection { input, columns } => {
-                collect_columns_from_inputs(vec![input], columns);
+                collect_columns_from_input(input, columns);
             }
             PhysicalExpr::Select { input, .. } => {
                 let empty = Vec::with_capacity(0);
-                collect_columns_from_inputs(vec![input], &empty);
+                collect_columns_from_input(input, &empty);
             }
             PhysicalExpr::HashAggregate {
                 input,
@@ -129,21 +127,19 @@ impl LogicalPropertiesBuilder {
                 collect_columns_from_exprs(aggr_exprs, &mut required);
                 // TODO: validate group exprs
                 collect_columns_from_exprs(group_exprs, &mut required);
-                collect_columns_from_inputs(vec![input], &required);
+                collect_columns_from_input(input, &required);
             }
             PhysicalExpr::HashJoin { left, right, condition } => {
-                let required = condition.columns();
-                collect_columns_from_inputs(vec![left, right], required);
+                collect_columns_from_join_condition(left, right, condition);
             }
             PhysicalExpr::MergeSortJoin { left, right, condition } => {
-                let required = condition.columns();
-                collect_columns_from_inputs(vec![left, right], required);
+                collect_columns_from_join_condition(left, right, condition);
             }
             PhysicalExpr::Scan { .. } => {}
             PhysicalExpr::IndexScan { .. } => {}
             PhysicalExpr::Sort { input, ordering } => {
                 let required = ordering.columns();
-                collect_columns_from_inputs(vec![input], required);
+                collect_columns_from_input(input, required);
             }
             PhysicalExpr::Expr { .. } => {}
         };
@@ -152,15 +148,10 @@ impl LogicalPropertiesBuilder {
     }
 }
 
-fn collect_columns_from_inputs(inputs: Vec<&InputExpr>, used: &[ColumnId]) -> Vec<ColumnId> {
-    let columns: Vec<ColumnId> = inputs
-        .iter()
-        .flat_map(|node| {
-            let logical = node.attrs().logical();
-            let output_columns = logical.output_columns();
-            output_columns.iter().copied()
-        })
-        .collect();
+fn collect_columns_from_input(input: &InputExpr, used: &[ColumnId]) -> Vec<ColumnId> {
+    let logical = input.attrs().logical();
+    let output_columns = logical.output_columns();
+    let columns: Vec<ColumnId> = output_columns.iter().copied().collect();
 
     assert!(
         used.iter().all(|c| columns.contains(c)),
@@ -170,6 +161,21 @@ fn collect_columns_from_inputs(inputs: Vec<&InputExpr>, used: &[ColumnId]) -> Ve
     );
 
     columns
+}
+
+fn collect_columns_from_join_condition(
+    left: &InputExpr,
+    right: &InputExpr,
+    condition: &JoinCondition,
+) -> Vec<ColumnId> {
+    match condition {
+        JoinCondition::Using(using) => {
+            let mut left_columns = collect_columns_from_input(left, using.left_columns());
+            let right_columns = collect_columns_from_input(right, using.right_columns());
+            left_columns.extend(right_columns.into_iter());
+            left_columns
+        }
+    }
 }
 
 fn collect_columns_from_exprs(exprs: &[Expr], columns: &mut Vec<ColumnId>) {

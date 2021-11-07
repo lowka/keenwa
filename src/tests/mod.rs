@@ -62,7 +62,7 @@ fn test_join() {
                 columns: vec![3, 4],
             }
             .into(),
-            condition: JoinCondition::new(vec![1, 3]),
+            condition: JoinCondition::using(vec![(1, 3)]),
         }
         .into(),
         columns: vec![1, 2, 3],
@@ -80,7 +80,7 @@ fn test_join() {
         query,
         r#"
 03 Projection [02] cols=[1, 2, 3]
-02 HashJoin [00 01] using=[1, 3]
+02 HashJoin [00 01] using=[(1, 3)]
 01 Scan B cols=[3, 4]
 00 Scan A cols=[1, 2]
 "#,
@@ -181,7 +181,7 @@ fn test_join_commutativity() {
                 columns: vec![2],
             }
             .into(),
-            condition: JoinCondition::new(vec![1, 2]),
+            condition: JoinCondition::using(vec![(1, 2)]),
         }
         .into(),
         filter: binary_op_col_gt(1, ScalarValue::Int32(10)),
@@ -199,7 +199,7 @@ fn test_join_commutativity() {
         query,
         r#"
 03 Select [02] filter=col:1 > 10
-02 HashJoin [01 00] using=[2, 1]
+02 HashJoin [01 00] using=[(2, 1)]
 00 Scan A cols=[1]
 01 Scan B cols=[2]
 "#,
@@ -220,7 +220,7 @@ fn test_join_commutativity_ordered() {
                 columns: vec![2],
             }
             .into(),
-            condition: JoinCondition::new(vec![1, 2]),
+            condition: JoinCondition::using(vec![(1, 2)]),
         }
         .into(),
         filter: binary_op_col_gt(1, ScalarValue::Int32(10)),
@@ -241,7 +241,7 @@ fn test_join_commutativity_ordered() {
         r#"
 03 Sort [03] ord=[1]
 03 Select [02] filter=col:1 > 10
-02 HashJoin [00 01] using=[1, 2]
+02 HashJoin [00 01] using=[(1, 2)]
 01 Scan B cols=[2]
 00 Scan A cols=[1]
 "#,
@@ -295,7 +295,7 @@ fn test_merge_join_requires_sorted_inputs() {
             columns: vec![3, 4],
         }
         .into(),
-        condition: JoinCondition::new(vec![1, 4]),
+        condition: JoinCondition::using(vec![(1, 4)]),
     }
     .to_operator();
 
@@ -308,7 +308,7 @@ fn test_merge_join_requires_sorted_inputs() {
     tester.optimize(
         query,
         r#"
-02 MergeSortJoin [ord:[1]=00 ord:[4]=01] using=[1, 4]
+02 MergeSortJoin [ord:[1]=00 ord:[4]=01] using=[(1, 4)]
 01 Sort [01] ord=[4]
 01 Scan B cols=[3, 4]
 00 Sort [00] ord=[1]
@@ -330,7 +330,7 @@ fn test_merge_join_satisfies_ordering_requirements() {
             columns: vec![3, 4],
         }
         .into(),
-        condition: JoinCondition::new(vec![1, 4]),
+        condition: JoinCondition::using(vec![(1, 4)]),
     }
     .to_operator()
     .with_required(ordering(vec![1]));
@@ -344,7 +344,7 @@ fn test_merge_join_satisfies_ordering_requirements() {
     tester.optimize(
         query,
         r#"
-02 MergeSortJoin [ord:[1]=00 ord:[4]=01] using=[1, 4]
+02 MergeSortJoin [ord:[1]=00 ord:[4]=01] using=[(1, 4)]
 01 Sort [01] ord=[4]
 01 Scan B cols=[3, 4]
 00 Sort [00] ord=[1]
@@ -366,7 +366,7 @@ fn test_merge_join_does_no_satisfy_ordering_requirements() {
             columns: vec![3, 4],
         }
         .into(),
-        condition: JoinCondition::new(vec![1, 4]),
+        condition: JoinCondition::using(vec![(1, 4)]),
     }
     .to_operator()
     .with_required(ordering(vec![3]));
@@ -381,7 +381,7 @@ fn test_merge_join_does_no_satisfy_ordering_requirements() {
         query,
         r#"
 02 Sort [02] ord=[3]
-02 MergeSortJoin [ord:[1]=00 ord:[4]=01] using=[1, 4]
+02 MergeSortJoin [ord:[1]=00 ord:[4]=01] using=[(1, 4)]
 01 Sort [01] ord=[4]
 01 Scan B cols=[3, 4]
 00 Sort [00] ord=[1]
@@ -403,7 +403,7 @@ fn test_self_joins() {
             columns: vec![1, 2],
         }
         .into(),
-        condition: JoinCondition::new(vec![1, 1]),
+        condition: JoinCondition::using(vec![(1, 1)]),
     }
     .to_operator()
     .with_required(ordering(vec![1]));
@@ -418,7 +418,7 @@ fn test_self_joins() {
         query.clone(),
         r#"
 01 Sort [01] ord=[1]
-01 HashJoin [00 00] using=[1, 1]
+01 HashJoin [00 00] using=[(1, 1)]
 00 Scan A cols=[1, 2]
 00 Scan A cols=[1, 2]
 "#,
@@ -429,7 +429,7 @@ fn test_self_joins() {
     tester.optimize(
         query,
         r#"
-01 MergeSortJoin [ord:[1]=00 ord:[1]=00] using=[1, 1]
+01 MergeSortJoin [ord:[1]=00 ord:[1]=00] using=[(1, 1)]
 00 Sort [00] ord=[1]
 00 Scan A cols=[1, 2]
 00 Sort [00] ord=[1]
@@ -451,7 +451,7 @@ fn test_self_joins_inner_sort_should_be_ignored() {
             columns: vec![1, 2],
         }
         .into(),
-        condition: JoinCondition::new(vec![1, 1]),
+        condition: JoinCondition::using(vec![(1, 1)]),
     }
     .to_operator()
     .with_required(ordering(vec![1])); // this ordering requirement should be ignored
@@ -463,7 +463,7 @@ fn test_self_joins_inner_sort_should_be_ignored() {
             columns: vec![1, 2],
         }
         .into(),
-        condition: JoinCondition::new(vec![1, 1]),
+        condition: JoinCondition::using(vec![(1, 1)]),
     }
     .to_operator()
     .with_required(ordering(vec![1]));
@@ -479,10 +479,10 @@ fn test_self_joins_inner_sort_should_be_ignored() {
     tester.optimize(
         query.clone(),
         r#"
-02 MergeSortJoin [ord:[1]=01 ord:[1]=00] using=[1, 1]
+02 MergeSortJoin [ord:[1]=01 ord:[1]=00] using=[(1, 1)]
 00 Sort [00] ord=[1]
 00 Scan A cols=[1, 2]
-01 MergeSortJoin [ord:[1]=00 ord:[1]=00] using=[1, 1]
+01 MergeSortJoin [ord:[1]=00 ord:[1]=00] using=[(1, 1)]
 00 Sort [00] ord=[1]
 00 Scan A cols=[1, 2]
 00 Sort [00] ord=[1]
@@ -498,9 +498,9 @@ fn test_self_joins_inner_sort_should_be_ignored() {
         query,
         r#"
 02 Sort [02] ord=[1]
-02 HashJoin [01 00] using=[1, 1]
+02 HashJoin [01 00] using=[(1, 1)]
 00 Scan A cols=[1, 2]
-01 HashJoin [00 00] using=[1, 1]
+01 HashJoin [00 00] using=[(1, 1)]
 00 Scan A cols=[1, 2]
 00 Scan A cols=[1, 2]
 "#,
@@ -521,7 +521,7 @@ fn test_inner_sort_with_enforcer() {
                 columns: vec![1, 2],
             }
             .into(),
-            condition: JoinCondition::new(vec![1, 1]),
+            condition: JoinCondition::using(vec![(1, 1)]),
         }
         .to_operator()
         .with_required(ordering(vec![1]))
@@ -541,7 +541,7 @@ fn test_inner_sort_with_enforcer() {
         r#"
 02 Select [ord:[1]=01] filter=col:1 > 10
 01 Sort [01] ord=[1]
-01 HashJoin [00 00] using=[1, 1]
+01 HashJoin [00 00] using=[(1, 1)]
 00 Scan A cols=[1, 2]
 00 Scan A cols=[1, 2]
 "#,
@@ -562,7 +562,7 @@ fn test_inner_sort_satisfied_by_ordering_providing_operator() {
                 columns: vec![1, 2],
             }
             .into(),
-            condition: JoinCondition::new(vec![1, 1]),
+            condition: JoinCondition::using(vec![(1, 1)]),
         }
         .to_operator()
         .with_required(ordering(vec![1]))
@@ -581,7 +581,7 @@ fn test_inner_sort_satisfied_by_ordering_providing_operator() {
         query,
         r#"
 02 Select [ord:[1]=01] filter=col:1 > 10
-01 MergeSortJoin [ord:[1]=00 ord:[1]=00] using=[1, 1]
+01 MergeSortJoin [ord:[1]=00 ord:[1]=00] using=[(1, 1)]
 00 Sort [00] ord=[1]
 00 Scan A cols=[1, 2]
 00 Sort [00] ord=[1]
@@ -609,10 +609,10 @@ fn test_join_associativity_ax_bxc() {
                 columns: vec![5, 6],
             }
             .into(),
-            condition: JoinCondition::new(vec![3, 6]),
+            condition: JoinCondition::using(vec![(3, 6)]),
         }
         .into(),
-        condition: JoinCondition::new(vec![1, 3]),
+        condition: JoinCondition::using(vec![(1, 3)]),
     }
     .to_operator();
 
@@ -629,9 +629,9 @@ fn test_join_associativity_ax_bxc() {
     tester.optimize(
         query.clone(),
         r#"query: Ax[BxC] => [AxB]xC
-04 HashJoin [05 02] using=[1, 6]
+04 HashJoin [05 02] using=[(1, 6)]
 02 Scan C cols=[5, 6]
-05 HashJoin [00 01] using=[1, 3]
+05 HashJoin [00 01] using=[(1, 3)]
 01 Scan B cols=[3, 4]
 00 Scan A cols=[1, 2]
 "#,
@@ -645,8 +645,8 @@ fn test_join_associativity_ax_bxc() {
     tester.optimize(
         query.clone(),
         r#"query: Ax[BxC] => Ax[BxC]
-04 HashJoin [00 03] using=[1, 3]
-03 HashJoin [01 02] using=[3, 6]
+04 HashJoin [00 03] using=[(1, 3)]
+03 HashJoin [01 02] using=[(3, 6)]
 02 Scan C cols=[5, 6]
 01 Scan B cols=[3, 4]
 00 Scan A cols=[1, 2]
@@ -660,9 +660,9 @@ fn test_join_associativity_ax_bxc() {
     tester.optimize(
         query,
         r#"query: Ax[BxC] => [BxC]xA
-04 HashJoin [03 00] using=[3, 1]
+04 HashJoin [03 00] using=[(3, 1)]
 00 Scan A cols=[1, 2]
-03 HashJoin [01 02] using=[3, 6]
+03 HashJoin [01 02] using=[(3, 6)]
 02 Scan C cols=[5, 6]
 01 Scan B cols=[3, 4]
 "#,
@@ -683,7 +683,7 @@ fn test_join_associativity_axb_xc() {
                 columns: vec![3, 4],
             }
             .into(),
-            condition: JoinCondition::new(vec![1, 4]),
+            condition: JoinCondition::using(vec![(1, 4)]),
         }
         .into(),
         right: LogicalExpr::Get {
@@ -691,7 +691,7 @@ fn test_join_associativity_axb_xc() {
             columns: vec![5, 6],
         }
         .into(),
-        condition: JoinCondition::new(vec![1, 6]),
+        condition: JoinCondition::using(vec![(1, 6)]),
     }
     .to_operator();
 
@@ -708,8 +708,8 @@ fn test_join_associativity_axb_xc() {
     tester.optimize(
         query,
         r#"query: [AxB]xC => Ax[BxC]
-04 HashJoin [00 05] using=[1, 4]
-05 HashJoin [01 03] using=[4, 6]
+04 HashJoin [00 05] using=[(1, 4)]
+05 HashJoin [01 03] using=[(4, 6)]
 03 Scan C cols=[5, 6]
 01 Scan B cols=[3, 4]
 00 Scan A cols=[1, 2]

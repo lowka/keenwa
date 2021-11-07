@@ -25,15 +25,14 @@ impl Rule for JoinCommutativityRule {
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, String> {
         match expr {
             LogicalExpr::Join { left, right, condition } => {
-                let left_columns = left.attrs().logical().output_columns();
-                let right_columns = right.attrs().logical().output_columns();
-                let (left_columns, right_columns) =
-                    JoinCondition::filter_columns(condition, left_columns, right_columns);
+                let (left_columns, right_columns) = match condition {
+                    JoinCondition::Using(using) => using.as_columns_pair(),
+                };
 
                 let expr = LogicalExpr::Join {
                     left: right.clone(),
                     right: left.clone(),
-                    condition: JoinCondition::using(right_columns, left_columns),
+                    condition: JoinCondition::using(right_columns.into_iter().zip(left_columns.into_iter()).collect()),
                 };
                 Ok(RuleResult::Substitute(expr))
             }
@@ -85,11 +84,9 @@ impl Rule for JoinAssociativityRule {
                 right: top_right,
                 condition: top_condition,
             } => {
-                let (top_left_columns, top_right_columns) = JoinCondition::filter_columns(
-                    top_condition,
-                    top_left.attrs().logical().output_columns(),
-                    top_right.attrs().logical().output_columns(),
-                );
+                let (top_left_columns, top_right_columns) = match top_condition {
+                    JoinCondition::Using(using) => using.as_columns_pair(),
+                };
 
                 match (top_left.expr().as_logical(), top_right.expr().as_logical()) {
                     // [AxB]xC -> Ax[BxC]
@@ -101,21 +98,27 @@ impl Rule for JoinAssociativityRule {
                         },
                         _,
                     ) => {
-                        let (inner_left_columns, inner_right_columns) = JoinCondition::filter_columns(
-                            inner_condition,
-                            inner_left.attrs().logical().output_columns(),
-                            inner_right.attrs().logical().output_columns(),
-                        );
+                        let (inner_left_columns, inner_right_columns) = match inner_condition {
+                            JoinCondition::Using(using) => using.as_columns_pair(),
+                        };
 
                         let expr = LogicalExpr::Join {
                             left: inner_left.clone(),
                             right: LogicalExpr::Join {
                                 left: inner_right.clone(),
                                 right: top_right.clone(),
-                                condition: JoinCondition::using(inner_right_columns.clone(), top_right_columns),
+                                condition: JoinCondition::using(
+                                    inner_right_columns
+                                        .clone()
+                                        .into_iter()
+                                        .zip(top_right_columns.into_iter())
+                                        .collect(),
+                                ),
                             }
                             .into(),
-                            condition: JoinCondition::using(inner_left_columns, inner_right_columns),
+                            condition: JoinCondition::using(
+                                inner_left_columns.into_iter().zip(inner_right_columns.into_iter()).collect(),
+                            ),
                         };
                         return Ok(RuleResult::Substitute(expr));
                     }
@@ -128,20 +131,22 @@ impl Rule for JoinAssociativityRule {
                             condition: inner_condition,
                         },
                     ) => {
-                        let (inner_left_columns, inner_right_columns) = JoinCondition::filter_columns(
-                            inner_condition,
-                            inner_left.attrs().logical().output_columns(),
-                            inner_right.attrs().logical().output_columns(),
-                        );
+                        let (inner_left_columns, inner_right_columns) = match inner_condition {
+                            JoinCondition::Using(using) => using.as_columns_pair(),
+                        };
                         let expr = LogicalExpr::Join {
                             left: LogicalExpr::Join {
                                 left: top_left.clone(),
                                 right: inner_left.clone(),
-                                condition: JoinCondition::using(top_left_columns.clone(), inner_left_columns),
+                                condition: JoinCondition::using(
+                                    top_left_columns.clone().into_iter().zip(inner_left_columns.into_iter()).collect(),
+                                ),
                             }
                             .into(),
                             right: inner_right.clone(),
-                            condition: JoinCondition::using(top_left_columns, inner_right_columns),
+                            condition: JoinCondition::using(
+                                top_left_columns.into_iter().zip(inner_right_columns.into_iter()).collect(),
+                            ),
                         };
                         return Ok(RuleResult::Substitute(expr));
                     }
@@ -172,14 +177,14 @@ mod tests {
                 columns: vec![3, 4],
             }
             .into(),
-            condition: JoinCondition::using(vec![1], vec![3]),
+            condition: JoinCondition::using(vec![(1, 3)]),
         };
 
         let mut tester = RuleTester::new(JoinCommutativityRule);
         tester.apply(
             &expr,
             r#"
-Join using=[3, 1]
+Join using=[(3, 1)]
   left: Get B cols=[3, 4]
   right: Get A cols=[1, 2]
 "#,
@@ -200,7 +205,7 @@ Join using=[3, 1]
                     columns: vec![3, 4],
                 }
                 .into(),
-                condition: JoinCondition::new(vec![1, 4]),
+                condition: JoinCondition::using(vec![(1, 4)]),
             }
             .into(),
             right: LogicalExpr::Get {
@@ -208,7 +213,7 @@ Join using=[3, 1]
                 columns: vec![5, 6],
             }
             .into(),
-            condition: JoinCondition::new(vec![1, 6]),
+            condition: JoinCondition::using(vec![(1, 6)]),
         };
         // [AxB(1,4)]xC(1,6) => A(1,6)x[BxC(4,6)]
 
@@ -216,9 +221,9 @@ Join using=[3, 1]
         tester.apply(
             &expr,
             r#"
-Join using=[1, 4]
+Join using=[(1, 4)]
   left: Get A cols=[1, 2]
-  right: Join using=[4, 6]
+  right: Join using=[(4, 6)]
       left: Get B cols=[3, 4]
       right: Get C cols=[5, 6]
 "#,
@@ -244,10 +249,10 @@ Join using=[1, 4]
                     columns: vec![5, 6],
                 }
                 .into(),
-                condition: JoinCondition::new(vec![3, 6]),
+                condition: JoinCondition::using(vec![(3, 6)]),
             }
             .into(),
-            condition: JoinCondition::new(vec![1, 3]),
+            condition: JoinCondition::using(vec![(1, 3)]),
         };
         // A(1,3)x[BxC(3,6)] => [AxB(1,3)]xC(1,6)
 
@@ -255,8 +260,8 @@ Join using=[1, 4]
         tester.apply(
             &expr,
             r#"
-Join using=[1, 6]
-  left: Join using=[1, 3]
+Join using=[(1, 6)]
+  left: Join using=[(1, 3)]
       left: Get A cols=[1, 2]
       right: Get B cols=[3, 4]
   right: Get C cols=[5, 6]

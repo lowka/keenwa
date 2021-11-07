@@ -158,12 +158,10 @@ impl PhysicalExpr {
             PhysicalExpr::Projection { .. } => None,
             PhysicalExpr::Select { .. } => None,
             PhysicalExpr::HashJoin { .. } => None,
-            PhysicalExpr::MergeSortJoin {
-                left, right, condition, ..
-            } => {
-                let left_columns = left.attrs().logical().output_columns();
-                let right_columns = right.attrs().logical().output_columns();
-                let (left, right) = JoinCondition::filter_columns(condition, left_columns, right_columns);
+            PhysicalExpr::MergeSortJoin { condition, .. } => {
+                let (left, right) = match condition {
+                    JoinCondition::Using(using) => using.as_columns_pair(),
+                };
                 let left_ordering = PhysicalProperties::new(OrderingChoice::new(left));
                 let right_ordering = PhysicalProperties::new(OrderingChoice::new(right));
 
@@ -257,15 +255,15 @@ impl PhysicalExpr {
                 f.write_input("left", left);
                 f.write_input("right", right);
                 match condition {
-                    JoinCondition::Using(using) => f.write_value("using", format!("{:?}", using.columns())),
-                }
+                    JoinCondition::Using(using) => f.write_value("using", format!("{}", using)),
+                };
             }
             PhysicalExpr::MergeSortJoin { left, right, condition } => {
                 f.write_name("MergeSortJoin");
                 f.write_input("left", left);
                 f.write_input("right", right);
                 match condition {
-                    JoinCondition::Using(using) => f.write_value("using", format!("{:?}", using.columns())),
+                    JoinCondition::Using(using) => f.write_value("using", format!("{}", using)),
                 }
             }
             PhysicalExpr::Scan { source, columns } => {

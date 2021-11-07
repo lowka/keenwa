@@ -170,9 +170,7 @@ impl LogicalExpr {
                 f.write_input("left", left);
                 f.write_input("right", right);
                 match condition {
-                    JoinCondition::Using(using) => {
-                        f.write_value("using", format!("{:?}", using.columns()));
-                    }
+                    JoinCondition::Using(using) => f.write_value("using", format!("{}", using)),
                 }
             }
             LogicalExpr::Get { source, columns } => {

@@ -1,5 +1,5 @@
 use crate::meta::ColumnId;
-use std::collections::HashSet;
+use std::fmt::{Display, Formatter};
 
 //TODO:
 // - Add join types
@@ -13,76 +13,56 @@ pub enum JoinCondition {
 }
 
 impl JoinCondition {
-    pub fn new(columns: Vec<ColumnId>) -> Self {
+    pub fn using(columns: Vec<(ColumnId, ColumnId)>) -> Self {
         JoinCondition::Using(JoinUsing::new(columns))
-    }
-
-    pub fn using(left_columns: Vec<ColumnId>, right_columns: Vec<ColumnId>) -> Self {
-        assert_eq!(left_columns.len(), right_columns.len(), "left.len != right.len");
-        let mut columns = Vec::with_capacity(left_columns.len() + right_columns.len());
-        for (l, r) in left_columns.into_iter().zip(right_columns) {
-            columns.push(l);
-            columns.push(r);
-        }
-        JoinCondition::Using(JoinUsing::new(columns))
-    }
-
-    /// The columns used by this condition.
-    pub fn columns(&self) -> &[ColumnId] {
-        match self {
-            JoinCondition::Using(using) => using.columns(),
-        }
-    }
-
-    pub fn filter_columns(
-        condition: &JoinCondition,
-        left: &[ColumnId],
-        right: &[ColumnId],
-    ) -> (Vec<ColumnId>, Vec<ColumnId>) {
-        fn filter_non_duplicates(condition: &JoinCondition, output: &[ColumnId]) -> Vec<ColumnId> {
-            let mut tmp = HashSet::new();
-            let mut out = Vec::new();
-            for id in condition.columns() {
-                if output.contains(id) && tmp.insert(*id) {
-                    out.push(*id);
-                }
-            }
-            out
-        }
-        let left_join_columns = filter_non_duplicates(condition, left);
-        let right_join_columns = filter_non_duplicates(condition, right);
-
-        assert!(!left_join_columns.is_empty(), "left join columns are empty");
-        assert!(!right_join_columns.is_empty(), "right join columns are empty");
-
-        (left_join_columns, right_join_columns)
     }
 }
 
-/// USING (`column_list`) condition where the `column_list` is written in the following form:
-/// ```text:
-/// left_col1, right_col1, left_col2, right_col2 and so on.
-/// ```
+/// USING (`column_list`) condition.
 #[derive(Debug, Clone)]
 pub struct JoinUsing {
-    columns: Vec<ColumnId>,
+    left: Vec<ColumnId>,
+    right: Vec<ColumnId>,
 }
 
 impl JoinUsing {
-    pub fn new(columns: Vec<ColumnId>) -> Self {
-        assert_eq!(
-            columns.len() % 2,
-            0,
-            "Expected an even number of columns but got {:?}: {:?}",
-            columns.len(),
-            columns
-        );
+    /// Creates a new join condition from the given collection of (left, right) column pairs.
+    pub fn new(columns: Vec<(ColumnId, ColumnId)>) -> Self {
+        assert!(columns.len() > 0, "No columns have been specified");
+        let mut left = Vec::with_capacity(columns.len());
+        let mut right = Vec::with_capacity(columns.len());
 
-        JoinUsing { columns }
+        for (l, r) in columns {
+            left.push(l);
+            right.push(r);
+        }
+
+        JoinUsing { left, right }
     }
 
-    /// The columns used by this condition.
-    pub fn columns(&self) -> &[ColumnId] {
-        &self.columns
+    /// The columns used by the left side of a join.
+    pub fn left_columns(&self) -> &[ColumnId] {
+        &self.left
+    }
+
+    /// The columns used by the right side of a join.
+    pub fn right_columns(&self) -> &[ColumnId] {
+        &self.right
+    }
+
+    /// Returns this condition as a pair of (left columns, right columns).
+    pub fn as_columns_pair(&self) -> (Vec<ColumnId>, Vec<ColumnId>) {
+        let left = self.left.iter().copied().collect();
+        let right = self.right.iter().copied().collect();
+        (left, right)
+    }
+}
+
+impl Display for JoinUsing {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let left = self.left.iter();
+        let right = self.right.iter();
+        let columns: Vec<_> = left.zip(right).collect();
+        write!(f, "{:?}", columns)
     }
 }
