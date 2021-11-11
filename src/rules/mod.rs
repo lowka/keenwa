@@ -36,8 +36,9 @@ pub trait Rule {
     //TODO: Hide logical expression inside the RuleContext and provide access to via Operation::as_logical
     fn matches(&self, ctx: &RuleContext, expr: &LogicalExpr) -> Option<RuleMatch>;
 
-    /// Applies this rule to the given expression `expr`.
-    fn apply(&self, ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, OptimizerError>;
+    /// Tries to apply this rule to the given expression `expr`.
+    /// If this rule can not be applied to the given expression method must return `Ok(None)`.
+    fn apply(&self, ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError>;
 }
 
 impl Debug for dyn Rule {
@@ -114,12 +115,16 @@ pub trait RuleSet: Debug {
     /// Returns an iterator over available optimization rules.
     fn get_rules(&self) -> RuleIterator;
 
-    /// Apply a rule with the given identifier to the expression `expr`.
-    fn apply_rule(&self, rule_id: &RuleId, ctx: &RuleContext, expr: &LogicalExpr)
-        -> Result<RuleResult, OptimizerError>;
+    /// Applies a rule with the given identifier to the expression `expr`.
+    fn apply_rule(
+        &self,
+        rule_id: &RuleId,
+        ctx: &RuleContext,
+        expr: &LogicalExpr,
+    ) -> Result<Option<RuleResult>, OptimizerError>;
 
     /// Checks whether the given physical expression satisfies the required physical properties.
-    ///FIXME: return a struct - rename method.
+    //FIXME: return a struct - rename method.
     fn evaluate_properties(
         &self,
         expr: &PhysicalExpr,
@@ -127,7 +132,7 @@ pub trait RuleSet: Debug {
     ) -> Result<(bool, bool), OptimizerError>;
 
     /// Creates an enforcer operator for the specified physical properties.
-    /// If enforcer can not be created returns an error.
+    /// If enforcer can not be created this method must return an error.
     fn create_enforcer(
         &self,
         required_properties: &PhysicalProperties,
@@ -217,7 +222,7 @@ impl RuleSet for StaticRuleSet {
         rule_id: &RuleId,
         ctx: &RuleContext,
         expr: &LogicalExpr,
-    ) -> Result<RuleResult, OptimizerError> {
+    ) -> Result<Option<RuleResult>, OptimizerError> {
         match self.rules.get(rule_id) {
             Some(rule) => rule.apply(ctx, expr),
             None => Err(OptimizerError::Internal(format!("Rule#{} does not exist", rule_id))),

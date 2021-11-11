@@ -23,7 +23,7 @@ impl Rule for JoinCommutativityRule {
         }
     }
 
-    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, OptimizerError> {
+    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
             LogicalExpr::Join { left, right, condition } => {
                 let (left_columns, right_columns) = match condition {
@@ -35,9 +35,9 @@ impl Rule for JoinCommutativityRule {
                     right: left.clone(),
                     condition: JoinCondition::using(right_columns.into_iter().zip(left_columns.into_iter()).collect()),
                 };
-                Ok(RuleResult::Substitute(expr))
+                Ok(Some(RuleResult::Substitute(expr)))
             }
-            _ => unexpected_logical_operator("Join", expr),
+            _ => Ok(None),
         }
     }
 }
@@ -59,26 +59,14 @@ impl Rule for JoinAssociativityRule {
     }
 
     fn matches(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Option<RuleMatch> {
-        match expr {
-            LogicalExpr::Join {
-                left: top_left,
-                right: top_right,
-                ..
-            } => {
-                let top_left = top_left.expr().as_logical();
-                let top_right = top_right.expr().as_logical();
-
-                match (top_left, top_right) {
-                    // [AxB]xC -> Ax[BxC]
-                    (LogicalExpr::Join { .. }, _) | (_, LogicalExpr::Join { .. }) => Some(RuleMatch::Group),
-                    _ => None,
-                }
-            }
-            _ => None,
+        if matches!(expr, LogicalExpr::Join { .. }) {
+            Some(RuleMatch::Group)
+        } else {
+            None
         }
     }
 
-    fn apply(&self, ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, OptimizerError> {
+    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
             LogicalExpr::Join {
                 left: top_left,
@@ -121,7 +109,7 @@ impl Rule for JoinAssociativityRule {
                                 inner_left_columns.into_iter().zip(inner_right_columns.into_iter()).collect(),
                             ),
                         };
-                        return Ok(RuleResult::Substitute(expr));
+                        return Ok(Some(RuleResult::Substitute(expr)));
                     }
                     // Ax[BxC] -> [AxB]xC
                     (
@@ -149,14 +137,14 @@ impl Rule for JoinAssociativityRule {
                                 top_left_columns.into_iter().zip(inner_right_columns.into_iter()).collect(),
                             ),
                         };
-                        return Ok(RuleResult::Substitute(expr));
+                        return Ok(Some(RuleResult::Substitute(expr)));
                     }
                     _ => {}
                 }
             }
             _ => {}
         }
-        unexpected_logical_operator("Join: Ax[BxC] or [AxB]xC", expr)
+        Ok(None)
     }
 }
 

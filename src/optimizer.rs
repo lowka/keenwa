@@ -415,28 +415,30 @@ fn apply_rule<R>(
             .expect("Failed to apply a rule")
     };
 
-    match result {
-        RuleResult::Substitute(expr) => {
-            let new_operator = OperatorExpr::Logical(Box::new(expr));
-            let (_, new_expr) = memo.insert_member(&ctx.group, Operator::from(new_operator));
+    if let Some(result) = result {
+        match result {
+            RuleResult::Substitute(expr) => {
+                let new_operator = OperatorExpr::Logical(Box::new(expr));
+                let (_, new_expr) = memo.insert_member(&ctx.group, Operator::from(new_operator));
 
-            log::debug!(" + Logical expression: {}", &new_expr);
+                log::debug!(" + Logical expression: {}", &new_expr);
 
-            runtime_state.tasks.schedule(Task::OptimizeExpr {
-                ctx,
-                expr: new_expr,
-                explore,
-            });
-        }
-        RuleResult::Implementation(expr) => {
-            let new_operator = OperatorExpr::Physical(Box::new(expr));
-            let new_operator = Operator::from(new_operator);
-            let (_, new_expr) = memo.insert_member(&ctx.group, new_operator);
+                runtime_state.tasks.schedule(Task::OptimizeExpr {
+                    ctx,
+                    expr: new_expr,
+                    explore,
+                });
+            }
+            RuleResult::Implementation(expr) => {
+                let new_operator = OperatorExpr::Physical(Box::new(expr));
+                let new_operator = Operator::from(new_operator);
+                let (_, new_expr) = memo.insert_member(&ctx.group, new_operator);
 
-            log::debug!(" + Physical expression: {}", &new_expr);
+                log::debug!(" + Physical expression: {}", &new_expr);
 
-            let task = get_optimize_inputs_task(&ctx, &new_expr, rule_set);
-            runtime_state.tasks.schedule(task);
+                let task = get_optimize_inputs_task(&ctx, &new_expr, rule_set);
+                runtime_state.tasks.schedule(task);
+            }
         }
     }
 }

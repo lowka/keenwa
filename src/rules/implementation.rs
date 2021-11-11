@@ -33,7 +33,7 @@ impl Rule for GetToScanRule {
         }
     }
 
-    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, OptimizerError> {
+    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
             LogicalExpr::Get { source, columns } => {
                 let table = self.catalog.get_table(source);
@@ -43,14 +43,14 @@ impl Rule for GetToScanRule {
                             source: source.into(),
                             columns: columns.clone(),
                         };
-                        Ok(RuleResult::Implementation(expr))
+                        Ok(Some(RuleResult::Implementation(expr)))
                     }
                     None => {
                         Err(OptimizerError::Internal(format!("Table is not found or does not exists: {:?}", source)))
                     }
                 }
             }
-            _ => unexpected_logical_operator("Get", expr),
+            _ => Ok(None),
         }
     }
 }
@@ -75,16 +75,16 @@ impl Rule for SelectRule {
         }
     }
 
-    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, OptimizerError> {
+    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
             LogicalExpr::Select { input, filter } => {
                 let expr = PhysicalExpr::Select {
                     input: input.clone(),
                     filter: filter.clone(),
                 };
-                Ok(RuleResult::Implementation(expr))
+                Ok(Some(RuleResult::Implementation(expr)))
             }
-            _ => unexpected_logical_operator("Select", expr),
+            _ => Ok(None),
         }
     }
 }
@@ -109,16 +109,16 @@ impl Rule for ProjectionRule {
         }
     }
 
-    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, OptimizerError> {
+    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
             LogicalExpr::Projection { input, columns } => {
                 let expr = PhysicalExpr::Projection {
                     input: input.clone(),
                     columns: columns.clone(),
                 };
-                Ok(RuleResult::Implementation(expr))
+                Ok(Some(RuleResult::Implementation(expr)))
             }
-            _ => unexpected_logical_operator("Projection", expr),
+            _ => Ok(None),
         }
     }
 }
@@ -143,7 +143,7 @@ impl Rule for HashJoinRule {
         }
     }
 
-    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, OptimizerError> {
+    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
             LogicalExpr::Join { left, right, condition } => {
                 let expr = PhysicalExpr::HashJoin {
@@ -151,9 +151,9 @@ impl Rule for HashJoinRule {
                     right: right.clone(),
                     condition: condition.clone(),
                 };
-                Ok(RuleResult::Implementation(expr))
+                Ok(Some(RuleResult::Implementation(expr)))
             }
-            _ => unexpected_logical_operator("Join", expr),
+            _ => Ok(None),
         }
     }
 }
@@ -178,7 +178,7 @@ impl Rule for MergeSortJoinRule {
         }
     }
 
-    fn apply(&self, ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, OptimizerError> {
+    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
             LogicalExpr::Join { left, right, condition } => {
                 let expr = PhysicalExpr::MergeSortJoin {
@@ -186,9 +186,9 @@ impl Rule for MergeSortJoinRule {
                     right: right.clone(),
                     condition: condition.clone(),
                 };
-                Ok(RuleResult::Implementation(expr))
+                Ok(Some(RuleResult::Implementation(expr)))
             }
-            _ => unexpected_logical_operator("Join", expr),
+            _ => Ok(None),
         }
     }
 }
@@ -230,29 +230,27 @@ impl Rule for IndexOnlyScanRule {
         RuleType::Implementation
     }
 
-    fn matches(&self, ctx: &RuleContext, expr: &LogicalExpr) -> Option<RuleMatch> {
-        if let LogicalExpr::Get { source, columns, .. } = expr {
-            if self.find_index(ctx, source, columns).is_some() {
-                Some(RuleMatch::Expr)
-            } else {
-                None
-            }
+    fn matches(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Option<RuleMatch> {
+        if matches!(expr, LogicalExpr::Get { .. }) {
+            Some(RuleMatch::Expr)
         } else {
             None
         }
     }
 
-    fn apply(&self, ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, OptimizerError> {
+    fn apply(&self, ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
             LogicalExpr::Get { source, columns } => {
-                let _ = self.find_index(ctx, source, columns).expect("Index does not exist");
-                let expr = PhysicalExpr::IndexScan {
-                    source: source.clone(),
-                    columns: columns.clone(),
-                };
-                Ok(RuleResult::Implementation(expr))
+                let index = self.find_index(ctx, source, columns);
+                Ok(index.map(|_| {
+                    let expr = PhysicalExpr::IndexScan {
+                        source: source.clone(),
+                        columns: columns.clone(),
+                    };
+                    RuleResult::Implementation(expr)
+                }))
             }
-            _ => unexpected_logical_operator("Get", expr),
+            _ => Ok(None),
         }
     }
 }
@@ -269,14 +267,14 @@ impl Rule for HashAggregateRule {
     }
 
     fn matches(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Option<RuleMatch> {
-        if let LogicalExpr::Aggregate { .. } = expr {
+        if matches!(expr, LogicalExpr::Aggregate { .. }) {
             Some(RuleMatch::Expr)
         } else {
             None
         }
     }
 
-    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, OptimizerError> {
+    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         if let LogicalExpr::Aggregate {
             input,
             aggr_exprs,
@@ -288,9 +286,9 @@ impl Rule for HashAggregateRule {
                 aggr_exprs: aggr_exprs.clone(),
                 group_exprs: group_exprs.clone(),
             };
-            Ok(RuleResult::Implementation(expr))
+            Ok(Some(RuleResult::Implementation(expr)))
         } else {
-            unexpected_logical_operator("Aggregate", expr)
+            Ok(None)
         }
     }
 }

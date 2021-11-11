@@ -51,13 +51,14 @@ impl RuleTester {
 
         let result = self.rule.apply(&ctx, expr_ref.mexpr().expr().as_logical());
         match result {
-            Ok(RuleResult::Substitute(new_expr)) => {
+            Ok(Some(RuleResult::Substitute(new_expr))) => {
                 let (_, new_expr) = self.memo.insert(Operator::from(OperatorExpr::from(new_expr)));
                 let actual_expr = format_expr(new_expr.mexpr());
 
                 assert_eq!(actual_expr.trim_end(), expected.trim());
             }
-            Ok(_) => panic!("Unexpected result: {:?}", result),
+            Ok(Some(_)) => panic!("Unexpected result: {:?}", result),
+            Ok(None) => panic!("Rule matched but not applied: {:?}", self.rule),
             Err(e) => panic!("Failed to apply a rule. Rule: {:?}. Error: {}", self.rule, e),
         };
     }
@@ -104,7 +105,7 @@ where
         rule_id: &RuleId,
         ctx: &RuleContext,
         expr: &LogicalExpr,
-    ) -> Result<RuleResult, OptimizerError> {
+    ) -> Result<Option<RuleResult>, OptimizerError> {
         self.rule_set.apply_rule(rule_id, ctx, expr)
     }
 
