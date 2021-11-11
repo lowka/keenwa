@@ -28,7 +28,7 @@ pub struct JoinUsing {
 impl JoinUsing {
     /// Creates a new join condition from the given collection of (left, right) column pairs.
     pub fn new(columns: Vec<(ColumnId, ColumnId)>) -> Self {
-        assert!(columns.len() > 0, "No columns have been specified");
+        assert!(!columns.is_empty(), "No columns have been specified");
         let mut left = Vec::with_capacity(columns.len());
         let mut right = Vec::with_capacity(columns.len());
 

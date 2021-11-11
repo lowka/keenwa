@@ -143,7 +143,7 @@ mod test {
     fn new_statistics_builder(tables: Vec<(&str, usize)>) -> impl StatisticsBuilder {
         let catalog = MutableCatalog::new();
 
-        for (name, row_count) in tables {
+        for (name, _row_count) in tables {
             let table = TableBuilder::new(name)
                 .add_column(format!("{}1", name).as_str(), DataType::Int32)
                 .add_column(format!("{}2", name).as_str(), DataType::Int32)

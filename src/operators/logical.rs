@@ -145,8 +145,8 @@ impl LogicalExpr {
             } => {
                 f.write_name("LogicalAggregate");
                 f.write_input("input", input);
-                f.write_values("aggrs", &aggr_exprs);
-                f.write_values("groups", &group_exprs);
+                f.write_values("aggrs", aggr_exprs);
+                f.write_values("groups", group_exprs);
             }
         }
     }

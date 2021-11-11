@@ -232,8 +232,8 @@ impl PhysicalExpr {
             } => {
                 f.write_name("HashAggregate");
                 f.write_input("input", input);
-                f.write_values("aggrs", &aggr_exprs);
-                f.write_values("groups", &group_exprs);
+                f.write_values("aggrs", aggr_exprs);
+                f.write_values("groups", group_exprs);
             }
         }
     }
