@@ -24,7 +24,7 @@ impl MutableCatalog {
         match schemas.entry(schema.to_string()) {
             Entry::Occupied(o) => {
                 let schema = o.get();
-                let schema: &MutableSchema = schema.as_any().downcast_ref::<MutableSchema>().unwrap();
+                let schema = MutableSchema::from_ref(schema);
                 schema.add_table(table);
             }
             Entry::Vacant(v) => {
@@ -40,8 +40,7 @@ impl MutableCatalog {
         match schemas.entry(schema.to_string()) {
             Entry::Occupied(o) => {
                 let schema = o.get();
-                let schema: Option<&MutableSchema> = schema.as_any().downcast_ref();
-                let schema = schema.unwrap();
+                let schema = MutableSchema::from_ref(schema);
                 schema.add_index(index);
             }
             Entry::Vacant(v) => {
@@ -55,7 +54,7 @@ impl MutableCatalog {
     pub fn remove_table(&self, schema: &str, table: &str) {
         let mut schemas = self.schemas.write().unwrap();
         if let Some(schema) = schemas.get_mut(schema) {
-            let schema: &MutableSchema = schema.as_any().downcast_ref::<MutableSchema>().unwrap();
+            let schema = MutableSchema::from_ref(schema);
             schema.remove_table(table);
         }
     }
@@ -63,7 +62,7 @@ impl MutableCatalog {
     pub fn remove_index(&self, schema: &str, index: &str) {
         let mut schemas = self.schemas.write().unwrap();
         if let Some(schema) = schemas.get_mut(schema) {
-            let schema: &MutableSchema = schema.as_any().downcast_ref::<MutableSchema>().unwrap();
+            let schema = MutableSchema::from_ref(schema);
             schema.remove_index(index);
         }
     }
@@ -122,6 +121,13 @@ impl MutableSchema {
         MutableSchema {
             inner: RwLock::new(Inner::default()),
         }
+    }
+
+    fn from_ref(schema: &SchemaRef) -> &MutableSchema {
+        schema
+            .as_any()
+            .downcast_ref::<MutableSchema>()
+            .unwrap_or_else(|| panic!("Unable to downcast to MutableSchema: {:?}", schema))
     }
 
     pub fn add_table(&self, table: Table) {

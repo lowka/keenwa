@@ -1,3 +1,4 @@
+use crate::error::OptimizerError;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::iter::FromIterator;
@@ -36,7 +37,7 @@ pub trait Rule {
     fn matches(&self, ctx: &RuleContext, expr: &LogicalExpr) -> Option<RuleMatch>;
 
     /// Applies this rule to the given expression `expr`.
-    fn apply(&self, ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, String>;
+    fn apply(&self, ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, OptimizerError>;
 }
 
 impl Debug for dyn Rule {
@@ -114,11 +115,16 @@ pub trait RuleSet: Debug {
     fn get_rules(&self) -> RuleIterator;
 
     /// Apply a rule with the given identifier to the expression `expr`.
-    fn apply_rule(&self, rule_id: &RuleId, ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, String>;
+    fn apply_rule(&self, rule_id: &RuleId, ctx: &RuleContext, expr: &LogicalExpr)
+        -> Result<RuleResult, OptimizerError>;
 
     /// Checks whether the given physical expression satisfies the required physical properties.
     ///FIXME: return a struct - rename method.
-    fn evaluate_properties(&self, expr: &PhysicalExpr, required_properties: &PhysicalProperties) -> (bool, bool);
+    fn evaluate_properties(
+        &self,
+        expr: &PhysicalExpr,
+        required_properties: &PhysicalProperties,
+    ) -> Result<(bool, bool), OptimizerError>;
 
     /// Creates an enforcer operator for the specified physical properties.
     /// If enforcer can not be created returns an error.
@@ -126,7 +132,7 @@ pub trait RuleSet: Debug {
         &self,
         required_properties: &PhysicalProperties,
         input: InputExpr,
-    ) -> Result<(PhysicalExpr, PhysicalProperties), String>;
+    ) -> Result<(PhysicalExpr, PhysicalProperties), OptimizerError>;
 
     /// Provides a hint to the optimizer whether or not to explore an alternative plan for the given expression
     /// that can use an enforcer as a parent expression. For example:
@@ -206,17 +212,26 @@ impl RuleSet for StaticRuleSet {
         RuleIterator::new(rules)
     }
 
-    fn apply_rule(&self, rule_id: &RuleId, ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, String> {
+    fn apply_rule(
+        &self,
+        rule_id: &RuleId,
+        ctx: &RuleContext,
+        expr: &LogicalExpr,
+    ) -> Result<RuleResult, OptimizerError> {
         match self.rules.get(rule_id) {
             Some(rule) => rule.apply(ctx, expr),
-            None => Err(format!("Rule#{} does not exist", rule_id)),
+            None => Err(OptimizerError::Internal(format!("Rule#{} does not exist", rule_id))),
         }
     }
 
-    fn evaluate_properties(&self, expr: &PhysicalExpr, required_properties: &PhysicalProperties) -> (bool, bool) {
+    fn evaluate_properties(
+        &self,
+        expr: &PhysicalExpr,
+        required_properties: &PhysicalProperties,
+    ) -> Result<(bool, bool), OptimizerError> {
         if required_properties.is_empty() {
             // provides_property, retains_property
-            (true, false)
+            Ok((true, false))
         } else {
             self.enforcers.evaluate_properties(expr, required_properties)
         }
@@ -226,7 +241,7 @@ impl RuleSet for StaticRuleSet {
         &self,
         required_properties: &PhysicalProperties,
         input: InputExpr,
-    ) -> Result<(PhysicalExpr, PhysicalProperties), String> {
+    ) -> Result<(PhysicalExpr, PhysicalProperties), OptimizerError> {
         assert!(
             !required_properties.is_empty(),
             "Unable to create an enforcer - no required properties: {:?}",
@@ -239,4 +254,9 @@ impl RuleSet for StaticRuleSet {
     fn can_explore_with_enforcer(&self, expr: &LogicalExpr, required_properties: &PhysicalProperties) -> bool {
         self.enforcers.can_explore_with_enforcer(expr, required_properties)
     }
+}
+
+/// Returns an error that indicates that the given logical expression does not match.
+pub fn unexpected_logical_operator(expected: &str, expr: &LogicalExpr) -> Result<RuleResult, OptimizerError> {
+    Err(OptimizerError::Internal(format!("Unexpected operator. Expected {} but got: {:?}", expected, expr)))
 }

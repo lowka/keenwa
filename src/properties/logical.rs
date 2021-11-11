@@ -1,3 +1,4 @@
+use crate::error::OptimizerError;
 use crate::meta::ColumnId;
 use crate::operators::expressions::Expr;
 use crate::operators::join::JoinCondition;
@@ -55,7 +56,11 @@ impl Default for LogicalProperties {
 
 /// Provides logical properties for memo expressions.
 pub trait PropertiesProvider: Debug {
-    fn build_properties(&self, expr: &OperatorExpr, statistics: Option<&Statistics>) -> LogicalProperties;
+    fn build_properties(
+        &self,
+        expr: &OperatorExpr,
+        statistics: Option<&Statistics>,
+    ) -> Result<LogicalProperties, OptimizerError>;
 }
 
 #[derive(Debug)]
@@ -64,16 +69,20 @@ pub struct LogicalPropertiesBuilder {
 }
 
 impl PropertiesProvider for LogicalPropertiesBuilder {
-    fn build_properties(&self, expr: &OperatorExpr, statistics: Option<&Statistics>) -> LogicalProperties {
+    fn build_properties(
+        &self,
+        expr: &OperatorExpr,
+        statistics: Option<&Statistics>,
+    ) -> Result<LogicalProperties, OptimizerError> {
         match expr {
             OperatorExpr::Logical(expr) => {
-                let statistics = self.statistics.build_statistics(expr, statistics);
-                self.build_for_logical(expr, statistics)
+                let statistics = self.statistics.build_statistics(expr, statistics)?;
+                Ok(self.build_for_logical(expr, statistics))
             }
             OperatorExpr::Physical(expr) => {
                 self.build_for_physical(expr);
                 // Attributes are not used by physical expressions
-                LogicalProperties::empty()
+                Ok(LogicalProperties::empty())
             }
         }
     }

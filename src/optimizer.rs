@@ -48,7 +48,12 @@ where
             fn new_expr(&self, expr: &Self::Expr, attrs: Self::Attrs) -> Self::Attrs {
                 // Every time a new expression is added to a memo we need to compute logical properties of that expression.
                 let Properties { logical, required } = attrs;
-                let logical = self.properties_provider.build_properties(expr.expr(), logical.statistics());
+                let logical = self
+                    .properties_provider
+                    .build_properties(expr.expr(), logical.statistics())
+                    // If we has not been able to assemble logical properties for the given expression
+                    // than something has gone terribly wrong and we have no other option but to unwrap an error.
+                    .expect("Failed to build logical properties");
 
                 Properties::new(logical, required)
             }
@@ -552,7 +557,9 @@ where
 {
     let physical_expr = expr.expr().as_physical();
     let required_properties = physical_expr.build_required_properties();
-    let (provides_property, retains_property) = rule_set.evaluate_properties(physical_expr, &ctx.required_properties);
+    let (provides_property, retains_property) = rule_set
+        .evaluate_properties(physical_expr, &ctx.required_properties)
+        .expect("Invalid expr or required physical properties");
 
     if ctx.required_properties.is_empty() && required_properties.is_none() {
         // Optimization context has no required properties + expression does not require any property from its inputs.

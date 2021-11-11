@@ -1,3 +1,4 @@
+use crate::error::OptimizerError;
 use crate::memo::{InputNode, MemoExpr, MemoExprCallback, MemoExprFormatter, StringMemoFormatter};
 use crate::meta::Metadata;
 use crate::operators::logical::LogicalExpr;
@@ -98,11 +99,20 @@ where
         }
     }
 
-    fn apply_rule(&self, rule_id: &RuleId, ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, String> {
+    fn apply_rule(
+        &self,
+        rule_id: &RuleId,
+        ctx: &RuleContext,
+        expr: &LogicalExpr,
+    ) -> Result<RuleResult, OptimizerError> {
         self.rule_set.apply_rule(rule_id, ctx, expr)
     }
 
-    fn evaluate_properties(&self, expr: &PhysicalExpr, required_properties: &PhysicalProperties) -> (bool, bool) {
+    fn evaluate_properties(
+        &self,
+        expr: &PhysicalExpr,
+        required_properties: &PhysicalProperties,
+    ) -> Result<(bool, bool), OptimizerError> {
         self.rule_set.evaluate_properties(expr, required_properties)
     }
 
@@ -110,7 +120,7 @@ where
         &self,
         required_properties: &PhysicalProperties,
         input: InputExpr,
-    ) -> Result<(PhysicalExpr, PhysicalProperties), String> {
+    ) -> Result<(PhysicalExpr, PhysicalProperties), OptimizerError> {
         self.rule_set.create_enforcer(required_properties, input)
     }
 
@@ -254,8 +264,12 @@ impl MemoExprFormatter for FormatInputs<'_> {
 struct NoStatsBuilder;
 
 impl StatisticsBuilder for NoStatsBuilder {
-    fn build_statistics(&self, _expr: &LogicalExpr, _statistics: Option<&Statistics>) -> Option<Statistics> {
-        None
+    fn build_statistics(
+        &self,
+        _expr: &LogicalExpr,
+        _statistics: Option<&Statistics>,
+    ) -> Result<Option<Statistics>, OptimizerError> {
+        Ok(None)
     }
 }
 
@@ -264,7 +278,9 @@ impl MemoExprCallback for LogicalPropertiesBuilder {
     type Attrs = Properties;
 
     fn new_expr(&self, expr: &Self::Expr, attrs: Self::Attrs) -> Self::Attrs {
-        let logical = self.build_properties(expr.expr(), attrs.logical().statistics());
+        let logical = self
+            .build_properties(expr.expr(), attrs.logical().statistics())
+            .expect("Failed to build logical properties");
         Properties::new(logical, attrs.required)
     }
 }

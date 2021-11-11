@@ -1,8 +1,9 @@
 use crate::catalog::{CatalogRef, IndexRef};
+use crate::error::OptimizerError;
 use crate::meta::ColumnId;
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;
-use crate::rules::{Rule, RuleContext, RuleMatch, RuleResult, RuleType};
+use crate::rules::{unexpected_logical_operator, Rule, RuleContext, RuleMatch, RuleResult, RuleType};
 
 #[derive(Debug)]
 pub struct GetToScanRule {
@@ -32,7 +33,7 @@ impl Rule for GetToScanRule {
         }
     }
 
-    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, String> {
+    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, OptimizerError> {
         match expr {
             LogicalExpr::Get { source, columns } => {
                 let table = self.catalog.get_table(source);
@@ -44,10 +45,12 @@ impl Rule for GetToScanRule {
                         };
                         Ok(RuleResult::Implementation(expr))
                     }
-                    None => Err(format!("Table is not found or does not exists: {:?}", source)),
+                    None => {
+                        Err(OptimizerError::Internal(format!("Table is not found or does not exists: {:?}", source)))
+                    }
                 }
             }
-            _ => Err(format!("Unexpected operator. Expected Scan but got: {:?}", expr)),
+            _ => unexpected_logical_operator("Get", expr),
         }
     }
 }
@@ -72,7 +75,7 @@ impl Rule for SelectRule {
         }
     }
 
-    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, String> {
+    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, OptimizerError> {
         match expr {
             LogicalExpr::Select { input, filter } => {
                 let expr = PhysicalExpr::Select {
@@ -81,7 +84,7 @@ impl Rule for SelectRule {
                 };
                 Ok(RuleResult::Implementation(expr))
             }
-            _ => Err(format!("Unexpected operator. Expected Select but got: {:?}", expr)),
+            _ => unexpected_logical_operator("Select", expr),
         }
     }
 }
@@ -106,7 +109,7 @@ impl Rule for ProjectionRule {
         }
     }
 
-    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, String> {
+    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, OptimizerError> {
         match expr {
             LogicalExpr::Projection { input, columns } => {
                 let expr = PhysicalExpr::Projection {
@@ -115,7 +118,7 @@ impl Rule for ProjectionRule {
                 };
                 Ok(RuleResult::Implementation(expr))
             }
-            _ => Err(format!("Unexpected operator. Expected Projection but got: {:?}", expr)),
+            _ => unexpected_logical_operator("Projection", expr),
         }
     }
 }
@@ -140,7 +143,7 @@ impl Rule for HashJoinRule {
         }
     }
 
-    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, String> {
+    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, OptimizerError> {
         match expr {
             LogicalExpr::Join { left, right, condition } => {
                 let expr = PhysicalExpr::HashJoin {
@@ -150,7 +153,7 @@ impl Rule for HashJoinRule {
                 };
                 Ok(RuleResult::Implementation(expr))
             }
-            _ => Err(format!("Unexpected operator: {:?}", expr)),
+            _ => unexpected_logical_operator("Join", expr),
         }
     }
 }
@@ -175,7 +178,7 @@ impl Rule for MergeSortJoinRule {
         }
     }
 
-    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, String> {
+    fn apply(&self, ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, OptimizerError> {
         match expr {
             LogicalExpr::Join { left, right, condition } => {
                 let expr = PhysicalExpr::MergeSortJoin {
@@ -185,7 +188,7 @@ impl Rule for MergeSortJoinRule {
                 };
                 Ok(RuleResult::Implementation(expr))
             }
-            _ => Err(format!("Unexpected operator. Expected Join but got : {:?}", expr)),
+            _ => unexpected_logical_operator("Join", expr),
         }
     }
 }
@@ -239,7 +242,7 @@ impl Rule for IndexOnlyScanRule {
         }
     }
 
-    fn apply(&self, ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, String> {
+    fn apply(&self, ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, OptimizerError> {
         match expr {
             LogicalExpr::Get { source, columns } => {
                 let _ = self.find_index(ctx, source, columns).expect("Index does not exist");
@@ -249,7 +252,7 @@ impl Rule for IndexOnlyScanRule {
                 };
                 Ok(RuleResult::Implementation(expr))
             }
-            _ => Err(format!("Unexpected operator. Expected Get but got: {:?}", expr)),
+            _ => unexpected_logical_operator("Get", expr),
         }
     }
 }
@@ -273,7 +276,7 @@ impl Rule for HashAggregateRule {
         }
     }
 
-    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, String> {
+    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, OptimizerError> {
         if let LogicalExpr::Aggregate {
             input,
             aggr_exprs,
@@ -287,7 +290,7 @@ impl Rule for HashAggregateRule {
             };
             Ok(RuleResult::Implementation(expr))
         } else {
-            Err(format!("Expected Aggregate but got {:?}", expr))
+            unexpected_logical_operator("Aggregate", expr)
         }
     }
 }

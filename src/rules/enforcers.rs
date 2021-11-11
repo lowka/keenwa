@@ -1,3 +1,4 @@
+use crate::error::OptimizerError;
 use crate::operators::join::JoinCondition;
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;
@@ -7,7 +8,11 @@ use crate::properties::OrderingChoice;
 use std::fmt::Debug;
 
 pub trait EnforcerRules: Debug {
-    fn evaluate_properties(&self, expr: &PhysicalExpr, properties: &PhysicalProperties) -> (bool, bool) {
+    fn evaluate_properties(
+        &self,
+        expr: &PhysicalExpr,
+        properties: &PhysicalProperties,
+    ) -> Result<(bool, bool), OptimizerError> {
         evaluate_properties(expr, properties)
     }
 
@@ -23,7 +28,7 @@ pub trait EnforcerRules: Debug {
         &self,
         properties: &PhysicalProperties,
         input: InputExpr,
-    ) -> Result<(PhysicalExpr, PhysicalProperties), String>;
+    ) -> Result<(PhysicalExpr, PhysicalProperties), OptimizerError>;
 }
 
 #[derive(Debug)]
@@ -34,7 +39,7 @@ impl EnforcerRules for DefaultEnforcers {
         &self,
         properties: &PhysicalProperties,
         input: InputExpr,
-    ) -> Result<(PhysicalExpr, PhysicalProperties), String> {
+    ) -> Result<(PhysicalExpr, PhysicalProperties), OptimizerError> {
         create_enforcer(properties, input)
     }
 }
@@ -42,7 +47,7 @@ impl EnforcerRules for DefaultEnforcers {
 fn create_enforcer(
     properties: &PhysicalProperties,
     input: InputExpr,
-) -> Result<(PhysicalExpr, PhysicalProperties), String> {
+) -> Result<(PhysicalExpr, PhysicalProperties), OptimizerError> {
     if let Some(ordering) = properties.ordering() {
         let sort_enforcer = PhysicalExpr::Sort {
             input,
@@ -50,22 +55,26 @@ fn create_enforcer(
         };
         Ok((sort_enforcer, PhysicalProperties::none()))
     } else {
-        panic!("Unexpected physical property. Only ordering is supported: {:?}", properties)
+        let message = format!("Unexpected physical property. Only ordering is supported: {:?}", properties);
+        Err(OptimizerError::NotImplemented(message))
     }
 }
 
-fn evaluate_properties(expr: &PhysicalExpr, required_properties: &PhysicalProperties) -> (bool, bool) {
-    let provides_property = expr_provides_property(expr, required_properties);
+fn evaluate_properties(
+    expr: &PhysicalExpr,
+    required_properties: &PhysicalProperties,
+) -> Result<(bool, bool), OptimizerError> {
+    let provides_property = expr_provides_property(expr, required_properties)?;
     let retains_property = if !provides_property {
-        expr_retains_property(expr, required_properties)
+        expr_retains_property(expr, required_properties)?
     } else {
         false
     };
-    (provides_property, retains_property)
+    Ok((provides_property, retains_property))
 }
 
-pub fn expr_retains_property(expr: &PhysicalExpr, required: &PhysicalProperties) -> bool {
-    match (expr, required.as_option()) {
+pub fn expr_retains_property(expr: &PhysicalExpr, required: &PhysicalProperties) -> Result<bool, OptimizerError> {
+    let retains = match (expr, required.as_option()) {
         (_, None) => true,
         (PhysicalExpr::Select { .. }, Some(_)) => true,
         (PhysicalExpr::MergeSortJoin { condition, .. }, Some(ordering)) => {
@@ -88,16 +97,17 @@ pub fn expr_retains_property(expr: &PhysicalExpr, required: &PhysicalProperties)
             },
             Some(ordering),
         ) => ordering_is_preserved(sort_ordering, ordering),
-        (PhysicalExpr::Expr { expr }, Some(p)) => {
-            panic!("Expr operator does not support physical properties. Expr: {:?}. Properties: {:?}", expr, p)
+        (PhysicalExpr::Expr { expr: _ }, Some(_)) => {
+            return operator_does_not_support_properties(expr, required);
         }
         // ???: projection w/o expressions always retains required physical properties
         (_, _) => false,
-    }
+    };
+    Ok(retains)
 }
 
-pub fn expr_provides_property(expr: &PhysicalExpr, required: &PhysicalProperties) -> bool {
-    match (expr, required.as_option()) {
+pub fn expr_provides_property(expr: &PhysicalExpr, required: &PhysicalProperties) -> Result<bool, OptimizerError> {
+    let preserved = match (expr, required.as_option()) {
         (_, None) => true,
         (PhysicalExpr::MergeSortJoin { condition, .. }, Some(ordering)) => {
             let (left, right) = match condition {
@@ -119,11 +129,12 @@ pub fn expr_provides_property(expr: &PhysicalExpr, required: &PhysicalProperties
             },
             Some(ordering),
         ) => ordering_is_preserved(sort_ordering, ordering),
-        (PhysicalExpr::Expr { expr }, Some(p)) => {
-            panic!("Expr operator does not support physical properties. Expr: {:?}. Properties: {:?}", expr, p)
+        (PhysicalExpr::Expr { expr: _ }, Some(_)) => {
+            return operator_does_not_support_properties(expr, required);
         }
         (_, Some(_)) => false,
-    }
+    };
+    Ok(preserved)
 }
 
 fn ordering_is_preserved(ord: &OrderingChoice, other: Option<&OrderingChoice>) -> bool {
@@ -136,4 +147,9 @@ fn ordering_is_preserved(ord: &OrderingChoice, other: Option<&OrderingChoice>) -
         }
         None => false,
     }
+}
+
+fn operator_does_not_support_properties(expr: &PhysicalExpr, p: &PhysicalProperties) -> Result<bool, OptimizerError> {
+    let message = format!("Operator does not support physical properties. Operator: {:?}. Properties: {:?}", expr, p);
+    Err(OptimizerError::Internal(message))
 }

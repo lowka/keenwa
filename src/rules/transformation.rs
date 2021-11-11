@@ -1,6 +1,7 @@
+use crate::error::OptimizerError;
 use crate::operators::join::JoinCondition;
 use crate::operators::logical::LogicalExpr;
-use crate::rules::{Rule, RuleContext, RuleMatch, RuleResult, RuleType};
+use crate::rules::{unexpected_logical_operator, Rule, RuleContext, RuleMatch, RuleResult, RuleType};
 
 #[derive(Debug)]
 pub struct JoinCommutativityRule;
@@ -22,7 +23,7 @@ impl Rule for JoinCommutativityRule {
         }
     }
 
-    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, String> {
+    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, OptimizerError> {
         match expr {
             LogicalExpr::Join { left, right, condition } => {
                 let (left_columns, right_columns) = match condition {
@@ -36,7 +37,7 @@ impl Rule for JoinCommutativityRule {
                 };
                 Ok(RuleResult::Substitute(expr))
             }
-            _ => Err(format!("Unexpected operator. Expected join but got: {:?}", expr)),
+            _ => unexpected_logical_operator("Join", expr),
         }
     }
 }
@@ -77,7 +78,7 @@ impl Rule for JoinAssociativityRule {
         }
     }
 
-    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, String> {
+    fn apply(&self, ctx: &RuleContext, expr: &LogicalExpr) -> Result<RuleResult, OptimizerError> {
         match expr {
             LogicalExpr::Join {
                 left: top_left,
@@ -155,7 +156,7 @@ impl Rule for JoinAssociativityRule {
             }
             _ => {}
         }
-        Err(format!("Unexpected operator. Expected Join: Ax[BxC] or [AxB]xC but got : {:?}", expr))
+        unexpected_logical_operator("Join: Ax[BxC] or [AxB]xC", expr)
     }
 }
 

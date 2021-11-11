@@ -1,4 +1,5 @@
 use crate::catalog::CatalogRef;
+use crate::error::OptimizerError;
 use std::fmt::Debug;
 
 use crate::operators::logical::LogicalExpr;
@@ -56,7 +57,11 @@ impl Statistics {
 
 pub trait StatisticsBuilder: Debug {
     /// Builds statistics for the given expression.
-    fn build_statistics(&self, expr: &LogicalExpr, statistics: Option<&Statistics>) -> Option<Statistics>;
+    fn build_statistics(
+        &self,
+        expr: &LogicalExpr,
+        statistics: Option<&Statistics>,
+    ) -> Result<Option<Statistics>, OptimizerError>;
 }
 
 /// Builds statistics using information available in a [database catalog].
@@ -75,19 +80,23 @@ impl CatalogStatisticsBuilder {
 }
 
 impl StatisticsBuilder for CatalogStatisticsBuilder {
-    fn build_statistics(&self, expr: &LogicalExpr, statistics: Option<&Statistics>) -> Option<Statistics> {
-        match expr {
+    fn build_statistics(
+        &self,
+        expr: &LogicalExpr,
+        statistics: Option<&Statistics>,
+    ) -> Result<Option<Statistics>, OptimizerError> {
+        let statistics = match expr {
             LogicalExpr::Projection { input, .. } => {
                 let logical = input.attrs().logical();
                 let statistics = logical.statistics().unwrap();
-                Some(statistics.clone())
+                statistics.clone()
             }
             LogicalExpr::Select { input, .. } => {
                 let logical = input.attrs().logical();
                 let input_statistics = logical.statistics().unwrap();
                 let selectivity = statistics.map_or(1.0, |s| s.selectivity());
                 let row_count = selectivity * input_statistics.row_count();
-                Some(Statistics::new(row_count, selectivity))
+                Statistics::new(row_count, selectivity)
             }
             LogicalExpr::Aggregate { group_exprs, .. } => {
                 let max_groups = if group_exprs.is_empty() {
@@ -95,29 +104,29 @@ impl StatisticsBuilder for CatalogStatisticsBuilder {
                 } else {
                     group_exprs.len() as f64
                 };
-                Some(Statistics::from_row_count(max_groups))
+                Statistics::from_row_count(max_groups)
             }
             LogicalExpr::Join { left, .. } => {
                 let logical = left.attrs().logical();
                 let statistics = logical.statistics().unwrap();
                 let row_count = statistics.row_count();
                 // take selectivity of the join condition into account
-                Some(Statistics::new(row_count, 1.0))
+                Statistics::new(row_count, 1.0)
             }
             LogicalExpr::Get { source, .. } => {
-                let table_ref = self
-                    .catalog
-                    .get_table(source)
-                    .unwrap_or_else(|| panic!("Table '{}' does not exists", source));
-                let row_count = table_ref
-                    .statistics()
-                    .map(|s| s.row_count())
-                    .flatten()
-                    .unwrap_or_else(|| panic!("No row count for table '{}'", source));
-                Some(Statistics::new(row_count as f64, 1.0))
+                let table_ref = match self.catalog.get_table(source) {
+                    Some(table_ref) => table_ref,
+                    None => return Err(OptimizerError::Internal(format!("Table '{}' does not exists", source))),
+                };
+                let row_count = match table_ref.statistics().map(|s| s.row_count()).flatten() {
+                    Some(row_count) => row_count,
+                    None => return Err(OptimizerError::Internal(format!("No row count for table '{}'", source))),
+                };
+                Statistics::new(row_count as f64, 1.0)
             }
-            LogicalExpr::Expr { .. } => Some(Statistics::new(1.0, 1.0)),
-        }
+            LogicalExpr::Expr { .. } => Statistics::new(1.0, 1.0),
+        };
+        Ok(Some(statistics))
     }
 }
 
@@ -185,7 +194,10 @@ mod test {
         expr: &LogicalExpr,
         statistics: Option<Statistics>,
     ) -> Statistics {
-        statistics_builder.build_statistics(expr, statistics.as_ref()).expect("No statistics")
+        let statistics = statistics_builder
+            .build_statistics(expr, statistics.as_ref())
+            .expect("Failed to build logical properties");
+        statistics.expect("No statistics")
     }
 
     fn expect_statistics(statistics: &Statistics, row_count: f64, selectivity: f64) {
