@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use std::collections::VecDeque;
 use std::fmt::{Display, Formatter, Write};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
@@ -11,7 +12,7 @@ use std::{
 ///  * It stores each expression as a group of logically equivalent expressions.
 ///  * It provides memoization of identical sub-expressions within an expression tree.
 ///
-/// #Safety
+/// # Safety
 ///
 /// The optimizer guarantees that references to both memo groups and memo expressions never outlive the memo they are referencing.
 // TODO: Examples
@@ -33,7 +34,7 @@ where
     T: MemoExpr,
 {
     /// Creates a new memo.
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Memo {
             groups: Vec::new(),
             exprs: Vec::new(),
@@ -125,7 +126,7 @@ where
 /// [memo]: crate::memo::Memo
 pub trait MemoExpr: Debug + Clone {
     /// The type of the expression.
-    type Expr: Debug + Clone;
+    type Expr: Expr;
     /// The type of the attributes.
     type Attrs: Attributes;
 
@@ -136,11 +137,10 @@ pub trait MemoExpr: Debug + Clone {
     fn attrs(&self) -> &Self::Attrs;
 
     /// Recursively traverses this expression and copies it into a memo.
-    //TODO: this method should consume the expression.
-    fn copy_in(&self, ctx: &mut TraversalContext<Self>);
+    fn copy_in(&self, visitor: &mut CopyInExprs<Self>);
 
     /// Creates a new expression from this expression by replacing its input expressions with the new ones.
-    fn with_new_inputs(&self, inputs: Vec<InputNode<Self>>) -> Self;
+    fn with_new_inputs(&self, inputs: NewInputs<Self>) -> Self;
 
     /// Builds a textual representation of this expression.
     fn format_expr<F>(&self, f: &mut F)
@@ -148,7 +148,11 @@ pub trait MemoExpr: Debug + Clone {
         F: MemoExprFormatter;
 }
 
+/// A trait for the expression.
+pub trait Expr: Debug + Clone {}
+
 /// A trait for attributes of the expression.
+//FIXME: Rename to Properties.
 pub trait Attributes: Debug + Clone {}
 
 /// A callback that is called when a new expression is added to a memo.
@@ -220,6 +224,30 @@ where
     }
 }
 
+/// A reference to an input expression.
+#[derive(Debug)]
+pub enum InputNodeRef<'a, T>
+where
+    T: MemoExpr,
+{
+    /// A reference is a reference to an expression.
+    Expr(&'a T),
+    /// A reference is a reference to a memo-group.
+    Group(&'a MemoGroupRef<T>),
+}
+
+impl<'a, T> From<&'a InputNode<T>> for InputNodeRef<'a, T>
+where
+    T: MemoExpr,
+{
+    fn from(expr: &'a InputNode<T>) -> Self {
+        match expr {
+            InputNode::Expr(expr) => InputNodeRef::Expr(&**expr),
+            InputNode::Group(group) => InputNodeRef::Group(group),
+        }
+    }
+}
+
 /// A `MemoGroupRef` is a reference to a memo group. A memo group is a group of logically equivalent expressions.
 /// Expressions are logically equivalent when they produce the same result.
 ///
@@ -271,6 +299,12 @@ where
     pub fn attrs(&self) -> &T::Attrs {
         let group = self.get_memo_group();
         &group.attrs
+    }
+
+    /// Returns the number of expressions in this memo group.
+    pub fn len(&self) -> usize {
+        let group = self.get_memo_group();
+        group.exprs.len()
     }
 
     fn get_memo_group(&self) -> &MemoGroupData<T> {
@@ -547,7 +581,7 @@ where
 }
 
 /// Provides methods to traverse an expression tree and copy it into a memo.
-pub struct TraversalContext<'a, T>
+pub struct CopyInExprs<'a, T>
 where
     T: MemoExpr,
 {
@@ -557,12 +591,12 @@ where
     result: Option<(MemoGroupRef<T>, MemoExprRef<T>)>,
 }
 
-impl<'a, T> TraversalContext<'a, T>
+impl<'a, T> CopyInExprs<'a, T>
 where
     T: MemoExpr,
 {
     fn new(memo: &'a mut Memo<T>, parent: Option<MemoGroupRef<T>>, depth: usize) -> Self {
-        TraversalContext {
+        CopyInExprs {
             memo,
             parent,
             depth,
@@ -570,10 +604,10 @@ where
         }
     }
 
-    /// Initialises data structures required to traverse the given expression `expr`.
+    /// Initialises data structures required to traverse sub-expressions of the given expression `expr`.
     pub fn enter_expr(&mut self, expr: &T) -> ExprContext<T> {
         ExprContext {
-            inputs: vec![],
+            inputs: VecDeque::new(),
             parent: self.parent.clone(),
             // TODO: Add a method that splits MemoExpr into Self::Expr and Self::Attrs
             //  this will allow to remove the clone() call below .
@@ -584,24 +618,28 @@ where
     /// Visits the given input expression and recursively copies that expression into the memo:
     /// * If the input expression is an expression this methods recursively copies it into the memo.
     /// * If the input expression is a group this method returns a reference to that group.
-    pub fn visit_input(
+    pub fn visit_input<'e>(
         &mut self,
         expr_ctx: &mut ExprContext<T>,
-        input: &InputNode<T>,
-    ) -> (MemoGroupRef<T>, MemoExprRef<T>) {
+        input: impl Into<InputNodeRef<'e, T>>,
+    ) -> (MemoGroupRef<T>, MemoExprRef<T>)
+    where
+        T: 'e,
+    {
+        let input: InputNodeRef<T> = input.into();
         match input {
-            InputNode::Expr(e) => {
+            InputNodeRef::Expr(expr) => {
                 let copy_in = CopyIn {
                     memo: self.memo,
                     parent: None,
                     depth: self.depth + 1,
                 };
-                let (group, expr) = copy_in.execute(e);
-                expr_ctx.inputs.push(InputNode::Group(group.clone()));
+                let (group, expr) = copy_in.execute(expr);
+                expr_ctx.inputs.push_back(InputNode::Group(group.clone()));
                 (group, expr)
             }
-            InputNode::Group(group) => {
-                expr_ctx.inputs.push(InputNode::Group(group.clone()));
+            InputNodeRef::Group(group) => {
+                expr_ctx.inputs.push_back(InputNode::Group(group.clone()));
                 let expr = group.mexpr();
                 (group.clone(), expr.clone())
             }
@@ -609,7 +647,6 @@ where
     }
 
     /// Copies the expression into the memo.
-    /// At this point all the inputs expressions should have been copied into the memo as well.
     pub fn copy_in(&mut self, expr: &T, expr_ctx: ExprContext<T>) {
         let expr_id = ExprId(self.memo.exprs.len());
         let input_groups = expr_ctx
@@ -627,7 +664,7 @@ where
             parent,
         } = expr_ctx;
 
-        let expr = expr.with_new_inputs(input_nodes);
+        let expr = expr.with_new_inputs(NewInputs::new(input_nodes));
         let digest = make_digest(&expr);
 
         let (expr_id, added) = match self.memo.expr_cache.entry(digest) {
@@ -683,9 +720,149 @@ pub struct ExprContext<T>
 where
     T: MemoExpr,
 {
-    inputs: Vec<InputNode<T>>,
+    inputs: VecDeque<InputNode<T>>,
     parent: Option<MemoGroupRef<T>>,
     attrs: T::Attrs,
+}
+
+/// A stack-like data structure that stores new input expressions and provides convenient methods of their retrieval.
+#[derive(Debug)]
+pub struct NewInputs<T>
+where
+    T: MemoExpr,
+{
+    inputs: VecDeque<InputNode<T>>,
+    capacity: usize,
+    index: usize,
+}
+
+impl<T> NewInputs<T>
+where
+    T: MemoExpr,
+{
+    pub fn new(args: VecDeque<InputNode<T>>) -> Self {
+        NewInputs {
+            capacity: args.len(),
+            index: 0,
+            inputs: args,
+        }
+    }
+
+    /// If the total number of expressions in the underlying stack.
+    pub fn len(&self) -> usize {
+        self.inputs.len()
+    }
+
+    /// Returns `true` if the underlying stack is empty.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Retrieves the next input expression.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if there is no input expression left.
+    pub fn input(&mut self) -> InputNode<T> {
+        self.ensure_available(1);
+        self.next_index()
+    }
+
+    /// Retrieves the next `n` input expressions.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if there is not enough input expression left.
+    pub fn inputs(&mut self, n: usize) -> Vec<InputNode<T>> {
+        self.ensure_available(n);
+        let mut inputs = Vec::with_capacity(n);
+        for _ in 0..n {
+            inputs.push(self.next_index());
+        }
+        inputs
+    }
+
+    /// Retrieve the remaining input expressions.
+    ///
+    /// # Panics
+    ///
+    /// If there is no more input expressions returns an empty `Vec`.
+    pub fn remaining(mut self) -> Vec<InputNode<T>> {
+        self.index = self.inputs.len();
+        self.inputs.into_iter().collect()
+    }
+
+    fn next_index(&mut self) -> InputNode<T> {
+        self.inputs.pop_front().expect("")
+    }
+
+    fn ensure_available(&mut self, n: usize) {
+        let next_index = self.index + n;
+        assert!(
+            next_index <= self.capacity,
+            "Unable to retrieve {} expression(s). Next index: {}, current: {}, total exprs: {}",
+            n,
+            next_index,
+            self.index,
+            self.inputs.len()
+        );
+        self.index += n;
+    }
+}
+
+/// Provides methods to collect nested expressions from an expression and copy them into a memo.
+/// Can be used to support nested relational expressions inside scalar expressions.
+//TODO: Examples
+pub struct CopyInNestedExprs<'a, 'c, T>
+where
+    T: MemoExpr,
+{
+    ctx: &'c mut CopyInExprs<'a, T>,
+    expr_ctx: &'c mut ExprContext<T>,
+    nested_exprs: Vec<MemoGroupRef<T>>,
+}
+
+impl<'a, 'c, T> CopyInNestedExprs<'a, 'c, T>
+where
+    T: MemoExpr,
+{
+    /// Creates a new nested expression collector.
+    pub fn new(ctx: &'c mut CopyInExprs<'a, T>, expr_ctx: &'c mut ExprContext<T>) -> Self {
+        CopyInNestedExprs {
+            ctx,
+            expr_ctx,
+            nested_exprs: Vec::new(),
+        }
+    }
+
+    /// Traverses the given expression `expr` of some arbitrary type.
+    /// When traversal completes all collected nested expressions are copies into a memo.
+    pub fn execute<F, E>(mut self, expr: &E, f: F)
+    where
+        F: Fn(&E, &mut Self),
+    {
+        (f)(expr, &mut self);
+        // Visit collected nested expressions so that they will be added to the given expression as sub-expressions.
+        for input in self.nested_exprs {
+            self.ctx.visit_input(self.expr_ctx, &InputNode::Group(input));
+        }
+    }
+
+    /// Copies the given nested expression into a memo.
+    pub fn visit_expr(&mut self, expr: InputNodeRef<T>) {
+        match expr {
+            InputNodeRef::Expr(expr) => {
+                expr.copy_in(self.ctx);
+                let (group, _) = std::mem::take(&mut self.ctx.result).expect("Failed to copy in a nested expressions");
+                self.add_group(group);
+            }
+            InputNodeRef::Group(group) => self.add_group(group.clone()),
+        }
+    }
+
+    fn add_group(&mut self, group: MemoGroupRef<T>) {
+        self.nested_exprs.push(group)
+    }
 }
 
 struct CopyIn<'a, T>
@@ -702,7 +879,7 @@ where
     T: MemoExpr,
 {
     fn execute(self, expr: &T) -> (MemoGroupRef<T>, MemoExprRef<T>) {
-        let mut ctx = TraversalContext::new(self.memo, self.parent.clone(), self.depth);
+        let mut ctx = CopyInExprs::new(self.memo, self.parent.clone(), self.depth);
         expr.copy_in(&mut ctx);
         ctx.result.unwrap()
     }
@@ -740,9 +917,9 @@ pub trait MemoExprFormatter {
     fn write_source(&mut self, source: &str);
 
     /// Writes an input expression.
-    fn write_input<T>(&mut self, name: &str, input: &InputNode<T>)
+    fn write_input<'e, T>(&mut self, name: &str, input: impl Into<InputNodeRef<'e, T>>)
     where
-        T: MemoExpr;
+        T: MemoExpr + 'e;
 
     /// Writes a value of some attribute of an expression.
     fn write_value<D>(&mut self, name: &str, value: D)
@@ -783,21 +960,17 @@ impl MemoExprFormatter for StringMemoFormatter<'_> {
         self.buf.push_str(source);
     }
 
-    fn write_input<T>(&mut self, name: &str, input: &InputNode<T>)
+    fn write_input<'e, T>(&mut self, name: &str, input: impl Into<InputNodeRef<'e, T>>)
     where
-        T: MemoExpr,
+        T: MemoExpr + 'e,
     {
         self.buf.push(' ');
         if !name.is_empty() {
             self.buf.push_str(name);
             self.buf.push('=');
         }
-        match input {
-            InputNode::Expr(expr) => panic!("Input expressions are not supported: {:?}", expr),
-            InputNode::Group(group) => {
-                self.buf.push_str(format!("{}", group.id()).as_str());
-            }
-        }
+        let s = format_node_ref(input.into());
+        self.buf.push_str(s.as_str());
     }
 
     fn write_value<D>(&mut self, name: &str, value: D)
@@ -805,8 +978,10 @@ impl MemoExprFormatter for StringMemoFormatter<'_> {
         D: Display,
     {
         self.buf.push(' ');
-        self.buf.push_str(name);
-        self.buf.push('=');
+        if !name.is_empty() {
+            self.buf.push_str(name);
+            self.buf.push('=');
+        }
         self.buf.push_str(value.to_string().as_str());
     }
 
@@ -853,16 +1028,12 @@ impl<'f, 'a> MemoExprFormatter for DisplayMemoExprFormatter<'f, 'a> {
         self.fmt.write_str(source).unwrap();
     }
 
-    fn write_input<T>(&mut self, _name: &str, input: &InputNode<T>)
+    fn write_input<'e, T>(&mut self, _name: &str, input: impl Into<InputNodeRef<'e, T>>)
     where
-        T: MemoExpr,
+        T: MemoExpr + 'e,
     {
-        match input {
-            InputNode::Expr(_) => panic!("Expr inputs inside a memo are not allowed"),
-            InputNode::Group(group) => {
-                self.fmt.write_fmt(format_args!(" {}", group.id())).unwrap();
-            }
-        }
+        let s = format_node_ref(input.into());
+        self.fmt.write_str(s.as_str()).unwrap();
     }
 
     fn write_value<D>(&mut self, _name: &str, _value: D)
@@ -880,6 +1051,20 @@ impl<'f, 'a> MemoExprFormatter for DisplayMemoExprFormatter<'f, 'a> {
     }
 }
 
+fn format_node_ref<T>(input: InputNodeRef<'_, T>) -> String
+where
+    T: MemoExpr,
+{
+    match input {
+        InputNodeRef::Expr(expr) => {
+            // This only happens when expression has not been added to a memo.
+            let ptr: *const T::Expr = &*expr.expr();
+            format!("{:?}", ptr)
+        }
+        InputNodeRef::Group(group) => format!("{}", group.id()),
+    }
+}
+
 fn make_digest<T>(expr: &T) -> String
 where
     T: MemoExpr,
@@ -893,45 +1078,244 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::cell::RefCell;
 
     #[derive(Debug, Clone)]
     enum TestExpr {
+        Relational(TestRelExpr),
+        Scalar(TestScalarExpr),
+    }
+
+    #[derive(Debug, Clone)]
+    enum TestRelExpr {
         Leaf(&'static str),
-        Node { input: InputNode<TestOperator> },
-        Nodes { inputs: Vec<InputNode<TestOperator>> },
+        Node { input: RelExpr },
+        Nodes { inputs: Vec<RelExpr> },
+        Filter { input: RelExpr, filter: ScalarExpr },
+    }
+
+    impl Expr for TestExpr {}
+
+    impl TestExpr {
+        fn as_relational(&self) -> &TestRelExpr {
+            match self {
+                TestExpr::Relational(expr) => expr,
+                TestExpr::Scalar(_) => panic!("Expected a relational expr"),
+            }
+        }
+
+        fn as_scalar(&self) -> &TestScalarExpr {
+            match self {
+                TestExpr::Relational(_) => panic!("Expected relational expr"),
+                TestExpr::Scalar(expr) => expr,
+            }
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    enum RelExpr {
+        Expr(Box<TestOperator>),
+        Group(MemoGroupRef<TestOperator>),
+    }
+
+    impl RelExpr {
+        fn expr(&self) -> &TestRelExpr {
+            let expr = match self {
+                RelExpr::Expr(expr) => expr.expr(),
+                RelExpr::Group(group) => group.expr(),
+            };
+            expr.as_relational()
+        }
+
+        fn attrs(&self) -> &TestAttrs {
+            match self {
+                RelExpr::Expr(expr) => expr.attrs(),
+                RelExpr::Group(group) => group.attrs(),
+            }
+        }
+
+        // replace with From<Self> -> InputNodeRef ?
+        fn get_ref(&self) -> InputNodeRef<TestOperator> {
+            match self {
+                RelExpr::Expr(expr) => InputNodeRef::Expr(&**expr),
+                RelExpr::Group(group) => InputNodeRef::Group(group),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    enum ScalarExpr {
+        Expr(Box<TestOperator>),
+        Group(MemoGroupRef<TestOperator>),
+    }
+
+    impl ScalarExpr {
+        // replace with From<Self> -> InputNodeRef ?
+        fn get_ref(&self) -> InputNodeRef<TestOperator> {
+            match self {
+                ScalarExpr::Expr(expr) => InputNodeRef::Expr(&**expr),
+                ScalarExpr::Group(group) => InputNodeRef::Group(group),
+            }
+        }
+    }
+
+    impl From<TestOperator> for RelExpr {
+        fn from(expr: TestOperator) -> Self {
+            RelExpr::Expr(Box::new(expr))
+        }
+    }
+
+    impl From<InputNode<TestOperator>> for RelExpr {
+        fn from(expr: InputNode<TestOperator>) -> Self {
+            match expr {
+                InputNode::Expr(expr) => RelExpr::Expr(expr),
+                InputNode::Group(group) => RelExpr::Group(group),
+            }
+        }
+    }
+
+    impl From<TestScalarExpr> for ScalarExpr {
+        fn from(expr: TestScalarExpr) -> Self {
+            ScalarExpr::Expr(Box::new(TestOperator {
+                expr: TestExpr::Scalar(expr),
+                attrs: Default::default(),
+            }))
+        }
+    }
+
+    impl From<InputNode<TestOperator>> for ScalarExpr {
+        fn from(expr: InputNode<TestOperator>) -> Self {
+            match expr {
+                InputNode::Expr(expr) => ScalarExpr::Expr(expr),
+                InputNode::Group(group) => ScalarExpr::Group(group),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone)]
+    enum TestScalarExpr {
+        Value(i32),
+        Gt {
+            lhs: Box<TestScalarExpr>,
+            rhs: Box<TestScalarExpr>,
+        },
+        SubQuery(RelExpr),
+    }
+
+    impl TestScalarExpr {
+        fn with_new_inputs(&self, inputs: &mut NewInputs<TestOperator>) -> Self {
+            match self {
+                TestScalarExpr::Value(_) => self.clone(),
+                TestScalarExpr::Gt { lhs, rhs } => {
+                    let lhs = lhs.with_new_inputs(inputs);
+                    let rhs = rhs.with_new_inputs(inputs);
+                    TestScalarExpr::Gt {
+                        lhs: Box::new(lhs),
+                        rhs: Box::new(rhs),
+                    }
+                }
+                TestScalarExpr::SubQuery(_) => TestScalarExpr::SubQuery(RelExpr::from(inputs.input())),
+            }
+        }
+
+        fn copy_in_nested(&self, collector: &mut CopyInNestedExprs<TestOperator>) {
+            match self {
+                TestScalarExpr::Value(_) => {}
+                TestScalarExpr::Gt { lhs, rhs } => {
+                    lhs.copy_in_nested(collector);
+                    rhs.copy_in_nested(collector);
+                }
+                TestScalarExpr::SubQuery(expr) => {
+                    collector.visit_expr(expr.get_ref());
+                }
+            }
+        }
+    }
+
+    impl Display for TestScalarExpr {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            match self {
+                TestScalarExpr::Value(value) => write!(f, "{}", value),
+                TestScalarExpr::Gt { lhs, rhs } => {
+                    write!(f, "({} > {})", lhs, rhs)
+                }
+                TestScalarExpr::SubQuery(query) => match query {
+                    RelExpr::Expr(expr) => {
+                        let ptr: *const TestExpr = expr.expr();
+                        write!(f, "SubQuery expr_ptr {:?}", ptr)
+                    }
+                    RelExpr::Group(group) => {
+                        write!(f, "SubQuery {}", group.id())
+                    }
+                },
+            }
+        }
+    }
+
+    struct TraversalWrapper<'c, 'm> {
+        ctx: &'c mut CopyInExprs<'m, TestOperator>,
+    }
+
+    impl TraversalWrapper<'_, '_> {
+        fn enter_expr(&mut self, expr: &TestOperator) -> ExprContext<TestOperator> {
+            self.ctx.enter_expr(expr)
+        }
+
+        fn visit_rel(&mut self, expr_ctx: &mut ExprContext<TestOperator>, rel: &RelExpr) {
+            self.ctx.visit_input(expr_ctx, rel.get_ref());
+        }
+
+        fn visit_scalar(&mut self, expr_ctx: &mut ExprContext<TestOperator>, scalar: &ScalarExpr) {
+            self.ctx.visit_input(expr_ctx, scalar.get_ref());
+        }
+
+        fn copy_in_nested(&mut self, expr_ctx: &mut ExprContext<TestOperator>, expr: &TestOperator) {
+            let nested_ctx = CopyInNestedExprs::new(self.ctx, expr_ctx);
+            let scalar = expr.expr().as_scalar();
+            nested_ctx.execute(scalar, |expr, collect: &mut CopyInNestedExprs<TestOperator>| {
+                expr.copy_in_nested(collect);
+            })
+        }
+
+        fn copy_in(self, expr: &TestOperator, expr_ctx: ExprContext<TestOperator>) {
+            self.ctx.copy_in(expr, expr_ctx)
+        }
     }
 
     #[derive(Debug, Clone)]
     struct TestOperator {
         expr: TestExpr,
-        attrs: Option<TestAttrs>,
+        attrs: TestAttrs,
     }
 
-    impl From<TestExpr> for TestOperator {
-        fn from(expr: TestExpr) -> Self {
-            TestOperator { expr, attrs: None }
+    impl From<TestRelExpr> for TestOperator {
+        fn from(expr: TestRelExpr) -> Self {
+            TestOperator {
+                expr: TestExpr::Relational(expr),
+                attrs: TestAttrs::default(),
+            }
         }
     }
 
-    #[derive(Debug, Clone, PartialEq)]
+    #[derive(Debug, Clone, PartialEq, Default)]
     struct TestAttrs {
         a: i32,
     }
 
-    impl Attributes for Option<TestAttrs> {}
+    impl Attributes for TestAttrs {}
 
     impl TestOperator {
         fn with_attrs(self, a: i32) -> Self {
             TestOperator {
                 expr: self.expr,
-                attrs: Some(TestAttrs { a }),
+                attrs: TestAttrs { a },
             }
         }
     }
 
     impl MemoExpr for TestOperator {
         type Expr = TestExpr;
-        type Attrs = Option<TestAttrs>;
+        type Attrs = TestAttrs;
 
         fn expr(&self) -> &Self::Expr {
             &self.expr
@@ -941,29 +1325,51 @@ mod test {
             &self.attrs
         }
 
-        fn copy_in(&self, ctx: &mut TraversalContext<Self>) {
+        fn copy_in(&self, ctx: &mut CopyInExprs<Self>) {
+            let mut ctx = TraversalWrapper { ctx };
             let mut expr_ctx = ctx.enter_expr(self);
-            match &self.expr {
-                TestExpr::Leaf(_) => {}
-                TestExpr::Node { input } => {
-                    ctx.visit_input(&mut expr_ctx, input);
-                }
-                TestExpr::Nodes { inputs } => {
-                    for input in inputs {
-                        ctx.visit_input(&mut expr_ctx, input);
+            match self.expr() {
+                TestExpr::Relational(expr) => match expr {
+                    TestRelExpr::Leaf(_) => {}
+                    TestRelExpr::Node { input } => {
+                        ctx.visit_rel(&mut expr_ctx, input);
                     }
+                    TestRelExpr::Nodes { inputs } => {
+                        for input in inputs {
+                            ctx.visit_rel(&mut expr_ctx, input);
+                        }
+                    }
+                    TestRelExpr::Filter { input, filter } => {
+                        ctx.visit_rel(&mut expr_ctx, input);
+                        ctx.visit_scalar(&mut expr_ctx, filter);
+                    }
+                },
+                TestExpr::Scalar(_expr) => {
+                    ctx.copy_in_nested(&mut expr_ctx, self);
                 }
             }
             ctx.copy_in(self, expr_ctx)
         }
 
-        fn with_new_inputs(&self, mut inputs: Vec<InputNode<Self>>) -> Self {
-            let expr = match &self.expr {
-                TestExpr::Leaf(s) => TestExpr::Leaf(s.clone()),
-                TestExpr::Node { .. } => TestExpr::Node {
-                    input: inputs.swap_remove(0),
-                },
-                TestExpr::Nodes { .. } => TestExpr::Nodes { inputs },
+        fn with_new_inputs(&self, mut inputs: NewInputs<Self>) -> Self {
+            let expr = match self.expr() {
+                TestExpr::Relational(expr) => {
+                    let expr = match expr {
+                        TestRelExpr::Leaf(s) => TestRelExpr::Leaf(s.clone()),
+                        TestRelExpr::Node { .. } => TestRelExpr::Node {
+                            input: RelExpr::from(inputs.input()),
+                        },
+                        TestRelExpr::Nodes { .. } => TestRelExpr::Nodes {
+                            inputs: inputs.remaining().into_iter().map(RelExpr::from).collect(),
+                        },
+                        TestRelExpr::Filter { .. } => TestRelExpr::Filter {
+                            input: RelExpr::from(inputs.input()),
+                            filter: ScalarExpr::from(inputs.input()),
+                        },
+                    };
+                    TestExpr::Relational(expr)
+                }
+                TestExpr::Scalar(expr) => TestExpr::Scalar(expr.with_new_inputs(&mut inputs)),
             };
             TestOperator {
                 expr,
@@ -975,20 +1381,31 @@ mod test {
         where
             F: MemoExprFormatter,
         {
-            match &self.expr {
-                TestExpr::Leaf(source) => {
-                    f.write_name("Leaf");
-                    f.write_source(source);
-                }
-                TestExpr::Node { input } => {
-                    f.write_name("Node");
-                    f.write_input("", input);
-                }
-                TestExpr::Nodes { inputs } => {
-                    f.write_name("Nodes");
-                    for input in inputs {
-                        f.write_input("", input);
+            match self.expr() {
+                TestExpr::Relational(expr) => match expr {
+                    TestRelExpr::Leaf(source) => {
+                        f.write_name("Leaf");
+                        f.write_source(source);
                     }
+                    TestRelExpr::Node { input } => {
+                        f.write_name("Node");
+                        f.write_input("", input.get_ref());
+                    }
+                    TestRelExpr::Nodes { inputs } => {
+                        f.write_name("Nodes");
+                        for input in inputs {
+                            f.write_input("", input.get_ref());
+                        }
+                    }
+                    TestRelExpr::Filter { input, filter } => {
+                        f.write_name("Filter");
+                        f.write_input("", input.get_ref());
+                        f.write_input("filter", filter.get_ref());
+                    }
+                },
+                TestExpr::Scalar(expr) => {
+                    f.write_name("Expr");
+                    f.write_value("", expr);
                 }
             }
         }
@@ -997,10 +1414,10 @@ mod test {
     #[test]
     fn test_basics() {
         let mut memo = Memo::new();
-        let expr = TestOperator::from(TestExpr::Leaf("aaaa")).with_attrs(100);
+        let expr = TestOperator::from(TestRelExpr::Leaf("aaaa")).with_attrs(100);
         let (group, expr) = memo.insert(expr);
 
-        assert_eq!(group.attrs(), &Some(TestAttrs { a: 100 }), "group attributes");
+        assert_eq!(group.attrs(), &TestAttrs { a: 100 }, "group attributes");
         assert_eq!(expr.mgroup(), &group, "expr group");
 
         let group_by_id = memo.get_group_ref(&group.id());
@@ -1018,10 +1435,10 @@ mod test {
     fn test_attributes() {
         let mut memo = Memo::new();
 
-        let leaf = TestOperator::from(TestExpr::Leaf("a")).with_attrs(10);
-        let inner = TestOperator::from(TestExpr::Node { input: leaf.into() }).with_attrs(15);
-        let expr = TestOperator::from(TestExpr::Node { input: inner.into() });
-        let outer = TestOperator::from(TestExpr::Node { input: expr.into() }).with_attrs(20);
+        let leaf = TestOperator::from(TestRelExpr::Leaf("a")).with_attrs(10);
+        let inner = TestOperator::from(TestRelExpr::Node { input: leaf.into() }).with_attrs(15);
+        let expr = TestOperator::from(TestRelExpr::Node { input: inner.into() });
+        let outer = TestOperator::from(TestRelExpr::Node { input: expr.into() }).with_attrs(20);
 
         let _ = memo.insert(outer);
 
@@ -1040,15 +1457,19 @@ mod test {
     fn test_input_node() {
         let mut memo = Memo::new();
 
-        let leaf = TestOperator::from(TestExpr::Leaf("a")).with_attrs(10);
-        let expr = TestOperator::from(TestExpr::Node {
+        let leaf = TestOperator::from(TestRelExpr::Leaf("a")).with_attrs(10);
+        let expr = TestOperator::from(TestRelExpr::Node {
             input: leaf.clone().into(),
         });
         let (_, expr) = memo.insert(expr);
 
-        match expr.expr() {
-            TestExpr::Node { input } => {
-                assert_eq!(format!("{:?}", input.expr()), format!("{:?}", expr.inputs()[0].expr()), "input expr");
+        match expr.expr().as_relational() {
+            TestRelExpr::Node { input } => {
+                assert_eq!(
+                    format!("{:?}", input.expr()),
+                    format!("{:?}", expr.inputs()[0].expr().as_relational()),
+                    "input expr"
+                );
                 assert_eq!(input.attrs(), leaf.attrs(), "input attrs");
             }
             _ => panic!("Unexpected expression: {:?}", expr),
@@ -1059,7 +1480,7 @@ mod test {
     fn test_memo_trivial_expr() {
         let mut memo = Memo::new();
 
-        let expr = TestOperator::from(TestExpr::Leaf("a"));
+        let expr = TestOperator::from(TestRelExpr::Leaf("a"));
         let (group1, expr1) = memo.insert(expr.clone());
         let (group2, expr2) = memo.insert(expr);
 
@@ -1081,8 +1502,8 @@ mod test {
     fn test_memo_node_leaf_expr() {
         let mut memo = Memo::new();
 
-        let expr = TestOperator::from(TestExpr::Node {
-            input: TestOperator::from(TestExpr::Leaf("a")).into(),
+        let expr = TestOperator::from(TestRelExpr::Node {
+            input: TestOperator::from(TestRelExpr::Leaf("a")).into(),
         });
 
         let (group1, expr1) = memo.insert(expr.clone());
@@ -1104,10 +1525,10 @@ mod test {
     fn test_memo_node_multiple_leaves() {
         let mut memo = Memo::new();
 
-        let expr = TestOperator::from(TestExpr::Nodes {
+        let expr = TestOperator::from(TestRelExpr::Nodes {
             inputs: vec![
-                TestOperator::from(TestExpr::Leaf("a")).into(),
-                TestOperator::from(TestExpr::Leaf("b")).into(),
+                TestOperator::from(TestRelExpr::Leaf("a")).into(),
+                TestOperator::from(TestRelExpr::Leaf("b")).into(),
             ],
         });
 
@@ -1133,15 +1554,15 @@ mod test {
     fn test_memo_node_nested_duplicates() {
         let mut memo = Memo::new();
 
-        let expr = TestOperator::from(TestExpr::Nodes {
+        let expr = TestOperator::from(TestRelExpr::Nodes {
             inputs: vec![
-                TestOperator::from(TestExpr::Node {
-                    input: TestOperator::from(TestExpr::Leaf("a")).into(),
+                TestOperator::from(TestRelExpr::Node {
+                    input: TestOperator::from(TestRelExpr::Leaf("a")).into(),
                 })
                 .into(),
-                TestOperator::from(TestExpr::Leaf("b")).into(),
-                TestOperator::from(TestExpr::Node {
-                    input: TestOperator::from(TestExpr::Leaf("a")).into(),
+                TestOperator::from(TestRelExpr::Leaf("b")).into(),
+                TestOperator::from(TestRelExpr::Node {
+                    input: TestOperator::from(TestRelExpr::Leaf("a")).into(),
                 })
                 .into(),
             ],
@@ -1170,11 +1591,11 @@ mod test {
     fn test_memo_node_duplicate_leaves() {
         let mut memo = Memo::new();
 
-        let expr = TestOperator::from(TestExpr::Nodes {
+        let expr = TestOperator::from(TestRelExpr::Nodes {
             inputs: vec![
-                TestOperator::from(TestExpr::Leaf("a")).into(),
-                TestOperator::from(TestExpr::Leaf("b")).into(),
-                TestOperator::from(TestExpr::Leaf("a")).into(),
+                TestOperator::from(TestRelExpr::Leaf("a")).into(),
+                TestOperator::from(TestRelExpr::Leaf("b")).into(),
+                TestOperator::from(TestRelExpr::Leaf("a")).into(),
             ],
         });
 
@@ -1200,7 +1621,7 @@ mod test {
     fn test_insert_member() {
         let mut memo = Memo::new();
 
-        let expr = TestOperator::from(TestExpr::Leaf("a"));
+        let expr = TestOperator::from(TestRelExpr::Leaf("a"));
 
         let (group, _) = memo.insert(expr);
         expect_memo(
@@ -1210,7 +1631,7 @@ mod test {
 "#,
         );
 
-        let expr = TestOperator::from(TestExpr::Leaf("a0"));
+        let expr = TestOperator::from(TestRelExpr::Leaf("a0"));
         let _ = memo.insert_member(&group, expr);
 
         expect_memo(
@@ -1226,8 +1647,8 @@ mod test {
     fn test_insert_member_to_a_leaf_group() {
         let mut memo = Memo::new();
 
-        let expr = TestOperator::from(TestExpr::Node {
-            input: TestOperator::from(TestExpr::Leaf("a")).into(),
+        let expr = TestOperator::from(TestRelExpr::Node {
+            input: TestOperator::from(TestRelExpr::Leaf("a")).into(),
         });
 
         let (group, _) = memo.insert(expr);
@@ -1239,7 +1660,7 @@ mod test {
 "#,
         );
 
-        let expr = TestOperator::from(TestExpr::Leaf("a0"));
+        let expr = TestOperator::from(TestRelExpr::Leaf("a0"));
         let _ = memo.insert_member(&group.mexpr().inputs()[0], expr);
 
         expect_memo(
@@ -1256,8 +1677,8 @@ mod test {
     fn test_insert_member_to_the_top_group() {
         let mut memo = Memo::new();
 
-        let expr = TestOperator::from(TestExpr::Node {
-            input: TestOperator::from(TestExpr::Leaf("a")).into(),
+        let expr = TestOperator::from(TestRelExpr::Node {
+            input: TestOperator::from(TestRelExpr::Leaf("a")).into(),
         });
 
         let (group, _) = memo.insert(expr);
@@ -1269,8 +1690,8 @@ mod test {
 "#,
         );
 
-        let expr = TestOperator::from(TestExpr::Node {
-            input: TestOperator::from(TestExpr::Leaf("a0")).into(),
+        let expr = TestOperator::from(TestRelExpr::Node {
+            input: TestOperator::from(TestRelExpr::Leaf("a0")).into(),
         });
         let _ = memo.insert_member(&group, expr);
 
@@ -1290,7 +1711,7 @@ mod test {
         let mut memo = Memo::new();
         assert_eq!(format!("{:?}", memo), "Memo { groups: [], exprs: [], expr_to_group: {} }");
 
-        let expr = TestOperator::from(TestExpr::Leaf("a"));
+        let expr = TestOperator::from(TestRelExpr::Leaf("a"));
         let (group, expr) = memo.insert(expr);
 
         assert_eq!(format!("{:?}", group), "MemoGroupRef { id: GroupId(0) }");
@@ -1301,6 +1722,150 @@ mod test {
         assert_eq!(format!("{:?}", mexpr_iter), "MemoGroupIter([MemoExprRef { id: ExprId(0) }])");
         mexpr_iter.next();
         assert_eq!(format!("{:?}", mexpr_iter), "MemoGroupIter([])");
+    }
+
+    #[test]
+    fn test_trivial_nestable_expr() {
+        let sub_expr = TestOperator::from(TestRelExpr::Leaf("a"));
+        let expr = TestScalarExpr::Gt {
+            lhs: Box::new(TestScalarExpr::Value(100)),
+            rhs: Box::new(TestScalarExpr::SubQuery(sub_expr.into())),
+        };
+        let expr = TestOperator {
+            expr: TestExpr::Scalar(expr),
+            attrs: Default::default(),
+        };
+
+        let mut memo = Memo::new();
+        let _ = memo.insert(expr);
+
+        expect_memo(
+            &memo,
+            r#"
+01 Expr (100 > SubQuery 00)
+00 Leaf a
+"#,
+        );
+    }
+
+    #[test]
+    fn test_scalar_expr_complex_nested_exprs() {
+        let sub_expr = TestOperator::from(TestRelExpr::Filter {
+            input: TestOperator::from(TestRelExpr::Leaf("a")).into(),
+            filter: TestScalarExpr::Value(111).into(),
+        });
+
+        let inner_filter = TestScalarExpr::Gt {
+            lhs: Box::new(TestScalarExpr::Value(100)),
+            rhs: Box::new(TestScalarExpr::SubQuery(sub_expr.into())),
+        };
+
+        let sub_expr2 = TestScalarExpr::SubQuery(TestOperator::from(TestRelExpr::Leaf("b")).into());
+        let filter_expr = TestScalarExpr::Gt {
+            lhs: Box::new(sub_expr2.clone()),
+            rhs: Box::new(inner_filter.clone()),
+        };
+
+        let expr = TestOperator::from(TestRelExpr::Filter {
+            input: TestOperator::from(TestRelExpr::Leaf("a")).into(),
+            filter: filter_expr.into(),
+        });
+
+        let mut memo = Memo::new();
+        let (group, _) = memo.insert(expr);
+
+        expect_memo(
+            &memo,
+            r#"
+05 Filter 00 filter=04
+04 Expr (SubQuery 01 > (100 > SubQuery 03))
+03 Filter 00 filter=02
+02 Expr 111
+01 Leaf b
+00 Leaf a
+"#,
+        );
+
+        let inputs = group.mexpr().inputs();
+        assert_eq!(inputs.len(), 2, "Filter expression has 2 child expressions: an input and a filter: {:?}", inputs);
+
+        let expr = inputs[1].mexpr();
+        assert_eq!(expr.inputs().len(), 2, "Filter expression has 2 nested expressions: {:?}", expr.inputs());
+
+        let filter_expr = TestScalarExpr::Gt {
+            lhs: Box::new(inner_filter),
+            rhs: Box::new(sub_expr2),
+        };
+
+        let expr = TestOperator::from(TestRelExpr::Filter {
+            input: TestOperator::from(TestRelExpr::Leaf("a")).into(),
+            filter: filter_expr.into(),
+        });
+
+        let mut memo = Memo::new();
+        let (_, _) = memo.insert(expr);
+
+        expect_memo(
+            &memo,
+            r#"
+05 Filter 00 filter=04
+04 Expr ((100 > SubQuery 02) > SubQuery 03)
+03 Leaf b
+02 Filter 00 filter=01
+01 Expr 111
+00 Leaf a
+"#,
+        );
+    }
+
+    #[test]
+    fn test_callback() {
+        #[derive(Debug)]
+        struct Callback {
+            added: Rc<RefCell<Vec<String>>>,
+        }
+        impl MemoExprCallback for Callback {
+            type Expr = TestOperator;
+            type Attrs = TestAttrs;
+
+            fn new_expr(&self, expr: &Self::Expr, attrs: Self::Attrs) -> Self::Attrs {
+                let mut added = self.added.borrow_mut();
+                let mut buf = String::new();
+                let mut fmt = StringMemoFormatter::new(&mut buf);
+                expr.format_expr(&mut fmt);
+                added.push(buf);
+                attrs
+            }
+        }
+
+        let added = Rc::new(RefCell::new(vec![]));
+        let callback = Callback { added: added.clone() };
+        let mut memo = Memo::with_callback(Rc::new(callback));
+
+        memo.insert(TestOperator::from(TestRelExpr::Leaf("A")));
+
+        {
+            let added = added.borrow();
+            assert_eq!(added[0], "Leaf A");
+            assert_eq!(added.len(), 1);
+        }
+
+        let leaf = TestOperator::from(TestRelExpr::Leaf("B"));
+        let expr = TestOperator::from(TestRelExpr::Node { input: leaf.into() });
+        memo.insert(expr.clone());
+
+        {
+            let added = added.borrow();
+            assert_eq!(added[1], "Leaf B");
+            assert_eq!(added[2], "Node 01");
+            assert_eq!(added.len(), 3);
+        }
+
+        memo.insert(expr);
+        {
+            let added = added.borrow();
+            assert_eq!(added.len(), 3, "added duplicates. memo:\n{}", format_test_memo(&memo, false));
+        }
     }
 
     fn expect_group_size(memo: &Memo<TestOperator>, group_id: &GroupId, size: usize) {
@@ -1341,10 +1906,8 @@ mod test {
                     expr.mexpr().format_expr(&mut f);
                 } else {
                     expr.mexpr().format_expr(&mut f);
-                    if include_attrs {
-                        if let Some(attrs) = group.attrs.as_ref() {
-                            f.write_value("a", &attrs.a)
-                        }
+                    if include_attrs && group.attrs != TestAttrs::default() {
+                        f.write_value("a", &group.attrs.a)
                     }
                 }
             }

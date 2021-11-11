@@ -1,8 +1,7 @@
-use crate::memo::{ExprContext, MemoExprFormatter, TraversalContext};
+use crate::memo::{ExprContext, MemoExprFormatter};
 use crate::meta::ColumnId;
-use crate::operators::expressions::Expr;
 use crate::operators::join::JoinCondition;
-use crate::operators::{InputExpr, Operator};
+use crate::operators::{Operator, OperatorCopyIn, OperatorInputs, RelNode, ScalarNode};
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::OrderingChoice;
 
@@ -13,26 +12,26 @@ use crate::properties::OrderingChoice;
 #[derive(Debug, Clone)]
 pub enum PhysicalExpr {
     Projection {
-        input: InputExpr,
+        input: RelNode,
         columns: Vec<ColumnId>,
     },
     Select {
-        input: InputExpr,
-        filter: Expr,
+        input: RelNode,
+        filter: ScalarNode,
     },
     HashAggregate {
-        input: InputExpr,
-        aggr_exprs: Vec<Expr>,
-        group_exprs: Vec<Expr>,
+        input: RelNode,
+        aggr_exprs: Vec<ScalarNode>,
+        group_exprs: Vec<ScalarNode>,
     },
     HashJoin {
-        left: InputExpr,
-        right: InputExpr,
+        left: RelNode,
+        right: RelNode,
         condition: JoinCondition,
     },
     MergeSortJoin {
-        left: InputExpr,
-        right: InputExpr,
+        left: RelNode,
+        right: RelNode,
         condition: JoinCondition,
     },
     Scan {
@@ -44,57 +43,64 @@ pub enum PhysicalExpr {
         columns: Vec<ColumnId>,
     },
     Sort {
-        input: InputExpr,
+        input: RelNode,
         ordering: OrderingChoice,
-    },
-    Expr {
-        expr: Expr,
     },
 }
 
 impl PhysicalExpr {
-    pub(crate) fn traverse(&self, expr_ctx: &mut ExprContext<Operator>, ctx: &mut TraversalContext<Operator>) {
+    pub(crate) fn traverse(&self, visitor: &mut OperatorCopyIn, expr_ctx: &mut ExprContext<Operator>) {
         match self {
             PhysicalExpr::Projection { input, .. } => {
-                ctx.visit_input(expr_ctx, input);
+                visitor.visit_rel(expr_ctx, input);
             }
-            PhysicalExpr::Select { input, .. } => {
-                ctx.visit_input(expr_ctx, input);
+            PhysicalExpr::Select { input, filter } => {
+                visitor.visit_rel(expr_ctx, input);
+                visitor.visit_scalar(expr_ctx, filter)
             }
-            PhysicalExpr::HashAggregate { input, .. } => {
-                ctx.visit_input(expr_ctx, input);
+            PhysicalExpr::HashAggregate {
+                input,
+                aggr_exprs,
+                group_exprs,
+            } => {
+                visitor.visit_rel(expr_ctx, input);
+                for aggr_expr in aggr_exprs {
+                    visitor.visit_scalar(expr_ctx, aggr_expr);
+                }
+                for group_expr in group_exprs {
+                    visitor.visit_scalar(expr_ctx, group_expr)
+                }
             }
             PhysicalExpr::HashJoin { left, right, .. } => {
-                ctx.visit_input(expr_ctx, left);
-                ctx.visit_input(expr_ctx, right);
+                visitor.visit_rel(expr_ctx, left);
+                visitor.visit_rel(expr_ctx, right);
             }
             PhysicalExpr::MergeSortJoin { left, right, .. } => {
-                ctx.visit_input(expr_ctx, left);
-                ctx.visit_input(expr_ctx, right);
+                visitor.visit_rel(expr_ctx, left);
+                visitor.visit_rel(expr_ctx, right);
             }
             PhysicalExpr::Scan { .. } => {}
             PhysicalExpr::IndexScan { .. } => {}
             PhysicalExpr::Sort { input, .. } => {
-                ctx.visit_input(expr_ctx, input);
+                visitor.visit_rel(expr_ctx, input);
             }
-            PhysicalExpr::Expr { .. } => {}
         }
     }
 
-    pub fn with_new_inputs(&self, mut inputs: Vec<InputExpr>) -> Self {
+    pub fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
         match self {
             PhysicalExpr::Projection { columns, .. } => {
-                assert_eq!(1, inputs.len(), "Projection operator expects 1 input but got {:?}", inputs);
+                inputs.expect_len(1, "Projection");
                 PhysicalExpr::Projection {
-                    input: inputs.swap_remove(0),
+                    input: inputs.rel_node(),
                     columns: columns.clone(),
                 }
             }
-            PhysicalExpr::Select { filter, .. } => {
-                assert_eq!(1, inputs.len(), "Select operator expects 1 input but got {:?}", inputs);
+            PhysicalExpr::Select { .. } => {
+                inputs.expect_len(2, "Select");
                 PhysicalExpr::Select {
-                    input: inputs.swap_remove(0),
-                    filter: filter.clone(),
+                    input: inputs.rel_node(),
+                    filter: inputs.scalar_node(),
                 }
             }
             PhysicalExpr::HashAggregate {
@@ -102,53 +108,49 @@ impl PhysicalExpr {
                 group_exprs,
                 ..
             } => {
-                assert_eq!(1, inputs.len(), "HashAggregate operator expects 1 input but got {:?}", inputs);
+                inputs.expect_len(1 + aggr_exprs.len() + group_exprs.len(), "HashAggregate");
                 PhysicalExpr::HashAggregate {
-                    input: inputs.swap_remove(0),
-                    aggr_exprs: aggr_exprs.clone(),
-                    group_exprs: group_exprs.clone(),
+                    input: inputs.rel_node(),
+                    aggr_exprs: inputs.scalar_nodes(aggr_exprs.len()),
+                    group_exprs: inputs.scalar_nodes(group_exprs.len()),
                 }
             }
             PhysicalExpr::HashJoin { condition, .. } => {
-                assert_eq!(2, inputs.len(), "HashJoin operator expects 2 inputs but got {:?}", inputs);
+                inputs.expect_len(2, "HashJoin");
                 PhysicalExpr::HashJoin {
-                    left: inputs.swap_remove(0),
-                    right: inputs.swap_remove(0),
+                    left: inputs.rel_node(),
+                    right: inputs.rel_node(),
                     condition: condition.clone(),
                 }
             }
             PhysicalExpr::MergeSortJoin { condition, .. } => {
-                assert_eq!(2, inputs.len(), "MergeSortJoin operator expects 2 inputs but got {:?}", inputs);
+                inputs.expect_len(2, "MergeSortJoin");
                 PhysicalExpr::MergeSortJoin {
-                    left: inputs.swap_remove(0),
-                    right: inputs.swap_remove(0),
+                    left: inputs.rel_node(),
+                    right: inputs.rel_node(),
                     condition: condition.clone(),
                 }
             }
             PhysicalExpr::Scan { source, columns } => {
-                assert_eq!(0, inputs.len(), "Scan operator expects 0 inputs but got {:?}", inputs);
+                inputs.expect_len(0, "Scan");
                 PhysicalExpr::Scan {
                     source: source.clone(),
                     columns: columns.clone(),
                 }
             }
             PhysicalExpr::IndexScan { source, columns } => {
-                assert_eq!(0, inputs.len(), "IndexScan operator expects 0 inputs but got {:?}", inputs);
+                inputs.expect_len(0, "IndexScan");
                 PhysicalExpr::IndexScan {
                     source: source.clone(),
                     columns: columns.clone(),
                 }
             }
             PhysicalExpr::Sort { ordering, .. } => {
-                assert_eq!(1, inputs.len(), "Sort operator expects 1 input but got {:?}", inputs);
+                inputs.expect_len(1, "Sort");
                 PhysicalExpr::Sort {
-                    input: inputs[0].clone(),
+                    input: inputs.rel_node(),
                     ordering: ordering.clone(),
                 }
-            }
-            PhysicalExpr::Expr { expr } => {
-                assert_eq!(0, inputs.len(), "Expr operator expects 0 input but got {:?}", inputs);
-                PhysicalExpr::Expr { expr: expr.clone() }
             }
         }
     }
@@ -171,7 +173,6 @@ impl PhysicalExpr {
             PhysicalExpr::Scan { .. } => None,
             PhysicalExpr::IndexScan { .. } => None,
             PhysicalExpr::Sort { .. } => None,
-            PhysicalExpr::Expr { .. } => None,
             PhysicalExpr::HashAggregate { .. } => None,
         }
     }
@@ -189,7 +190,7 @@ impl PhysicalExpr {
             PhysicalExpr::Select { input, filter } => {
                 f.write_name("Select");
                 f.write_input("input", input);
-                f.write_value("filter", filter)
+                f.write_input("filter", filter)
             }
             PhysicalExpr::HashJoin { left, right, condition } => {
                 f.write_name("HashJoin");
@@ -222,9 +223,6 @@ impl PhysicalExpr {
                 f.write_input("input", input);
                 f.write_value("ord", format!("{:?}", ordering.columns()).as_str())
             }
-            PhysicalExpr::Expr { expr } => {
-                f.write_name(format!("Expr {}", expr).as_str());
-            }
             PhysicalExpr::HashAggregate {
                 input,
                 aggr_exprs,
@@ -232,8 +230,12 @@ impl PhysicalExpr {
             } => {
                 f.write_name("HashAggregate");
                 f.write_input("input", input);
-                f.write_values("aggrs", aggr_exprs);
-                f.write_values("groups", group_exprs);
+                for aggr_expr in aggr_exprs {
+                    f.write_input("", aggr_expr);
+                }
+                for group_expr in group_exprs {
+                    f.write_input("", group_expr);
+                }
             }
         }
     }

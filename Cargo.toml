@@ -19,3 +19,11 @@ opt-level=3
 [[bench]]
 name = "optimizer_benchmark"
 harness = false
+
+[[bench]]
+name = "memo_basic_benchmark"
+harness = false
+
+[[bench]]
+name = "memo_rel_scalar_benchmark"
+harness = false

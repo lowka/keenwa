@@ -6,7 +6,7 @@ use std::iter::FromIterator;
 use crate::meta::Metadata;
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;
-use crate::operators::InputExpr;
+use crate::operators::RelNode;
 use crate::properties::physical::PhysicalProperties;
 use crate::rules::enforcers::{DefaultEnforcers, EnforcerRules};
 
@@ -136,7 +136,7 @@ pub trait RuleSet: Debug {
     fn create_enforcer(
         &self,
         required_properties: &PhysicalProperties,
-        input: InputExpr,
+        input: RelNode,
     ) -> Result<(PhysicalExpr, PhysicalProperties), OptimizerError>;
 
     /// Provides a hint to the optimizer whether or not to explore an alternative plan for the given expression
@@ -245,7 +245,7 @@ impl RuleSet for StaticRuleSet {
     fn create_enforcer(
         &self,
         required_properties: &PhysicalProperties,
-        input: InputExpr,
+        input: RelNode,
     ) -> Result<(PhysicalExpr, PhysicalProperties), OptimizerError> {
         assert!(
             !required_properties.is_empty(),

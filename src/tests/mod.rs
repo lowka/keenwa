@@ -4,6 +4,7 @@ use crate::operators::expressions::*;
 use crate::operators::join::*;
 use crate::operators::logical::*;
 use crate::operators::scalar::ScalarValue;
+use crate::operators::{Operator, OperatorExpr, ScalarNode};
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::statistics::Statistics;
 use crate::properties::OrderingChoice;
@@ -15,12 +16,13 @@ fn ordering(cols: Vec<ColumnId>) -> PhysicalProperties {
     PhysicalProperties::new(OrderingChoice::new(cols))
 }
 
-fn binary_op_col_gt(left: ColumnId, value: ScalarValue) -> Expr {
-    Expr::BinaryExpr {
+fn binary_op_col_gt(left: ColumnId, value: ScalarValue) -> ScalarNode {
+    let expr = Expr::BinaryExpr {
         lhs: Box::new(Expr::Column(left)),
         op: BinaryOp::Gt,
         rhs: Box::new(Expr::Scalar(value)),
-    }
+    };
+    ScalarNode::Expr(Box::new(Operator::from(OperatorExpr::Scalar(expr))))
 }
 
 #[test]
@@ -88,6 +90,71 @@ fn test_join() {
 }
 
 #[test]
+fn test_select() {
+    let query = LogicalExpr::Select {
+        input: LogicalExpr::Get {
+            source: "A".into(),
+            columns: vec![1, 2],
+        }
+        .into(),
+        filter: binary_op_col_gt(1, ScalarValue::Int32(10)),
+    }
+    .to_operator();
+
+    let mut tester = OptimizerTester::new();
+
+    tester.set_table_access_cost("A", 100);
+
+    tester.optimize(
+        query,
+        r#"
+02 Select [00 01]
+01 Expr col:1 > 10
+00 Scan A cols=[1, 2]
+"#,
+    );
+}
+
+#[test]
+fn test_select_with_a_nested_query() {
+    let sub_query = LogicalExpr::Get {
+        source: "B".into(),
+        columns: vec![3],
+    }
+    .to_operator();
+    let filter = Expr::BinaryExpr {
+        lhs: Box::new(Expr::SubQuery(sub_query.into())),
+        op: BinaryOp::Gt,
+        rhs: Box::new(Expr::Scalar(ScalarValue::Int32(1))),
+    };
+
+    let query = LogicalExpr::Select {
+        input: LogicalExpr::Get {
+            source: "A".into(),
+            columns: vec![1, 2],
+        }
+        .into(),
+        filter: filter.into(),
+    }
+    .to_operator();
+
+    let mut tester = OptimizerTester::new();
+
+    tester.set_table_access_cost("A", 100);
+    tester.set_table_access_cost("B", 100);
+
+    tester.optimize(
+        query,
+        r#"
+03 Select [00 02]
+02 Expr SubQuery 01 > 1
+01 Scan B cols=[3]
+00 Scan A cols=[1, 2]
+"#,
+    );
+}
+
+#[test]
 fn test_get_ordered_top_level_enforcer() {
     let query = LogicalExpr::Select {
         input: LogicalExpr::Get {
@@ -104,13 +171,13 @@ fn test_get_ordered_top_level_enforcer() {
     let mut tester = OptimizerTester::new();
 
     tester.set_table_access_cost("A", 100);
-    println!("{:?}", query);
 
     tester.optimize(
         query,
         r#"
-01 Sort [01] ord=[3]
-01 Select [00] filter=col:1 > 10
+02 Sort [02] ord=[3]
+02 Select [00 01]
+01 Expr col:1 > 10
 00 Scan A cols=[1, 2, 3]
 "#,
     );
@@ -137,7 +204,8 @@ fn test_get_ordered_no_top_level_enforcer() {
     tester.optimize(
         query,
         r#"
-01 Select [ord:[3]=00] filter=col:1 > 10
+02 Select [ord:[3]=00 ord:[3]=01]
+01 Expr col:1 > 10
 00 Sort [00] ord=[3]
 00 Scan A cols=[1, 2, 3]
 "#,
@@ -198,7 +266,8 @@ fn test_join_commutativity() {
     tester.optimize(
         query,
         r#"
-03 Select [02] filter=col:1 > 10
+04 Select [02 03]
+03 Expr col:1 > 10
 02 HashJoin [01 00] using=[(2, 1)]
 00 Scan A cols=[1]
 01 Scan B cols=[2]
@@ -239,8 +308,9 @@ fn test_join_commutativity_ordered() {
     tester.optimize(
         query,
         r#"
-03 Sort [03] ord=[1]
-03 Select [02] filter=col:1 > 10
+04 Sort [04] ord=[1]
+04 Select [02 03]
+03 Expr col:1 > 10
 02 HashJoin [00 01] using=[(1, 2)]
 01 Scan B cols=[2]
 00 Scan A cols=[1]
@@ -539,7 +609,8 @@ fn test_inner_sort_with_enforcer() {
     tester.optimize(
         query,
         r#"
-02 Select [ord:[1]=01] filter=col:1 > 10
+03 Select [ord:[1]=01 02]
+02 Expr col:1 > 10
 01 Sort [01] ord=[1]
 01 HashJoin [00 00] using=[(1, 1)]
 00 Scan A cols=[1, 2]
@@ -580,7 +651,8 @@ fn test_inner_sort_satisfied_by_ordering_providing_operator() {
     tester.optimize(
         query,
         r#"
-02 Select [ord:[1]=01] filter=col:1 > 10
+03 Select [ord:[1]=01 02]
+02 Expr col:1 > 10
 01 MergeSortJoin [ord:[1]=00 ord:[1]=00] using=[(1, 1)]
 00 Sort [00] ord=[1]
 00 Scan A cols=[1, 2]
@@ -725,12 +797,12 @@ fn test_enforce_grouping() {
             columns: vec![1, 2],
         }
         .into(),
-        aggr_exprs: vec![Expr::Aggregate {
+        aggr_exprs: vec![ScalarNode::from(Expr::Aggregate {
             func: AggregateFunction::Count,
             args: vec![Expr::Column(1)],
             filter: None,
-        }],
-        group_exprs: vec![Expr::Column(2)],
+        })],
+        group_exprs: vec![ScalarNode::from(Expr::Column(2))],
     }
     .to_operator();
 
@@ -742,7 +814,9 @@ fn test_enforce_grouping() {
     tester.optimize(
         query,
         r#"
-01 HashAggregate [00] aggrs=[count(col:1)] groups=[col:2]
+03 HashAggregate [00 01 02]
+02 Expr col:2
+01 Expr count(col:1)
 00 Scan A cols=[1, 2]
 "#,
     );

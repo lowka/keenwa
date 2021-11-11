@@ -1,14 +1,24 @@
 use crate::cost::Cost;
 use crate::memo::GroupId;
+use crate::operators::expressions::Expr;
 use crate::operators::physical::PhysicalExpr;
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
 use std::fmt::Debug;
 
+/// A reference to the best expression in a memo-group.
+#[derive(Debug, Clone)]
+pub enum BestExprRef<'a> {
+    /// A relational expression.
+    Relational(&'a PhysicalExpr),
+    /// A scalar expression.
+    Scalar(&'a Expr),
+}
+
 /// A helper trait that is called by the optimizer when an optimized operator tree is being built.
 pub trait ResultCallback: Debug {
     /// Called for each expression in the final operator tree.
-    fn on_best_expr<C>(&self, expr: &PhysicalExpr, ctx: &C)
+    fn on_best_expr<C>(&self, expr: BestExprRef, ctx: &C)
     where
         C: BestExprContext;
 }
@@ -44,7 +54,7 @@ pub trait BestExprContext: Debug {
 pub struct NoOpResultCallback;
 
 impl ResultCallback for NoOpResultCallback {
-    fn on_best_expr<C>(&self, _expr: &PhysicalExpr, _ctx: &C)
+    fn on_best_expr<C>(&self, _expr: BestExprRef, _ctx: &C)
     where
         C: BestExprContext,
     {
