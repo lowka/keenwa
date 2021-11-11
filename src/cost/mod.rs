@@ -19,16 +19,10 @@ pub trait CostEstimator: Debug {
 /// Provides information that can be used to estimate a cost of an expression.
 #[derive(Debug)]
 pub struct CostEstimationContext {
-    pub(crate) input_costs: Vec<usize>,
     pub(crate) input_groups: Vec<GroupRef>,
 }
 
 impl CostEstimationContext {
-    /// Returns the cost of the i-th input expression.
-    pub fn input_cost(&self, i: usize) -> usize {
-        self.input_costs[i]
-    }
-
     /// Returns statistics of the i-th input expression.
     pub fn input_statistics(&self, i: usize) -> Option<&Statistics> {
         let group = &self.input_groups[i];

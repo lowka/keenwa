@@ -532,8 +532,9 @@ fn optimize_inputs<T>(
         let group = &ctx.group;
         let logical_properties = group.attrs().logical();
         let statistics = logical_properties.statistics();
-        let cost_ctx = new_cost_estimation_ctx(&inputs, &runtime_state.state);
-        let cost = cost_estimator.estimate_cost(expr.expr().as_physical(), &cost_ctx, statistics);
+        let (cost_ctx, inputs_cost) = new_cost_estimation_ctx(&inputs, &runtime_state.state);
+        let expr_cost = cost_estimator.estimate_cost(expr.expr().as_physical(), &cost_ctx, statistics);
+        let cost = expr_cost + inputs_cost;
 
         log::debug!("Expr cost: {} ctx: {} expr: {} {}", cost, ctx, expr_id, expr);
 
@@ -913,10 +914,10 @@ impl Display for InputContexts {
     }
 }
 
-fn new_cost_estimation_ctx(inputs: &InputContexts, state: &State) -> CostEstimationContext {
+fn new_cost_estimation_ctx(inputs: &InputContexts, state: &State) -> (CostEstimationContext, Cost) {
     let capacity = inputs.inputs.len();
     let mut input_groups = Vec::with_capacity(capacity);
-    let mut input_costs = Vec::with_capacity(capacity);
+    let mut input_cost = 0;
 
     for ctx in inputs.inputs.iter() {
         let group_state = state.get_state(ctx);
@@ -925,17 +926,14 @@ fn new_cost_estimation_ctx(inputs: &InputContexts, state: &State) -> CostEstimat
             Some(cost) => {
                 let group = ctx.group.clone();
                 input_groups.push(group);
-                input_costs.push(cost);
+                input_cost += cost;
             }
             //FIXME: Is this really a hard error?
             None => panic!("No best expr for input group: {:?}", ctx),
         }
     }
 
-    CostEstimationContext {
-        input_costs,
-        input_groups,
-    }
+    (CostEstimationContext { input_groups }, input_cost)
 }
 
 #[derive(Debug)]
