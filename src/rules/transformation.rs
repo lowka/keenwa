@@ -1,7 +1,7 @@
 use crate::error::OptimizerError;
 use crate::operators::join::JoinCondition;
 use crate::operators::logical::LogicalExpr;
-use crate::rules::{unexpected_logical_operator, Rule, RuleContext, RuleMatch, RuleResult, RuleType};
+use crate::rules::{Rule, RuleContext, RuleMatch, RuleResult, RuleType};
 
 #[derive(Debug)]
 pub struct JoinCommutativityRule;

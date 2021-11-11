@@ -37,8 +37,8 @@ impl PhysicalProperties {
         match &self.inner {
             None => None,
             Some(p) => {
-                assert!(p.ordering().is_some(), "Unexpected physical property. Only ordering is supported: {:?}", self);
-                p.ordering()
+                assert!(p.ordering.is_some(), "Unexpected physical property. Only ordering is supported: {:?}", self);
+                p.ordering.as_ref()
             }
         }
     }
@@ -83,10 +83,4 @@ impl Display for PhysicalProperties {
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 struct Values {
     ordering: Option<OrderingChoice>,
-}
-
-impl Values {
-    fn ordering(&self) -> Option<&OrderingChoice> {
-        self.ordering.as_ref()
-    }
 }

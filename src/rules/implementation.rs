@@ -3,7 +3,7 @@ use crate::error::OptimizerError;
 use crate::meta::ColumnId;
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;
-use crate::rules::{unexpected_logical_operator, Rule, RuleContext, RuleMatch, RuleResult, RuleType};
+use crate::rules::{Rule, RuleContext, RuleMatch, RuleResult, RuleType};
 
 #[derive(Debug)]
 pub struct GetToScanRule {

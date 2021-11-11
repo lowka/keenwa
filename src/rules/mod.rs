@@ -260,8 +260,3 @@ impl RuleSet for StaticRuleSet {
         self.enforcers.can_explore_with_enforcer(expr, required_properties)
     }
 }
-
-/// Returns an error that indicates that the given logical expression does not match.
-pub fn unexpected_logical_operator(expected: &str, expr: &LogicalExpr) -> Result<RuleResult, OptimizerError> {
-    Err(OptimizerError::Internal(format!("Unexpected operator. Expected {} but got: {:?}", expected, expr)))
-}
