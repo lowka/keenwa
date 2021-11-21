@@ -1,10 +1,12 @@
+use crate::memo::{CopyInNestedExprs, MemoExprFormatter};
 use crate::meta::ColumnId;
 use crate::operators::scalar::ScalarValue;
+use crate::operators::{Operator, OperatorInputs, RelNode};
 use itertools::Itertools;
 use std::fmt::{Display, Formatter};
 
 /// Expressions supported by the optimizer.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Expr {
     Column(ColumnId),
     Scalar(ScalarValue),
@@ -19,6 +21,62 @@ pub enum Expr {
         args: Vec<Expr>,
         filter: Option<Box<Expr>>,
     },
+    SubQuery(RelNode),
+}
+
+impl Expr {
+    pub fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        match self {
+            Expr::Column(_) => self.clone(),
+            Expr::Scalar(_) => self.clone(),
+            Expr::BinaryExpr { lhs, op, rhs } => {
+                let lhs = lhs.with_new_inputs(inputs);
+                let rhs = rhs.with_new_inputs(inputs);
+                Expr::BinaryExpr {
+                    lhs: Box::new(lhs),
+                    op: op.clone(),
+                    rhs: Box::new(rhs),
+                }
+            }
+            Expr::Not(expr) => {
+                let expr = expr.with_new_inputs(inputs);
+                Expr::Not(Box::new(expr))
+            }
+            Expr::Aggregate { func, args, filter } => Expr::Aggregate {
+                func: func.clone(),
+                args: args.iter().map(|e| e.with_new_inputs(inputs)).collect(),
+                filter: filter.as_ref().map(|f| Box::new(f.with_new_inputs(inputs))),
+            },
+            Expr::SubQuery(_) => Expr::SubQuery(inputs.rel_node()),
+        }
+    }
+
+    pub fn copy_in_nested(&self, collector: &mut CopyInNestedExprs<Operator>) {
+        match self {
+            Expr::Column(_) => {}
+            Expr::Scalar(_) => {}
+            Expr::BinaryExpr { lhs, rhs, .. } => {
+                lhs.copy_in_nested(collector);
+                rhs.copy_in_nested(collector);
+            }
+            Expr::Not(expr) => expr.copy_in_nested(collector),
+            Expr::Aggregate { args, filter, .. } => {
+                for arg in args {
+                    arg.copy_in_nested(collector);
+                }
+                filter.as_ref().map(|e| e.copy_in_nested(collector));
+            }
+            Expr::SubQuery(expr) => collector.visit_expr(expr.get_ref()),
+        }
+    }
+
+    pub fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("Expr");
+        f.write_value("", self);
+    }
 }
 
 /// Binary operators.
@@ -48,6 +106,13 @@ impl Display for Expr {
                 Ok(())
             }
             Expr::Not(expr) => write!(f, "NOT {}", &*expr),
+            Expr::SubQuery(expr) => match expr {
+                RelNode::Expr(expr) => {
+                    let ptr: *const Operator = &**expr;
+                    write!(f, "SubQuery ptr {:?}", ptr)
+                }
+                RelNode::Group(group) => write!(f, "SubQuery {}", group.id()),
+            },
         }
     }
 }

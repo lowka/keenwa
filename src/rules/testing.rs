@@ -1,9 +1,9 @@
 use crate::error::OptimizerError;
-use crate::memo::{InputNode, MemoExpr, MemoExprCallback, MemoExprFormatter, StringMemoFormatter};
+use crate::memo::{InputNodeRef, MemoExpr, MemoExprCallback, MemoExprFormatter, StringMemoFormatter};
 use crate::meta::Metadata;
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;
-use crate::operators::{ExprMemo, InputExpr, Operator, OperatorExpr, Properties};
+use crate::operators::{ExprMemo, Operator, OperatorExpr, Properties, RelNode};
 use crate::properties::logical::{LogicalPropertiesBuilder, PropertiesProvider};
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::statistics::{Statistics, StatisticsBuilder};
@@ -49,7 +49,8 @@ impl RuleTester {
         let rule_match = self.rule.matches(&ctx, expr);
         assert!(rule_match.is_some(), "Rule does not match: {:?}", self.rule);
 
-        let result = self.rule.apply(&ctx, expr_ref.mexpr().expr().as_logical());
+        let expr = expr_ref.mexpr().expr();
+        let result = self.rule.apply(&ctx, expr.as_relational().as_logical());
         match result {
             Ok(Some(RuleResult::Substitute(new_expr))) => {
                 let (_, new_expr) = self.memo.insert(Operator::from(OperatorExpr::from(new_expr)));
@@ -120,7 +121,7 @@ where
     fn create_enforcer(
         &self,
         required_properties: &PhysicalProperties,
-        input: InputExpr,
+        input: RelNode,
     ) -> Result<(PhysicalExpr, PhysicalProperties), OptimizerError> {
         self.rule_set.create_enforcer(required_properties, input)
     }
@@ -173,9 +174,9 @@ impl MemoExprFormatter for FormatHeader<'_> {
         self.fmt.write_source(source);
     }
 
-    fn write_input<E>(&mut self, _name: &str, _input: &InputNode<E>)
+    fn write_input<'e, T>(&mut self, _name: &str, _input: impl Into<InputNodeRef<'e, T>>)
     where
-        E: MemoExpr,
+        T: MemoExpr + 'e,
     {
         //inputs are written by another formatter
     }
@@ -219,23 +220,24 @@ impl MemoExprFormatter for FormatInputs<'_> {
         // source is written by another formatter
     }
 
-    fn write_input<E>(&mut self, name: &str, input: &InputNode<E>)
+    fn write_input<'e, T>(&mut self, name: &str, input: impl Into<InputNodeRef<'e, T>>)
     where
-        E: MemoExpr,
+        T: MemoExpr + 'e,
     {
         self.depth += 1;
         self.buf.push('\n');
         self.pad_depth(' ');
         self.buf.push_str(name);
         self.buf.push_str(": ");
+        let input: InputNodeRef<T> = input.into();
         match input {
-            InputNode::Expr(expr) => {
+            InputNodeRef::Expr(expr) => {
                 let fmt = StringMemoFormatter::new(self.buf);
                 let mut header = FormatHeader { fmt };
                 expr.format_expr(&mut header);
                 expr.format_expr(self);
             }
-            InputNode::Group(group) => {
+            InputNodeRef::Group(group) => {
                 let expr = group.mexpr().mexpr();
                 let fmt = StringMemoFormatter::new(self.buf);
                 let mut header = FormatHeader { fmt };

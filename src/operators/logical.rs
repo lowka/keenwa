@@ -1,107 +1,109 @@
-use crate::memo::{ExprContext, MemoExprFormatter, TraversalContext};
+use crate::memo::{ExprContext, MemoExprFormatter};
 use crate::meta::ColumnId;
-use crate::operators::expressions::Expr;
 use crate::operators::join::JoinCondition;
-use crate::operators::InputExpr;
 use crate::operators::{Operator, OperatorExpr};
+use crate::operators::{OperatorCopyIn, OperatorInputs, RelExpr, RelNode, ScalarNode};
 
 // TODO: Docs
 /// A logical expression describes a high-level operator without specifying an implementation algorithm to be used.
 #[derive(Debug, Clone)]
 pub enum LogicalExpr {
     Projection {
-        input: InputExpr,
+        input: RelNode,
         columns: Vec<ColumnId>,
     },
     Select {
-        input: InputExpr,
-        filter: Expr,
+        input: RelNode,
+        filter: ScalarNode,
     },
     Aggregate {
-        input: InputExpr,
-        aggr_exprs: Vec<Expr>,
-        group_exprs: Vec<Expr>,
+        input: RelNode,
+        aggr_exprs: Vec<ScalarNode>,
+        group_exprs: Vec<ScalarNode>,
     },
     Join {
-        left: InputExpr,
-        right: InputExpr,
+        left: RelNode,
+        right: RelNode,
         condition: JoinCondition,
     },
     Get {
         source: String,
         columns: Vec<ColumnId>,
     },
-    Expr {
-        expr: Expr,
-    },
 }
 
 impl LogicalExpr {
-    pub(crate) fn traverse(&self, expr_ctx: &mut ExprContext<Operator>, ctx: &mut TraversalContext<Operator>) {
+    pub(crate) fn traverse(&self, visitor: &mut OperatorCopyIn, expr_ctx: &mut ExprContext<Operator>) {
         match self {
             LogicalExpr::Projection { input, .. } => {
-                ctx.visit_input(expr_ctx, input);
+                visitor.visit_rel(expr_ctx, input);
             }
-            LogicalExpr::Select { input, .. } => {
-                ctx.visit_input(expr_ctx, input);
+            LogicalExpr::Select { input, filter } => {
+                visitor.visit_rel(expr_ctx, input);
+                visitor.visit_scalar(expr_ctx, filter);
             }
             LogicalExpr::Join { left, right, .. } => {
-                ctx.visit_input(expr_ctx, left);
-                ctx.visit_input(expr_ctx, right);
+                visitor.visit_rel(expr_ctx, left);
+                visitor.visit_rel(expr_ctx, right);
             }
             LogicalExpr::Get { .. } => {}
-            LogicalExpr::Expr { .. } => {}
-            LogicalExpr::Aggregate { input, .. } => {
-                ctx.visit_input(expr_ctx, input);
+            LogicalExpr::Aggregate {
+                input,
+                aggr_exprs,
+                group_exprs,
+            } => {
+                visitor.visit_rel(expr_ctx, input);
+                for expr in aggr_exprs {
+                    visitor.visit_scalar(expr_ctx, expr);
+                }
+                for group_expr in group_exprs {
+                    visitor.visit_scalar(expr_ctx, group_expr);
+                }
             }
         }
     }
 
-    pub fn with_new_inputs(&self, mut inputs: Vec<InputExpr>) -> Self {
+    pub fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
         match self {
             LogicalExpr::Projection { columns, .. } => {
-                assert_eq!(1, inputs.len(), "Projection operator expects 1 input but got {:?}", inputs);
+                inputs.expect_len(1, "LogicalProjection");
                 LogicalExpr::Projection {
-                    input: inputs.swap_remove(0),
+                    input: inputs.rel_node(),
                     columns: columns.clone(),
                 }
             }
-            LogicalExpr::Select { filter, .. } => {
-                assert_eq!(1, inputs.len(), "Select operator expects 1 input but got {:?}", inputs);
+            LogicalExpr::Select { .. } => {
+                inputs.expect_len(2, "LogicalSelect");
                 LogicalExpr::Select {
-                    input: inputs.swap_remove(0),
-                    filter: filter.clone(),
+                    input: inputs.rel_node(),
+                    filter: inputs.scalar_node(),
                 }
             }
             LogicalExpr::Join { condition, .. } => {
-                assert_eq!(2, inputs.len(), "Join operator expects 2 inputs but got {:?}", inputs);
+                inputs.expect_len(2, "LogicalJoin");
                 LogicalExpr::Join {
-                    left: inputs.swap_remove(0),
-                    right: inputs.swap_remove(0),
+                    left: inputs.rel_node(),
+                    right: inputs.rel_node(),
                     condition: condition.clone(),
                 }
             }
             LogicalExpr::Get { source, columns } => {
-                assert_eq!(0, inputs.len(), "Get operator expects 0 inputs but got {:?}", inputs);
+                inputs.expect_len(0, "LogicalGet");
                 LogicalExpr::Get {
                     source: source.clone(),
                     columns: columns.clone(),
                 }
-            }
-            LogicalExpr::Expr { expr } => {
-                assert_eq!(0, inputs.len(), "Expr operator expects 0 inputs but got {:?}", inputs);
-                LogicalExpr::Expr { expr: expr.clone() }
             }
             LogicalExpr::Aggregate {
                 aggr_exprs,
                 group_exprs,
                 ..
             } => {
-                assert_eq!(1, inputs.len(), "Aggregate operator expects 1 input but got {:?}", inputs);
+                inputs.expect_len(1 + aggr_exprs.len() + group_exprs.len(), "LogicalAggregate");
                 LogicalExpr::Aggregate {
-                    input: inputs.swap_remove(0),
-                    aggr_exprs: aggr_exprs.clone(),
-                    group_exprs: group_exprs.clone(),
+                    input: inputs.rel_node(),
+                    aggr_exprs: inputs.scalar_nodes(aggr_exprs.len()),
+                    group_exprs: inputs.scalar_nodes(group_exprs.len()),
                 }
             }
         }
@@ -120,7 +122,7 @@ impl LogicalExpr {
             LogicalExpr::Select { input, filter } => {
                 f.write_name("LogicalSelect");
                 f.write_input("input", input);
-                f.write_value("filter", filter);
+                f.write_input("filter", filter);
             }
             LogicalExpr::Join { left, right, condition } => {
                 f.write_name("LogicalJoin");
@@ -135,9 +137,6 @@ impl LogicalExpr {
                 f.write_source(source);
                 f.write_values("cols", columns);
             }
-            LogicalExpr::Expr { expr } => {
-                f.write_name(format!("Logica lExpr {}", expr).as_str());
-            }
             LogicalExpr::Aggregate {
                 input,
                 aggr_exprs,
@@ -145,14 +144,20 @@ impl LogicalExpr {
             } => {
                 f.write_name("LogicalAggregate");
                 f.write_input("input", input);
-                f.write_values("aggrs", aggr_exprs);
-                f.write_values("groups", group_exprs);
+                for aggr_expr in aggr_exprs {
+                    f.write_input("", aggr_expr);
+                }
+                for group_expr in group_exprs {
+                    f.write_input("", group_expr);
+                }
             }
         }
     }
 
     // FIXME: ??? ToOperator trait
     pub fn to_operator(self) -> Operator {
-        Operator::from(OperatorExpr::from(self))
+        let expr = RelExpr::Logical(Box::new(self));
+        let expr = OperatorExpr::Relational(expr);
+        Operator::from(expr)
     }
 }

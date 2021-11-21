@@ -8,9 +8,8 @@ use crate::catalog::mutable::MutableCatalog;
 use crate::catalog::{CatalogRef, TableBuilder, DEFAULT_SCHEMA};
 use crate::cost::simple::SimpleCostEstimator;
 use crate::datatypes::DataType;
-use crate::memo::{InputNode, MemoExpr, MemoExprFormatter, StringMemoFormatter};
+use crate::memo::{InputNodeRef, MemoExpr, MemoExprFormatter, StringMemoFormatter};
 use crate::meta::Metadata;
-use crate::operators::physical::PhysicalExpr;
 use crate::operators::Operator;
 use crate::optimizer::Optimizer;
 use crate::properties::logical::LogicalPropertiesBuilder;
@@ -19,7 +18,7 @@ use crate::rules::implementation::{GetToScanRule, ProjectionRule, SelectRule};
 use crate::rules::testing::TestRuleSet;
 use crate::rules::Rule;
 use crate::rules::StaticRuleSet;
-use crate::util::{BestExprContext, ResultCallback};
+use crate::util::{BestExprContext, BestExprRef, ResultCallback};
 
 static INIT_LOG: Once = Once::new();
 
@@ -148,8 +147,7 @@ impl OptimizerTester {
 
         let test_result = TestResultBuilder::result_as_string(test_result);
         let expected_plan = expected_lines.iter().skip(1).map(|s| s.as_ref()).collect::<Vec<&str>>().join("\n");
-        let actual_plan = test_result.to_string();
-        assert_eq!(actual_plan, expected_plan, "{} does not match", label);
+        assert_eq!(test_result, expected_plan, "{} does not match", label);
     }
 }
 
@@ -215,7 +213,7 @@ struct TestResultBuilder {
 }
 
 impl ResultCallback for TestResultBuilder {
-    fn on_best_expr<C>(&self, expr: &PhysicalExpr, ctx: &C)
+    fn on_best_expr<C>(&self, expr: BestExprRef, ctx: &C)
     where
         C: BestExprContext,
     {
@@ -223,8 +221,12 @@ impl ResultCallback for TestResultBuilder {
         let mut buf = String::new();
         buf.push_str(format!("{:02} ", group_id).as_str());
         let fmt = StringMemoFormatter::new(&mut buf);
-        let mut formatter = BestExprFormatter::new(fmt, ctx);
-        expr.format_expr(&mut formatter);
+        let mut fmt = BestExprFormatter::new(fmt, ctx);
+        match expr {
+            BestExprRef::Relational(expr) => expr.format_expr(&mut fmt),
+            BestExprRef::Scalar(expr) => expr.format_expr(&mut fmt),
+        }
+
         let mut content = self.content.borrow_mut();
         content.push_front(buf);
     }
@@ -281,9 +283,9 @@ where
         self.fmt.write_source(source);
     }
 
-    fn write_input<E>(&mut self, _name: &str, _input: &InputNode<E>)
+    fn write_input<'e, T>(&mut self, _name: &str, _input: impl Into<InputNodeRef<'e, T>>)
     where
-        E: MemoExpr,
+        T: MemoExpr + 'e,
     {
         self.fmt.push(' ');
 

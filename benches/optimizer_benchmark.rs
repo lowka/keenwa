@@ -85,6 +85,11 @@ fn memo_bench(c: &mut Criterion) {
         });
     }
 
+    let filter = Expr::BinaryExpr {
+        lhs: Box::new(Expr::Column(1)),
+        op: BinaryOp::Gt,
+        rhs: Box::new(Expr::Scalar(ScalarValue::Int32(100))),
+    };
     let query = LogicalExpr::Select {
         input: LogicalExpr::Join {
             left: LogicalExpr::Get {
@@ -100,11 +105,7 @@ fn memo_bench(c: &mut Criterion) {
             condition: JoinCondition::using(vec![(1, 2)]),
         }
         .into(),
-        filter: Expr::BinaryExpr {
-            lhs: Box::new(Expr::Column(1)),
-            op: BinaryOp::Gt,
-            rhs: Box::new(Expr::Scalar(ScalarValue::Int32(100))),
-        },
+        filter: ScalarNode::Expr(Box::new(Operator::from(OperatorExpr::from(filter)))),
     }
     .to_operator()
     .with_required(ordering(vec![1]))

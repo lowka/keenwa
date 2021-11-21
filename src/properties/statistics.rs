@@ -124,7 +124,6 @@ impl StatisticsBuilder for CatalogStatisticsBuilder {
                 };
                 Statistics::new(row_count as f64, 1.0)
             }
-            LogicalExpr::Expr { .. } => Statistics::new(1.0, 1.0),
         };
         Ok(Some(statistics))
     }
@@ -137,6 +136,7 @@ mod test {
     use crate::datatypes::DataType;
     use crate::operators::expressions::{AggregateFunction, Expr};
     use crate::operators::logical::LogicalExpr;
+    use crate::operators::ScalarNode;
     use crate::properties::statistics::{CatalogStatisticsBuilder, Statistics, StatisticsBuilder};
     use std::sync::Arc;
 
@@ -162,12 +162,12 @@ mod test {
                 columns: vec![1],
             }
             .into(),
-            aggr_exprs: vec![Expr::Aggregate {
+            aggr_exprs: vec![ScalarNode::from(Expr::Aggregate {
                 func: AggregateFunction::Avg,
                 args: vec![Expr::Column(1)],
                 filter: None,
-            }],
-            group_exprs: groups,
+            })],
+            group_exprs: groups.into_iter().map(|e| ScalarNode::from(e)).collect(),
         }
     }
 

@@ -4,7 +4,7 @@ use crate::operators::expressions::Expr;
 use crate::operators::join::JoinCondition;
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;
-use crate::operators::{InputExpr, OperatorExpr};
+use crate::operators::{OperatorExpr, RelExpr, RelNode, ScalarNode};
 use crate::properties::statistics::{Statistics, StatisticsBuilder};
 use std::fmt::Debug;
 
@@ -75,15 +75,18 @@ impl PropertiesProvider for LogicalPropertiesBuilder {
         statistics: Option<&Statistics>,
     ) -> Result<LogicalProperties, OptimizerError> {
         match expr {
-            OperatorExpr::Logical(expr) => {
-                let statistics = self.statistics.build_statistics(expr, statistics)?;
-                Ok(self.build_for_logical(expr, statistics))
-            }
-            OperatorExpr::Physical(expr) => {
-                self.build_for_physical(expr);
-                // Attributes are not used by physical expressions
-                Ok(LogicalProperties::empty())
-            }
+            OperatorExpr::Relational(rel_expr) => match rel_expr {
+                RelExpr::Logical(expr) => {
+                    let statistics = self.statistics.build_statistics(expr, statistics)?;
+                    Ok(self.build_for_logical(expr, statistics))
+                }
+                RelExpr::Physical(expr) => {
+                    self.build_for_physical(expr);
+                    // Attributes are not used by physical expressions
+                    Ok(LogicalProperties::empty())
+                }
+            },
+            OperatorExpr::Scalar(_) => Ok(LogicalProperties::empty()),
         }
     }
 }
@@ -106,14 +109,13 @@ impl LogicalPropertiesBuilder {
                 group_exprs,
             } => {
                 let mut required = Vec::new();
-                collect_columns_from_exprs(aggr_exprs, &mut required);
+                collect_columns_from_scalar_exprs(aggr_exprs, &mut required);
                 // TODO: validate group exprs
-                collect_columns_from_exprs(group_exprs, &mut required);
+                collect_columns_from_scalar_exprs(group_exprs, &mut required);
                 collect_columns_from_input(input, &required)
             }
             LogicalExpr::Join { left, right, condition } => collect_columns_from_join_condition(left, right, condition),
             LogicalExpr::Get { columns, .. } => columns.clone(),
-            LogicalExpr::Expr { .. } => Vec::with_capacity(0),
         };
         LogicalProperties::new(columns, statistics)
     }
@@ -133,9 +135,9 @@ impl LogicalPropertiesBuilder {
                 group_exprs,
             } => {
                 let mut required = Vec::new();
-                collect_columns_from_exprs(aggr_exprs, &mut required);
                 // TODO: validate group exprs
-                collect_columns_from_exprs(group_exprs, &mut required);
+                collect_columns_from_scalar_exprs(aggr_exprs, &mut required);
+                collect_columns_from_scalar_exprs(group_exprs, &mut required);
                 collect_columns_from_input(input, &required);
             }
             PhysicalExpr::HashJoin { left, right, condition } => {
@@ -150,14 +152,13 @@ impl LogicalPropertiesBuilder {
                 let required = ordering.columns();
                 collect_columns_from_input(input, required);
             }
-            PhysicalExpr::Expr { .. } => {}
         };
         //FIXME:
         LogicalProperties::empty()
     }
 }
 
-fn collect_columns_from_input(input: &InputExpr, used: &[ColumnId]) -> Vec<ColumnId> {
+fn collect_columns_from_input(input: &RelNode, used: &[ColumnId]) -> Vec<ColumnId> {
     let logical = input.attrs().logical();
     let output_columns = logical.output_columns();
     let columns: Vec<ColumnId> = output_columns.iter().copied().collect();
@@ -172,11 +173,7 @@ fn collect_columns_from_input(input: &InputExpr, used: &[ColumnId]) -> Vec<Colum
     columns
 }
 
-fn collect_columns_from_join_condition(
-    left: &InputExpr,
-    right: &InputExpr,
-    condition: &JoinCondition,
-) -> Vec<ColumnId> {
+fn collect_columns_from_join_condition(left: &RelNode, right: &RelNode, condition: &JoinCondition) -> Vec<ColumnId> {
     match condition {
         JoinCondition::Using(using) => {
             let mut left_columns = collect_columns_from_input(left, using.left_columns());
@@ -193,6 +190,12 @@ fn collect_columns_from_exprs(exprs: &[Expr], columns: &mut Vec<ColumnId>) {
     }
 }
 
+fn collect_columns_from_scalar_exprs(exprs: &[ScalarNode], columns: &mut Vec<ColumnId>) {
+    for expr in exprs {
+        collect_columns_from_expr(expr.expr(), columns);
+    }
+}
+
 fn collect_columns_from_expr(expr: &Expr, columns: &mut Vec<ColumnId>) {
     match expr {
         Expr::Column(id) => columns.push(*id),
@@ -206,6 +209,9 @@ fn collect_columns_from_expr(expr: &Expr, columns: &mut Vec<ColumnId>) {
         }
         Expr::Aggregate { args, .. } => {
             collect_columns_from_exprs(args, columns);
+        }
+        Expr::SubQuery(expr) => {
+            collect_columns_from_input(expr, columns);
         }
     }
 }

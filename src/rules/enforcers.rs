@@ -2,7 +2,7 @@ use crate::error::OptimizerError;
 use crate::operators::join::JoinCondition;
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;
-use crate::operators::InputExpr;
+use crate::operators::RelNode;
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::OrderingChoice;
 use std::fmt::Debug;
@@ -27,7 +27,7 @@ pub trait EnforcerRules: Debug {
     fn create_enforcer(
         &self,
         properties: &PhysicalProperties,
-        input: InputExpr,
+        input: RelNode,
     ) -> Result<(PhysicalExpr, PhysicalProperties), OptimizerError>;
 }
 
@@ -38,7 +38,7 @@ impl EnforcerRules for DefaultEnforcers {
     fn create_enforcer(
         &self,
         properties: &PhysicalProperties,
-        input: InputExpr,
+        input: RelNode,
     ) -> Result<(PhysicalExpr, PhysicalProperties), OptimizerError> {
         create_enforcer(properties, input)
     }
@@ -46,7 +46,7 @@ impl EnforcerRules for DefaultEnforcers {
 
 fn create_enforcer(
     properties: &PhysicalProperties,
-    input: InputExpr,
+    input: RelNode,
 ) -> Result<(PhysicalExpr, PhysicalProperties), OptimizerError> {
     if let Some(ordering) = properties.ordering() {
         let sort_enforcer = PhysicalExpr::Sort {
@@ -97,9 +97,6 @@ pub fn expr_retains_property(expr: &PhysicalExpr, required: &PhysicalProperties)
             },
             Some(ordering),
         ) => ordering_is_preserved(sort_ordering, ordering),
-        (PhysicalExpr::Expr { expr: _ }, Some(_)) => {
-            return operator_does_not_support_properties(expr, required);
-        }
         // ???: projection w/o expressions always retains required physical properties
         (_, _) => false,
     };
@@ -129,9 +126,6 @@ pub fn expr_provides_property(expr: &PhysicalExpr, required: &PhysicalProperties
             },
             Some(ordering),
         ) => ordering_is_preserved(sort_ordering, ordering),
-        (PhysicalExpr::Expr { expr: _ }, Some(_)) => {
-            return operator_does_not_support_properties(expr, required);
-        }
         (_, Some(_)) => false,
     };
     Ok(preserved)

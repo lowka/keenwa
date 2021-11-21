@@ -70,7 +70,6 @@ impl CostEstimator for SimpleCostEstimator {
 
                 (row_count.ln() * row_count) as usize
             }
-            PhysicalExpr::Expr { .. } => 1,
         }
     }
 }
