@@ -15,15 +15,15 @@ pub enum BestExprRef<'a> {
     Scalar(&'a Expr),
 }
 
-/// A helper trait that is called by the optimizer when an optimized operator tree is being built.
+/// A callback called by the optimizer when an optimized plan is being built.
 pub trait ResultCallback: Debug {
-    /// Called for each expression in the final operator tree.
+    /// Called for each expression in the optimized plan.
     fn on_best_expr<C>(&self, expr: BestExprRef, ctx: &C)
     where
         C: BestExprContext;
 }
 
-/// Provides additional information about an expression selected by the optimizer.
+/// Provides additional information about an expression chosen by the optimizer as the best expression.
 pub trait BestExprContext: Debug {
     /// Returns the cost of the expression.
     fn cost(&self) -> Cost;
@@ -31,25 +31,23 @@ pub trait BestExprContext: Debug {
     /// Returns the logical properties of the expression.
     fn logical(&self) -> &LogicalProperties;
 
-    /// Returns the physical properties required by the expression.
+    /// Returns physical properties required by the expression.
     fn required(&self) -> &PhysicalProperties;
 
     /// Returns the identifier of a group the expression belongs to.
     fn group_id(&self) -> GroupId;
 
-    /// Returns the number of input expressions.
-    fn inputs_num(&self) -> usize;
+    /// Returns the number of child expressions.
+    fn num_children(&self) -> usize;
 
-    /// Returns the identifier of a group of the i-th input expression.
-    fn input_group_id(&self, i: usize) -> GroupId;
+    /// Returns the identifier of a group of the i-th child expression.
+    fn child_group_id(&self, i: usize) -> GroupId;
 
-    /// Returns the physical properties required by the i-th input expression.
-    fn input_required(&self, i: usize) -> &PhysicalProperties;
+    /// Returns physical properties required by the i-th child expression.
+    fn child_required(&self, i: usize) -> &PhysicalProperties;
 }
 
-/// A [ResultCallback] that does nothing.
-///
-/// [ResultCallback]: crate::util::ResultCallback
+/// A [`ResultCallback`](crate::util::ResultCallback) that does nothing.
 #[derive(Debug)]
 pub struct NoOpResultCallback;
 

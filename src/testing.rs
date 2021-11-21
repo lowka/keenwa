@@ -8,7 +8,7 @@ use crate::catalog::mutable::MutableCatalog;
 use crate::catalog::{CatalogRef, TableBuilder, DEFAULT_SCHEMA};
 use crate::cost::simple::SimpleCostEstimator;
 use crate::datatypes::DataType;
-use crate::memo::{InputNodeRef, MemoExpr, MemoExprFormatter, StringMemoFormatter};
+use crate::memo::{ExprNodeRef, MemoExpr, MemoExprFormatter, StringMemoFormatter};
 use crate::meta::Metadata;
 use crate::operators::Operator;
 use crate::optimizer::Optimizer;
@@ -283,15 +283,15 @@ where
         self.fmt.write_source(source);
     }
 
-    fn write_input<'e, T>(&mut self, _name: &str, _input: impl Into<InputNodeRef<'e, T>>)
+    fn write_expr<'e, T>(&mut self, _name: &str, _input: impl Into<ExprNodeRef<'e, T>>)
     where
         T: MemoExpr + 'e,
     {
         self.fmt.push(' ');
 
         let i = self.input_index;
-        let input_group_id = self.ctx.input_group_id(i);
-        let input_required = self.ctx.input_required(i);
+        let input_group_id = self.ctx.child_group_id(i);
+        let input_required = self.ctx.child_required(i);
 
         if i == 0 {
             self.fmt.push('[');
@@ -305,7 +305,7 @@ where
         self.fmt.push_str(format!("{:02}", input_group_id).as_str());
 
         self.input_index += 1;
-        if self.input_index == self.ctx.inputs_num() {
+        if self.input_index == self.ctx.num_children() {
             self.fmt.push(']');
         }
     }

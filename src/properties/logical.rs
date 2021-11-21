@@ -18,7 +18,7 @@ pub struct LogicalProperties {
 }
 
 impl LogicalProperties {
-    /// Creates a new instance of `LogicalProperties` with the specified attributes.
+    /// Creates a new instance of `LogicalProperties` with the specified properties.
     pub fn new(output_columns: Vec<ColumnId>, statistics: Option<Statistics>) -> Self {
         LogicalProperties {
             output_columns,
@@ -29,7 +29,7 @@ impl LogicalProperties {
     /// Creates an empty `LogicalProperties` object.
     ///
     /// Right now this method is used for physical expressions because physical expressions do not use logical properties
-    /// of other expressions directly. They instead use logical properties of the memo groups of their input expressions.
+    /// of other expressions directly. They instead use logical properties of the memo groups of their child expressions.
     pub fn empty() -> Self {
         LogicalProperties {
             output_columns: Vec::with_capacity(0),
@@ -82,7 +82,7 @@ impl PropertiesProvider for LogicalPropertiesBuilder {
                 }
                 RelExpr::Physical(expr) => {
                     self.build_for_physical(expr);
-                    // Attributes are not used by physical expressions
+                    // Properties are not used by physical expressions
                     Ok(LogicalProperties::empty())
                 }
             },
@@ -159,7 +159,7 @@ impl LogicalPropertiesBuilder {
 }
 
 fn collect_columns_from_input(input: &RelNode, used: &[ColumnId]) -> Vec<ColumnId> {
-    let logical = input.attrs().logical();
+    let logical = input.props().logical();
     let output_columns = logical.output_columns();
     let columns: Vec<ColumnId> = output_columns.iter().copied().collect();
 

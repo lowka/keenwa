@@ -22,7 +22,7 @@ impl CostEstimator for SimpleCostEstimator {
         match expr {
             PhysicalExpr::Projection { .. } => 1,
             PhysicalExpr::Select { .. } => {
-                let input_stats = ctx.input_statistics(0).unwrap();
+                let input_stats = ctx.child_statistics(0).unwrap();
                 let row_count = input_stats.row_count();
 
                 (row_count / 10.0) as usize
@@ -32,14 +32,14 @@ impl CostEstimator for SimpleCostEstimator {
                 group_exprs,
                 ..
             } => {
-                let input_stats = ctx.input_statistics(0).unwrap();
+                let input_stats = ctx.child_statistics(0).unwrap();
                 let row_count = input_stats.row_count() as usize;
 
                 aggr_exprs.len() * row_count + group_exprs.len() * row_count
             }
             PhysicalExpr::HashJoin { .. } => {
-                let left_stats = ctx.input_statistics(0).unwrap();
-                let right_stats = ctx.input_statistics(1).unwrap();
+                let left_stats = ctx.child_statistics(0).unwrap();
+                let right_stats = ctx.child_statistics(1).unwrap();
 
                 let left_rows = left_stats.row_count();
                 let right_rows = right_stats.row_count();
@@ -48,8 +48,8 @@ impl CostEstimator for SimpleCostEstimator {
                 hashtable_access + (left_rows as usize) + (right_rows as usize)
             }
             PhysicalExpr::MergeSortJoin { .. } => {
-                let left_stats = ctx.input_statistics(0).unwrap();
-                let right_stats = ctx.input_statistics(1).unwrap();
+                let left_stats = ctx.child_statistics(0).unwrap();
+                let right_stats = ctx.child_statistics(1).unwrap();
 
                 let left_rows = left_stats.row_count() as usize;
                 let right_rows = right_stats.row_count() as usize;
@@ -65,7 +65,7 @@ impl CostEstimator for SimpleCostEstimator {
                 (row_count / 2.0) as usize
             }
             PhysicalExpr::Sort { .. } => {
-                let input_stats = ctx.input_statistics(0).unwrap();
+                let input_stats = ctx.child_statistics(0).unwrap();
                 let row_count = input_stats.row_count();
 
                 (row_count.ln() * row_count) as usize

@@ -87,12 +87,12 @@ impl StatisticsBuilder for CatalogStatisticsBuilder {
     ) -> Result<Option<Statistics>, OptimizerError> {
         let statistics = match expr {
             LogicalExpr::Projection { input, .. } => {
-                let logical = input.attrs().logical();
+                let logical = input.props().logical();
                 let statistics = logical.statistics().unwrap();
                 statistics.clone()
             }
             LogicalExpr::Select { input, .. } => {
-                let logical = input.attrs().logical();
+                let logical = input.props().logical();
                 let input_statistics = logical.statistics().unwrap();
                 let selectivity = statistics.map_or(1.0, |s| s.selectivity());
                 let row_count = selectivity * input_statistics.row_count();
@@ -107,7 +107,7 @@ impl StatisticsBuilder for CatalogStatisticsBuilder {
                 Statistics::from_row_count(max_groups)
             }
             LogicalExpr::Join { left, .. } => {
-                let logical = left.attrs().logical();
+                let logical = left.props().logical();
                 let statistics = logical.statistics().unwrap();
                 let row_count = statistics.row_count();
                 // take selectivity of the join condition into account

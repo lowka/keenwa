@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use keenwa::memo::{Attributes, CopyInExprs, Expr, InputNode, Memo, MemoExpr, MemoExprFormatter, NewInputs};
+use keenwa::memo::{CopyInExprs, Expr, ExprNode, Memo, MemoExpr, MemoExprFormatter, NewChildExprs, Properties};
 use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone)]
@@ -8,12 +8,12 @@ enum TestExpr {
         src: &'static str,
     },
     Filter {
-        input: InputNode<TestOperator>,
+        input: ExprNode<TestOperator>,
         filter: TestScalarExpr,
     },
     Join {
-        left: InputNode<TestOperator>,
-        right: InputNode<TestOperator>,
+        left: ExprNode<TestOperator>,
+        right: ExprNode<TestOperator>,
     },
 }
 
@@ -36,30 +36,30 @@ impl Display for TestScalarExpr {
 }
 
 #[derive(Debug, Clone, Default)]
-struct TestAttrs {
+struct TestProps {
     a: i32,
 }
 
-impl Attributes for TestAttrs {}
+impl Properties for TestProps {}
 
 impl Expr for TestExpr {}
 
 #[derive(Debug, Clone)]
 struct TestOperator {
     expr: TestExpr,
-    attrs: TestAttrs,
+    props: TestProps,
 }
 
 impl MemoExpr for TestOperator {
     type Expr = TestExpr;
-    type Attrs = TestAttrs;
+    type Props = TestProps;
 
     fn expr(&self) -> &Self::Expr {
         &self.expr
     }
 
-    fn attrs(&self) -> &Self::Attrs {
-        &self.attrs
+    fn props(&self) -> &Self::Props {
+        &self.props
     }
 
     fn copy_in(&self, ctx: &mut CopyInExprs<Self>) {
@@ -67,17 +67,17 @@ impl MemoExpr for TestOperator {
         match self.expr() {
             TestExpr::Scan { .. } => {}
             TestExpr::Filter { input, .. } => {
-                ctx.visit_input(&mut expr_ctx, input);
+                ctx.visit_expr_node(&mut expr_ctx, input);
             }
             TestExpr::Join { left, right, .. } => {
-                ctx.visit_input(&mut expr_ctx, left);
-                ctx.visit_input(&mut expr_ctx, right);
+                ctx.visit_expr_node(&mut expr_ctx, left);
+                ctx.visit_expr_node(&mut expr_ctx, right);
             }
         }
         ctx.copy_in(self, expr_ctx);
     }
 
-    fn with_new_inputs(&self, mut inputs: NewInputs<Self>) -> Self {
+    fn with_new_children(&self, mut inputs: NewChildExprs<Self>) -> Self {
         let expr = match self.expr() {
             TestExpr::Scan { src } => {
                 assert!(inputs.is_empty(), "expects no inputs");
@@ -86,21 +86,21 @@ impl MemoExpr for TestOperator {
             TestExpr::Filter { filter, .. } => {
                 assert_eq!(inputs.len(), 1, "expects 1 input");
                 TestExpr::Filter {
-                    input: inputs.input(),
+                    input: inputs.expr(),
                     filter: filter.clone(),
                 }
             }
             TestExpr::Join { .. } => {
                 assert_eq!(inputs.len(), 2, "expects 2 inputs");
                 TestExpr::Join {
-                    left: inputs.input(),
-                    right: inputs.input(),
+                    left: inputs.expr(),
+                    right: inputs.expr(),
                 }
             }
         };
         TestOperator {
             expr,
-            attrs: self.attrs.clone(),
+            props: self.props.clone(),
         }
     }
 
@@ -115,13 +115,13 @@ impl MemoExpr for TestOperator {
             }
             TestExpr::Filter { input, filter } => {
                 f.write_name("Filter");
-                f.write_input("input", input);
+                f.write_expr("input", input);
                 f.write_value("filter", filter);
             }
             TestExpr::Join { left, right } => {
                 f.write_name("Join");
-                f.write_input("left", left);
-                f.write_input("right", right);
+                f.write_expr("left", left);
+                f.write_expr("right", right);
             }
         }
     }
@@ -131,7 +131,7 @@ impl From<TestExpr> for TestOperator {
     fn from(expr: TestExpr) -> Self {
         TestOperator {
             expr,
-            attrs: TestAttrs::default(),
+            props: TestProps::default(),
         }
     }
 }

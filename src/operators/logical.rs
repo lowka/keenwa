@@ -116,18 +116,18 @@ impl LogicalExpr {
         match self {
             LogicalExpr::Projection { input, columns } => {
                 f.write_name("LogicalProjection");
-                f.write_input("input", input);
+                f.write_expr("input", input);
                 f.write_values("cols", columns);
             }
             LogicalExpr::Select { input, filter } => {
                 f.write_name("LogicalSelect");
-                f.write_input("input", input);
-                f.write_input("filter", filter);
+                f.write_expr("input", input);
+                f.write_expr("filter", filter);
             }
             LogicalExpr::Join { left, right, condition } => {
                 f.write_name("LogicalJoin");
-                f.write_input("left", left);
-                f.write_input("right", right);
+                f.write_expr("left", left);
+                f.write_expr("right", right);
                 match condition {
                     JoinCondition::Using(using) => f.write_value("using", using),
                 }
@@ -143,12 +143,12 @@ impl LogicalExpr {
                 group_exprs,
             } => {
                 f.write_name("LogicalAggregate");
-                f.write_input("input", input);
+                f.write_expr("input", input);
                 for aggr_expr in aggr_exprs {
-                    f.write_input("", aggr_expr);
+                    f.write_expr("", aggr_expr);
                 }
                 for group_expr in group_exprs {
-                    f.write_input("", group_expr);
+                    f.write_expr("", group_expr);
                 }
             }
         }

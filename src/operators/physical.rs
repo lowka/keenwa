@@ -184,26 +184,26 @@ impl PhysicalExpr {
         match self {
             PhysicalExpr::Projection { input, columns } => {
                 f.write_name("Projection");
-                f.write_input("input", input);
+                f.write_expr("input", input);
                 f.write_values("cols", columns)
             }
             PhysicalExpr::Select { input, filter } => {
                 f.write_name("Select");
-                f.write_input("input", input);
-                f.write_input("filter", filter)
+                f.write_expr("input", input);
+                f.write_expr("filter", filter)
             }
             PhysicalExpr::HashJoin { left, right, condition } => {
                 f.write_name("HashJoin");
-                f.write_input("left", left);
-                f.write_input("right", right);
+                f.write_expr("left", left);
+                f.write_expr("right", right);
                 match condition {
                     JoinCondition::Using(using) => f.write_value("using", format!("{}", using).as_str()),
                 };
             }
             PhysicalExpr::MergeSortJoin { left, right, condition } => {
                 f.write_name("MergeSortJoin");
-                f.write_input("left", left);
-                f.write_input("right", right);
+                f.write_expr("left", left);
+                f.write_expr("right", right);
                 match condition {
                     JoinCondition::Using(using) => f.write_value("using", format!("{}", using).as_str()),
                 }
@@ -220,7 +220,7 @@ impl PhysicalExpr {
             }
             PhysicalExpr::Sort { input, ordering } => {
                 f.write_name("Sort");
-                f.write_input("input", input);
+                f.write_expr("input", input);
                 f.write_value("ord", format!("{:?}", ordering.columns()).as_str())
             }
             PhysicalExpr::HashAggregate {
@@ -229,12 +229,12 @@ impl PhysicalExpr {
                 group_exprs,
             } => {
                 f.write_name("HashAggregate");
-                f.write_input("input", input);
+                f.write_expr("input", input);
                 for aggr_expr in aggr_exprs {
-                    f.write_input("", aggr_expr);
+                    f.write_expr("", aggr_expr);
                 }
                 for group_expr in group_exprs {
-                    f.write_input("", group_expr);
+                    f.write_expr("", group_expr);
                 }
             }
         }

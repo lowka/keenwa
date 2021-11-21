@@ -1,5 +1,5 @@
 use crate::error::OptimizerError;
-use crate::memo::{InputNodeRef, MemoExpr, MemoExprCallback, MemoExprFormatter, StringMemoFormatter};
+use crate::memo::{ExprNodeRef, MemoExpr, MemoExprCallback, MemoExprFormatter, StringMemoFormatter};
 use crate::meta::Metadata;
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;
@@ -152,7 +152,7 @@ fn format_expr(expr: &Operator) -> String {
     let mut fmt = FormatHeader { fmt };
     expr.format_expr(&mut fmt);
 
-    let mut fmt = FormatInputs {
+    let mut fmt = FormatExprs {
         buf: &mut buf,
         depth: 0,
     };
@@ -174,11 +174,11 @@ impl MemoExprFormatter for FormatHeader<'_> {
         self.fmt.write_source(source);
     }
 
-    fn write_input<'e, T>(&mut self, _name: &str, _input: impl Into<InputNodeRef<'e, T>>)
+    fn write_expr<'e, T>(&mut self, _name: &str, _input: impl Into<ExprNodeRef<'e, T>>)
     where
         T: MemoExpr + 'e,
     {
-        //inputs are written by another formatter
+        //exprs are written by another formatter
     }
 
     fn write_value<D>(&mut self, name: &str, value: D)
@@ -196,12 +196,12 @@ impl MemoExprFormatter for FormatHeader<'_> {
     }
 }
 
-struct FormatInputs<'b> {
+struct FormatExprs<'b> {
     buf: &'b mut String,
     depth: usize,
 }
 
-impl FormatInputs<'_> {
+impl FormatExprs<'_> {
     fn pad_depth(&mut self, c: char) {
         for i in 1..=self.depth {
             for _ in 1..=i * 2 {
@@ -211,7 +211,7 @@ impl FormatInputs<'_> {
     }
 }
 
-impl MemoExprFormatter for FormatInputs<'_> {
+impl MemoExprFormatter for FormatExprs<'_> {
     fn write_name(&mut self, _name: &str) {
         // name is written by another formatter
     }
@@ -220,7 +220,7 @@ impl MemoExprFormatter for FormatInputs<'_> {
         // source is written by another formatter
     }
 
-    fn write_input<'e, T>(&mut self, name: &str, input: impl Into<InputNodeRef<'e, T>>)
+    fn write_expr<'e, T>(&mut self, name: &str, input: impl Into<ExprNodeRef<'e, T>>)
     where
         T: MemoExpr + 'e,
     {
@@ -229,15 +229,15 @@ impl MemoExprFormatter for FormatInputs<'_> {
         self.pad_depth(' ');
         self.buf.push_str(name);
         self.buf.push_str(": ");
-        let input: InputNodeRef<T> = input.into();
+        let input: ExprNodeRef<T> = input.into();
         match input {
-            InputNodeRef::Expr(expr) => {
+            ExprNodeRef::Expr(expr) => {
                 let fmt = StringMemoFormatter::new(self.buf);
                 let mut header = FormatHeader { fmt };
                 expr.format_expr(&mut header);
                 expr.format_expr(self);
             }
-            InputNodeRef::Group(group) => {
+            ExprNodeRef::Group(group) => {
                 let expr = group.mexpr().mexpr();
                 let fmt = StringMemoFormatter::new(self.buf);
                 let mut header = FormatHeader { fmt };
@@ -278,12 +278,12 @@ impl StatisticsBuilder for NoStatsBuilder {
 
 impl MemoExprCallback for LogicalPropertiesBuilder {
     type Expr = Operator;
-    type Attrs = Properties;
+    type Props = Properties;
 
-    fn new_expr(&self, expr: &Self::Expr, attrs: Self::Attrs) -> Self::Attrs {
+    fn new_expr(&self, expr: &Self::Expr, props: Self::Props) -> Self::Props {
         let logical = self
-            .build_properties(expr.expr(), attrs.logical().statistics())
+            .build_properties(expr.expr(), props.logical().statistics())
             .expect("Failed to build logical properties");
-        Properties::new(logical, attrs.required)
+        Properties::new(logical, props.required)
     }
 }

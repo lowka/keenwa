@@ -66,7 +66,7 @@ impl Expr {
                 }
                 filter.as_ref().map(|e| e.copy_in_nested(collector));
             }
-            Expr::SubQuery(expr) => collector.visit_expr(expr.get_ref()),
+            Expr::SubQuery(expr) => collector.visit_expr(expr.into()),
         }
     }
 

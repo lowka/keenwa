@@ -8,9 +8,9 @@ use std::{
     fmt::Debug,
 };
 
-/// Memo is the primary data structure used by the cost-based optimizer:
+/// `Memo` is the primary data structure used by the cost-based optimizer:
 ///  * It stores each expression as a group of logically equivalent expressions.
-///  * It provides memoization of identical sub-expressions within an expression tree.
+///  * It provides memoization of identical subexpressions within an expression tree.
 ///
 /// # Safety
 ///
@@ -26,7 +26,7 @@ where
     expr_cache: HashMap<String, ExprId>,
     expr_to_group: HashMap<ExprId, GroupId>,
     // TODO: NoOpCallback
-    callback: Option<Rc<dyn MemoExprCallback<Expr = T, Attrs = T::Attrs>>>,
+    callback: Option<Rc<dyn MemoExprCallback<Expr = T, Props = T::Props>>>,
 }
 
 impl<T> Memo<T>
@@ -45,7 +45,7 @@ where
     }
 
     /// Creates a new memo with the given callback.
-    pub(crate) fn with_callback(callback: Rc<dyn MemoExprCallback<Expr = T, Attrs = T::Attrs>>) -> Self {
+    pub(crate) fn with_callback(callback: Rc<dyn MemoExprCallback<Expr = T, Props = T::Props>>) -> Self {
         //TODO: Unit test for a Memo with a callback.
         Memo {
             groups: Vec::new(),
@@ -121,26 +121,24 @@ where
     }
 }
 
-/// A trait that must be implemented by an expression that can be copied into a [memo].
-///
-/// [memo]: crate::memo::Memo
+/// A trait that must be implemented by an expression that can be copied into a [`memo`](crate::memo::Memo).
 pub trait MemoExpr: Debug + Clone {
     /// The type of the expression.
     type Expr: Expr;
-    /// The type of the attributes.
-    type Attrs: Attributes;
+    /// The type of the properties.
+    type Props: Properties;
 
     /// Returns the expression this memo expression stores.
     fn expr(&self) -> &Self::Expr;
 
-    /// Returns attributes associated with this expression.
-    fn attrs(&self) -> &Self::Attrs;
+    /// Returns properties associated with this expression.
+    fn props(&self) -> &Self::Props;
 
     /// Recursively traverses this expression and copies it into a memo.
     fn copy_in(&self, visitor: &mut CopyInExprs<Self>);
 
-    /// Creates a new expression from this expression by replacing its input expressions with the new ones.
-    fn with_new_inputs(&self, inputs: NewInputs<Self>) -> Self;
+    /// Creates a new expression from this expression by replacing its child expressions with the new ones.
+    fn with_new_children(&self, children: NewChildExprs<Self>) -> Self;
 
     /// Builds a textual representation of this expression.
     fn format_expr<F>(&self, f: &mut F)
@@ -148,85 +146,87 @@ pub trait MemoExpr: Debug + Clone {
         F: MemoExprFormatter;
 }
 
-/// A trait for the expression.
+/// A trait for the expression type.
 pub trait Expr: Debug + Clone {}
 
-/// A trait for attributes of the expression.
-//FIXME: Rename to Properties.
-pub trait Attributes: Debug + Clone {}
+/// A trait for properties of the expression.
+pub trait Properties: Debug + Clone {}
 
 /// A callback that is called when a new expression is added to a memo.
 pub trait MemoExprCallback: Debug {
     /// The type of expression.
     type Expr: MemoExpr;
-    /// The type of attributes of the expression.
-    type Attrs: Attributes;
+    /// The type of properties of the expression.
+    type Props: Properties;
 
-    /// Called when the given expression `expr` with attributes `attrs` is added to a memo.
-    fn new_expr(&self, expr: &Self::Expr, attrs: Self::Attrs) -> Self::Attrs;
+    /// Called when the given expression `expr` with properties `props` is added to a memo.
+    fn new_expr(&self, expr: &Self::Expr, props: Self::Props) -> Self::Props;
 }
 
-/// An input node of an expression. It can be either an expression or a memo group.
+/// `ExprNode` represents an expression in within an expression tree. A node can be an expression or a memo group.
+/// Initially every expression in an expression tree has a direct link its subexpressions (represented by [`ExprNode::Expr`](crate::memo::ExprNode::Expr)).
+/// When an expression is copied into a [`memo`](crate::memo::Memo) its subexpressions are replaced with
+/// references to memo groups (a reference to a memo group is represented by [`ExprNode::Group`](crate::memo::ExprNode::Group) variant).
 #[derive(Clone)]
-pub enum InputNode<T>
+pub enum ExprNode<T>
 where
     T: MemoExpr,
 {
-    /// Input node is another expression.
+    /// A node is another expression.
     Expr(Box<T>),
-    /// Input node is a memo group.
+    /// A node is a memo group.
     Group(MemoGroupRef<T>),
 }
 
-impl<T> InputNode<T>
+impl<T> ExprNode<T>
 where
     T: MemoExpr,
 {
-    /// Returns an expression this `InputNode` points to.
+    /// Returns an expression this `ExprNode` points to.
     /// If this node is an expression this method returns a reference to the actual expression.
     /// If this node is a memo group this method returns a reference to the first memo expression in this memo group.
     pub fn expr(&self) -> &T::Expr {
         match self {
-            InputNode::Expr(expr) => expr.expr(),
-            InputNode::Group(group) => group.expr(),
+            ExprNode::Expr(expr) => expr.expr(),
+            ExprNode::Group(group) => group.expr(),
         }
     }
 
-    /// Returns attributes of an expression this `InputNode` points to.
-    /// If this node is an expression this method returns a reference to the attributes of the memo group the expression belongs to.
-    /// If this node is a memo group this method returns a reference to the attributes of this memo group.
-    pub fn attrs(&self) -> &T::Attrs {
+    /// Returns a reference to properties of an expression this `ExprNode` points to.
+    /// If this node is an expression this method returns a reference to the properties of the memo group the expression belongs to.
+    /// If this node is a memo group this method returns a reference to the properties of this memo group.
+    pub fn props(&self) -> &T::Props {
         match self {
-            InputNode::Expr(expr) => expr.attrs(),
-            InputNode::Group(group) => group.attrs(),
+            ExprNode::Expr(expr) => expr.props(),
+            ExprNode::Group(group) => group.props(),
         }
     }
 }
 
-impl<T> From<T> for InputNode<T>
+impl<T> From<T> for ExprNode<T>
 where
     T: MemoExpr,
 {
     fn from(o: T) -> Self {
-        InputNode::Expr(Box::new(o))
+        ExprNode::Expr(Box::new(o))
     }
 }
 
-impl<T> Debug for InputNode<T>
+impl<T> Debug for ExprNode<T>
 where
     T: MemoExpr,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            InputNode::Expr(expr) => write!(f, "Expr({:?})", expr),
-            InputNode::Group(group) => write!(f, "Group({:?})", group.id),
+            ExprNode::Expr(expr) => write!(f, "Expr({:?})", expr),
+            ExprNode::Group(group) => write!(f, "Group({:?})", group.id),
         }
     }
 }
 
-/// A reference to an input expression.
+/// An [`ExprNode`](crate::memo::ExprNode) that holds a reference to an expression instead of owning it.
 #[derive(Debug)]
-pub enum InputNodeRef<'a, T>
+pub enum ExprNodeRef<'a, T>
 where
     T: MemoExpr,
 {
@@ -236,25 +236,23 @@ where
     Group(&'a MemoGroupRef<T>),
 }
 
-impl<'a, T> From<&'a InputNode<T>> for InputNodeRef<'a, T>
+impl<'a, T> From<&'a ExprNode<T>> for ExprNodeRef<'a, T>
 where
     T: MemoExpr,
 {
-    fn from(expr: &'a InputNode<T>) -> Self {
+    fn from(expr: &'a ExprNode<T>) -> Self {
         match expr {
-            InputNode::Expr(expr) => InputNodeRef::Expr(&**expr),
-            InputNode::Group(group) => InputNodeRef::Group(group),
+            ExprNode::Expr(expr) => ExprNodeRef::Expr(&**expr),
+            ExprNode::Group(group) => ExprNodeRef::Group(group),
         }
     }
 }
 
-/// A `MemoGroupRef` is a reference to a memo group. A memo group is a group of logically equivalent expressions.
+/// `MemoGroupRef` is a reference to a memo group. A memo group is a group of logically equivalent expressions.
 /// Expressions are logically equivalent when they produce the same result.
 ///
 /// #Safety
-/// A reference to a memo group is valid until a [memo] it belongs to is dropped.
-///
-/// [memo]: crate::memo::Memo
+/// A reference to a memo group is valid until a [`memo`](crate::memo::Memo) it belongs to is dropped.
 pub struct MemoGroupRef<T>
 where
     T: MemoExpr,
@@ -295,10 +293,10 @@ where
         MemoGroupIter { group, position: 0 }
     }
 
-    /// Returns attributes shared by all expressions in this memo group.
-    pub fn attrs(&self) -> &T::Attrs {
+    /// Returns properties shared by all expressions in this memo group.
+    pub fn props(&self) -> &T::Props {
         let group = self.get_memo_group();
-        &group.attrs
+        &group.props
     }
 
     /// Returns the number of expressions in this memo group.
@@ -399,9 +397,7 @@ where
 /// A reference to a memo expression.
 ///
 /// #Safety
-/// A reference to a memo expression is valid until a [memo] it belongs to is dropped.
-///
-/// [memo]: crate::memo::Memo
+/// A reference to a memo expression is valid until a [`memo`](crate::memo::Memo) it belongs to is dropped.
 pub struct MemoExprRef<T>
 where
     T: MemoExpr,
@@ -442,10 +438,10 @@ where
         &expr.group
     }
 
-    /// Returns references to the inputs of this memo expression.
-    pub fn inputs(&self) -> &[MemoGroupRef<T>] {
+    /// Returns references to child expressions of this memo expression.
+    pub fn children(&self) -> &[MemoGroupRef<T>] {
         let expr = self.get_memo_expr();
-        &expr.inputs
+        &expr.children
     }
 
     fn get_memo_expr(&self) -> &MemoExprData<T> {
@@ -539,18 +535,18 @@ where
 {
     group_id: GroupId,
     exprs: Vec<MemoExprRef<T>>,
-    attrs: T::Attrs,
+    props: T::Props,
 }
 
 impl<T> MemoGroupData<T>
 where
     T: MemoExpr,
 {
-    fn new(group_id: GroupId, attrs: T::Attrs) -> Self {
+    fn new(group_id: GroupId, props: T::Props) -> Self {
         MemoGroupData {
             group_id,
             exprs: vec![],
-            attrs,
+            props,
         }
     }
 }
@@ -562,7 +558,7 @@ where
 {
     expr_id: ExprId,
     expr: T,
-    inputs: Vec<MemoGroupRef<T>>,
+    children: Vec<MemoGroupRef<T>>,
     group: MemoGroupRef<T>,
 }
 
@@ -570,11 +566,11 @@ impl<T> MemoExprData<T>
 where
     T: MemoExpr,
 {
-    fn new(expr_id: ExprId, expr: T, inputs: Vec<MemoGroupRef<T>>, group: MemoGroupRef<T>) -> Self {
+    fn new(expr_id: ExprId, expr: T, children: Vec<MemoGroupRef<T>>, group: MemoGroupRef<T>) -> Self {
         MemoExprData {
             expr_id,
             expr,
-            inputs,
+            children,
             group,
         }
     }
@@ -604,42 +600,42 @@ where
         }
     }
 
-    /// Initialises data structures required to traverse sub-expressions of the given expression `expr`.
+    /// Initialises data structures required to traverse child expressions of the given expression `expr`.
     pub fn enter_expr(&mut self, expr: &T) -> ExprContext<T> {
         ExprContext {
-            inputs: VecDeque::new(),
+            children: VecDeque::new(),
             parent: self.parent.clone(),
-            // TODO: Add a method that splits MemoExpr into Self::Expr and Self::Attrs
+            // TODO: Add a method that splits MemoExpr into Self::Expr and Self::Props
             //  this will allow to remove the clone() call below .
-            attrs: expr.attrs().clone(),
+            props: expr.props().clone(),
         }
     }
 
-    /// Visits the given input expression and recursively copies that expression into the memo:
-    /// * If the input expression is an expression this methods recursively copies it into the memo.
-    /// * If the input expression is a group this method returns a reference to that group.
-    pub fn visit_input<'e>(
+    /// Visits the given child expression and recursively copies that expression into the memo:
+    /// * If the given expression is an expression this methods recursively copies it into the memo.
+    /// * If the child expression is a group this method returns a reference to that group.
+    pub fn visit_expr_node<'e>(
         &mut self,
         expr_ctx: &mut ExprContext<T>,
-        input: impl Into<InputNodeRef<'e, T>>,
+        expr_node: impl Into<ExprNodeRef<'e, T>>,
     ) -> (MemoGroupRef<T>, MemoExprRef<T>)
     where
         T: 'e,
     {
-        let input: InputNodeRef<T> = input.into();
+        let input: ExprNodeRef<T> = expr_node.into();
         match input {
-            InputNodeRef::Expr(expr) => {
+            ExprNodeRef::Expr(expr) => {
                 let copy_in = CopyIn {
                     memo: self.memo,
                     parent: None,
                     depth: self.depth + 1,
                 };
                 let (group, expr) = copy_in.execute(expr);
-                expr_ctx.inputs.push_back(InputNode::Group(group.clone()));
+                expr_ctx.children.push_back(ExprNode::Group(group.clone()));
                 (group, expr)
             }
-            InputNodeRef::Group(group) => {
-                expr_ctx.inputs.push_back(InputNode::Group(group.clone()));
+            ExprNodeRef::Group(group) => {
+                expr_ctx.children.push_back(ExprNode::Group(group.clone()));
                 let expr = group.mexpr();
                 (group.clone(), expr.clone())
             }
@@ -650,21 +646,21 @@ where
     pub fn copy_in(&mut self, expr: &T, expr_ctx: ExprContext<T>) {
         let expr_id = ExprId(self.memo.exprs.len());
         let input_groups = expr_ctx
-            .inputs
+            .children
             .iter()
             .map(|i| match i {
-                InputNode::Group(g) => g.clone(),
-                InputNode::Expr(e) => panic!("Expected a group but got an expression: {:?}", e),
+                ExprNode::Group(g) => g.clone(),
+                ExprNode::Expr(e) => panic!("Expected a group but got an expression: {:?}", e),
             })
             .collect();
 
         let ExprContext {
-            inputs: input_nodes,
-            attrs,
+            children: children,
+            props,
             parent,
         } = expr_ctx;
 
-        let expr = expr.with_new_inputs(NewInputs::new(input_nodes));
+        let expr = expr.with_new_children(NewChildExprs::new(children));
         let digest = make_digest(&expr);
 
         let (expr_id, added) = match self.memo.expr_cache.entry(digest) {
@@ -688,12 +684,12 @@ where
                 (parent, expr_ref)
             } else {
                 let group_id = GroupId(self.memo.groups.len());
-                let attrs = if let Some(callback) = self.memo.callback.as_ref() {
-                    callback.new_expr(&expr, attrs)
+                let props = if let Some(callback) = self.memo.callback.as_ref() {
+                    callback.new_expr(&expr, props)
                 } else {
-                    attrs
+                    props
                 };
-                let memo_group = MemoGroupData::new(group_id, attrs);
+                let memo_group = MemoGroupData::new(group_id, props);
                 let group_ref = self.memo.add_group(memo_group);
 
                 let memo_expr = MemoExprData::new(expr_id, expr, input_groups, group_ref.clone());
@@ -720,37 +716,39 @@ pub struct ExprContext<T>
 where
     T: MemoExpr,
 {
-    inputs: VecDeque<InputNode<T>>,
+    children: VecDeque<ExprNode<T>>,
     parent: Option<MemoGroupRef<T>>,
-    attrs: T::Attrs,
+    props: T::Props,
 }
 
-/// A stack-like data structure that stores new input expressions and provides convenient methods of their retrieval.
+/// A stack-like data structure used by [MemoExpr::with_new_children].
+/// It stores new child expressions and provides convenient methods of their retrieval.
 #[derive(Debug)]
-pub struct NewInputs<T>
+pub struct NewChildExprs<T>
 where
     T: MemoExpr,
 {
-    inputs: VecDeque<InputNode<T>>,
+    children: VecDeque<ExprNode<T>>,
     capacity: usize,
     index: usize,
 }
 
-impl<T> NewInputs<T>
+impl<T> NewChildExprs<T>
 where
     T: MemoExpr,
 {
-    pub fn new(args: VecDeque<InputNode<T>>) -> Self {
-        NewInputs {
-            capacity: args.len(),
+    /// Creates an instance of `NewChildExprs`.
+    pub fn new(children: VecDeque<ExprNode<T>>) -> Self {
+        NewChildExprs {
+            capacity: children.len(),
             index: 0,
-            inputs: args,
+            children,
         }
     }
 
     /// If the total number of expressions in the underlying stack.
     pub fn len(&self) -> usize {
-        self.inputs.len()
+        self.children.len()
     }
 
     /// Returns `true` if the underlying stack is empty.
@@ -758,42 +756,38 @@ where
         self.len() == 0
     }
 
-    /// Retrieves the next input expression.
+    /// Retrieves the next child expression.
     ///
     /// # Panics
     ///
-    /// This method panics if there is no input expression left.
-    pub fn input(&mut self) -> InputNode<T> {
+    /// This method panics if there is no expression left.
+    pub fn expr(&mut self) -> ExprNode<T> {
         self.ensure_available(1);
         self.next_index()
     }
 
-    /// Retrieves the next `n` input expressions.
+    /// Retrieves the next `n` child expressions.
     ///
     /// # Panics
     ///
-    /// This method panics if there is not enough input expression left.
-    pub fn inputs(&mut self, n: usize) -> Vec<InputNode<T>> {
+    /// This method panics if there is not enough expressions left.
+    pub fn exprs(&mut self, n: usize) -> Vec<ExprNode<T>> {
         self.ensure_available(n);
-        let mut inputs = Vec::with_capacity(n);
+        let mut children = Vec::with_capacity(n);
         for _ in 0..n {
-            inputs.push(self.next_index());
+            children.push(self.next_index());
         }
-        inputs
+        children
     }
 
-    /// Retrieve the remaining input expressions.
-    ///
-    /// # Panics
-    ///
-    /// If there is no more input expressions returns an empty `Vec`.
-    pub fn remaining(mut self) -> Vec<InputNode<T>> {
-        self.index = self.inputs.len();
-        self.inputs.into_iter().collect()
+    /// Retrieves the remaining child expressions. If there is no remaining expressions returns an empty `Vec`.
+    pub fn remaining(mut self) -> Vec<ExprNode<T>> {
+        self.index = self.children.len();
+        self.children.into_iter().collect()
     }
 
-    fn next_index(&mut self) -> InputNode<T> {
-        self.inputs.pop_front().expect("")
+    fn next_index(&mut self) -> ExprNode<T> {
+        self.children.pop_front().expect("")
     }
 
     fn ensure_available(&mut self, n: usize) {
@@ -804,7 +798,7 @@ where
             n,
             next_index,
             self.index,
-            self.inputs.len()
+            self.children.len()
         );
         self.index += n;
     }
@@ -842,21 +836,21 @@ where
         F: Fn(&E, &mut Self),
     {
         (f)(expr, &mut self);
-        // Visit collected nested expressions so that they will be added to the given expression as sub-expressions.
+        // Visit collected nested expressions so that they will be added to the given expression as child expressions.
         for input in self.nested_exprs {
-            self.ctx.visit_input(self.expr_ctx, &InputNode::Group(input));
+            self.ctx.visit_expr_node(self.expr_ctx, &ExprNode::Group(input));
         }
     }
 
     /// Copies the given nested expression into a memo.
-    pub fn visit_expr(&mut self, expr: InputNodeRef<T>) {
+    pub fn visit_expr(&mut self, expr: ExprNodeRef<T>) {
         match expr {
-            InputNodeRef::Expr(expr) => {
+            ExprNodeRef::Expr(expr) => {
                 expr.copy_in(self.ctx);
                 let (group, _) = std::mem::take(&mut self.ctx.result).expect("Failed to copy in a nested expressions");
                 self.add_group(group);
             }
-            InputNodeRef::Group(group) => self.add_group(group.clone()),
+            ExprNodeRef::Group(group) => self.add_group(group.clone()),
         }
     }
 
@@ -916,8 +910,8 @@ pub trait MemoExprFormatter {
     /// Writes a value of `source` attribute of an expression.
     fn write_source(&mut self, source: &str);
 
-    /// Writes an input expression.
-    fn write_input<'e, T>(&mut self, name: &str, input: impl Into<InputNodeRef<'e, T>>)
+    /// Writes a child expression.
+    fn write_expr<'e, T>(&mut self, name: &str, input: impl Into<ExprNodeRef<'e, T>>)
     where
         T: MemoExpr + 'e;
 
@@ -960,7 +954,7 @@ impl MemoExprFormatter for StringMemoFormatter<'_> {
         self.buf.push_str(source);
     }
 
-    fn write_input<'e, T>(&mut self, name: &str, input: impl Into<InputNodeRef<'e, T>>)
+    fn write_expr<'e, T>(&mut self, name: &str, input: impl Into<ExprNodeRef<'e, T>>)
     where
         T: MemoExpr + 'e,
     {
@@ -1028,7 +1022,7 @@ impl<'f, 'a> MemoExprFormatter for DisplayMemoExprFormatter<'f, 'a> {
         self.fmt.write_str(source).unwrap();
     }
 
-    fn write_input<'e, T>(&mut self, _name: &str, input: impl Into<InputNodeRef<'e, T>>)
+    fn write_expr<'e, T>(&mut self, _name: &str, input: impl Into<ExprNodeRef<'e, T>>)
     where
         T: MemoExpr + 'e,
     {
@@ -1051,17 +1045,17 @@ impl<'f, 'a> MemoExprFormatter for DisplayMemoExprFormatter<'f, 'a> {
     }
 }
 
-fn format_node_ref<T>(input: InputNodeRef<'_, T>) -> String
+fn format_node_ref<T>(input: ExprNodeRef<'_, T>) -> String
 where
     T: MemoExpr,
 {
     match input {
-        InputNodeRef::Expr(expr) => {
+        ExprNodeRef::Expr(expr) => {
             // This only happens when expression has not been added to a memo.
             let ptr: *const T::Expr = &*expr.expr();
             format!("{:?}", ptr)
         }
-        InputNodeRef::Group(group) => format!("{}", group.id()),
+        ExprNodeRef::Group(group) => format!("{}", group.id()),
     }
 }
 
@@ -1127,18 +1121,18 @@ mod test {
             expr.as_relational()
         }
 
-        fn attrs(&self) -> &TestAttrs {
+        fn props(&self) -> &TestProps {
             match self {
-                RelExpr::Expr(expr) => expr.attrs(),
-                RelExpr::Group(group) => group.attrs(),
+                RelExpr::Expr(expr) => expr.props(),
+                RelExpr::Group(group) => group.props(),
             }
         }
 
         // replace with From<Self> -> InputNodeRef ?
-        fn get_ref(&self) -> InputNodeRef<TestOperator> {
+        fn get_ref(&self) -> ExprNodeRef<TestOperator> {
             match self {
-                RelExpr::Expr(expr) => InputNodeRef::Expr(&**expr),
-                RelExpr::Group(group) => InputNodeRef::Group(group),
+                RelExpr::Expr(expr) => ExprNodeRef::Expr(&**expr),
+                RelExpr::Group(group) => ExprNodeRef::Group(group),
             }
         }
     }
@@ -1151,10 +1145,10 @@ mod test {
 
     impl ScalarExpr {
         // replace with From<Self> -> InputNodeRef ?
-        fn get_ref(&self) -> InputNodeRef<TestOperator> {
+        fn get_ref(&self) -> ExprNodeRef<TestOperator> {
             match self {
-                ScalarExpr::Expr(expr) => InputNodeRef::Expr(&**expr),
-                ScalarExpr::Group(group) => InputNodeRef::Group(group),
+                ScalarExpr::Expr(expr) => ExprNodeRef::Expr(&**expr),
+                ScalarExpr::Group(group) => ExprNodeRef::Group(group),
             }
         }
     }
@@ -1165,11 +1159,11 @@ mod test {
         }
     }
 
-    impl From<InputNode<TestOperator>> for RelExpr {
-        fn from(expr: InputNode<TestOperator>) -> Self {
+    impl From<ExprNode<TestOperator>> for RelExpr {
+        fn from(expr: ExprNode<TestOperator>) -> Self {
             match expr {
-                InputNode::Expr(expr) => RelExpr::Expr(expr),
-                InputNode::Group(group) => RelExpr::Group(group),
+                ExprNode::Expr(expr) => RelExpr::Expr(expr),
+                ExprNode::Group(group) => RelExpr::Group(group),
             }
         }
     }
@@ -1178,16 +1172,16 @@ mod test {
         fn from(expr: TestScalarExpr) -> Self {
             ScalarExpr::Expr(Box::new(TestOperator {
                 expr: TestExpr::Scalar(expr),
-                attrs: Default::default(),
+                props: Default::default(),
             }))
         }
     }
 
-    impl From<InputNode<TestOperator>> for ScalarExpr {
-        fn from(expr: InputNode<TestOperator>) -> Self {
+    impl From<ExprNode<TestOperator>> for ScalarExpr {
+        fn from(expr: ExprNode<TestOperator>) -> Self {
             match expr {
-                InputNode::Expr(expr) => ScalarExpr::Expr(expr),
-                InputNode::Group(group) => ScalarExpr::Group(group),
+                ExprNode::Expr(expr) => ScalarExpr::Expr(expr),
+                ExprNode::Group(group) => ScalarExpr::Group(group),
             }
         }
     }
@@ -1203,7 +1197,7 @@ mod test {
     }
 
     impl TestScalarExpr {
-        fn with_new_inputs(&self, inputs: &mut NewInputs<TestOperator>) -> Self {
+        fn with_new_inputs(&self, inputs: &mut NewChildExprs<TestOperator>) -> Self {
             match self {
                 TestScalarExpr::Value(_) => self.clone(),
                 TestScalarExpr::Gt { lhs, rhs } => {
@@ -1214,7 +1208,7 @@ mod test {
                         rhs: Box::new(rhs),
                     }
                 }
-                TestScalarExpr::SubQuery(_) => TestScalarExpr::SubQuery(RelExpr::from(inputs.input())),
+                TestScalarExpr::SubQuery(_) => TestScalarExpr::SubQuery(RelExpr::from(inputs.expr())),
             }
         }
 
@@ -1262,11 +1256,11 @@ mod test {
         }
 
         fn visit_rel(&mut self, expr_ctx: &mut ExprContext<TestOperator>, rel: &RelExpr) {
-            self.ctx.visit_input(expr_ctx, rel.get_ref());
+            self.ctx.visit_expr_node(expr_ctx, rel.get_ref());
         }
 
         fn visit_scalar(&mut self, expr_ctx: &mut ExprContext<TestOperator>, scalar: &ScalarExpr) {
-            self.ctx.visit_input(expr_ctx, scalar.get_ref());
+            self.ctx.visit_expr_node(expr_ctx, scalar.get_ref());
         }
 
         fn copy_in_nested(&mut self, expr_ctx: &mut ExprContext<TestOperator>, expr: &TestOperator) {
@@ -1285,44 +1279,44 @@ mod test {
     #[derive(Debug, Clone)]
     struct TestOperator {
         expr: TestExpr,
-        attrs: TestAttrs,
+        props: TestProps,
     }
 
     impl From<TestRelExpr> for TestOperator {
         fn from(expr: TestRelExpr) -> Self {
             TestOperator {
                 expr: TestExpr::Relational(expr),
-                attrs: TestAttrs::default(),
+                props: TestProps::default(),
             }
         }
     }
 
     #[derive(Debug, Clone, PartialEq, Default)]
-    struct TestAttrs {
+    struct TestProps {
         a: i32,
     }
 
-    impl Attributes for TestAttrs {}
+    impl Properties for TestProps {}
 
     impl TestOperator {
-        fn with_attrs(self, a: i32) -> Self {
+        fn with_props(self, a: i32) -> Self {
             TestOperator {
                 expr: self.expr,
-                attrs: TestAttrs { a },
+                props: TestProps { a },
             }
         }
     }
 
     impl MemoExpr for TestOperator {
         type Expr = TestExpr;
-        type Attrs = TestAttrs;
+        type Props = TestProps;
 
         fn expr(&self) -> &Self::Expr {
             &self.expr
         }
 
-        fn attrs(&self) -> &Self::Attrs {
-            &self.attrs
+        fn props(&self) -> &Self::Props {
+            &self.props
         }
 
         fn copy_in(&self, ctx: &mut CopyInExprs<Self>) {
@@ -1351,20 +1345,20 @@ mod test {
             ctx.copy_in(self, expr_ctx)
         }
 
-        fn with_new_inputs(&self, mut inputs: NewInputs<Self>) -> Self {
+        fn with_new_children(&self, mut inputs: NewChildExprs<Self>) -> Self {
             let expr = match self.expr() {
                 TestExpr::Relational(expr) => {
                     let expr = match expr {
                         TestRelExpr::Leaf(s) => TestRelExpr::Leaf(s.clone()),
                         TestRelExpr::Node { .. } => TestRelExpr::Node {
-                            input: RelExpr::from(inputs.input()),
+                            input: RelExpr::from(inputs.expr()),
                         },
                         TestRelExpr::Nodes { .. } => TestRelExpr::Nodes {
                             inputs: inputs.remaining().into_iter().map(RelExpr::from).collect(),
                         },
                         TestRelExpr::Filter { .. } => TestRelExpr::Filter {
-                            input: RelExpr::from(inputs.input()),
-                            filter: ScalarExpr::from(inputs.input()),
+                            input: RelExpr::from(inputs.expr()),
+                            filter: ScalarExpr::from(inputs.expr()),
                         },
                     };
                     TestExpr::Relational(expr)
@@ -1373,7 +1367,7 @@ mod test {
             };
             TestOperator {
                 expr,
-                attrs: self.attrs.clone(),
+                props: self.props.clone(),
             }
         }
 
@@ -1389,18 +1383,18 @@ mod test {
                     }
                     TestRelExpr::Node { input } => {
                         f.write_name("Node");
-                        f.write_input("", input.get_ref());
+                        f.write_expr("", input.get_ref());
                     }
                     TestRelExpr::Nodes { inputs } => {
                         f.write_name("Nodes");
                         for input in inputs {
-                            f.write_input("", input.get_ref());
+                            f.write_expr("", input.get_ref());
                         }
                     }
                     TestRelExpr::Filter { input, filter } => {
                         f.write_name("Filter");
-                        f.write_input("", input.get_ref());
-                        f.write_input("filter", filter.get_ref());
+                        f.write_expr("", input.get_ref());
+                        f.write_expr("filter", filter.get_ref());
                     }
                 },
                 TestExpr::Scalar(expr) => {
@@ -1414,10 +1408,10 @@ mod test {
     #[test]
     fn test_basics() {
         let mut memo = Memo::new();
-        let expr = TestOperator::from(TestRelExpr::Leaf("aaaa")).with_attrs(100);
+        let expr = TestOperator::from(TestRelExpr::Leaf("aaaa")).with_props(100);
         let (group, expr) = memo.insert(expr);
 
-        assert_eq!(group.attrs(), &TestAttrs { a: 100 }, "group attributes");
+        assert_eq!(group.props(), &TestProps { a: 100 }, "group properties");
         assert_eq!(expr.mgroup(), &group, "expr group");
 
         let group_by_id = memo.get_group_ref(&group.id());
@@ -1432,17 +1426,17 @@ mod test {
     }
 
     #[test]
-    fn test_attributes() {
+    fn test_properties() {
         let mut memo = Memo::new();
 
-        let leaf = TestOperator::from(TestRelExpr::Leaf("a")).with_attrs(10);
-        let inner = TestOperator::from(TestRelExpr::Node { input: leaf.into() }).with_attrs(15);
+        let leaf = TestOperator::from(TestRelExpr::Leaf("a")).with_props(10);
+        let inner = TestOperator::from(TestRelExpr::Node { input: leaf.into() }).with_props(15);
         let expr = TestOperator::from(TestRelExpr::Node { input: inner.into() });
-        let outer = TestOperator::from(TestRelExpr::Node { input: expr.into() }).with_attrs(20);
+        let outer = TestOperator::from(TestRelExpr::Node { input: expr.into() }).with_props(20);
 
         let _ = memo.insert(outer);
 
-        expect_memo_with_attrs(
+        expect_memo_with_props(
             &memo,
             r#"
 03 Node 02 a=20
@@ -1454,10 +1448,10 @@ mod test {
     }
 
     #[test]
-    fn test_input_node() {
+    fn test_child_expr() {
         let mut memo = Memo::new();
 
-        let leaf = TestOperator::from(TestRelExpr::Leaf("a")).with_attrs(10);
+        let leaf = TestOperator::from(TestRelExpr::Leaf("a")).with_props(10);
         let expr = TestOperator::from(TestRelExpr::Node {
             input: leaf.clone().into(),
         });
@@ -1467,10 +1461,10 @@ mod test {
             TestRelExpr::Node { input } => {
                 assert_eq!(
                     format!("{:?}", input.expr()),
-                    format!("{:?}", expr.inputs()[0].expr().as_relational()),
-                    "input expr"
+                    format!("{:?}", expr.children()[0].expr().as_relational()),
+                    "child expr"
                 );
-                assert_eq!(input.attrs(), leaf.attrs(), "input attrs");
+                assert_eq!(input.props(), leaf.props(), "input props");
             }
             _ => panic!("Unexpected expression: {:?}", expr),
         }
@@ -1661,7 +1655,7 @@ mod test {
         );
 
         let expr = TestOperator::from(TestRelExpr::Leaf("a0"));
-        let _ = memo.insert_member(&group.mexpr().inputs()[0], expr);
+        let _ = memo.insert_member(&group.mexpr().children()[0], expr);
 
         expect_memo(
             &memo,
@@ -1733,7 +1727,7 @@ mod test {
         };
         let expr = TestOperator {
             expr: TestExpr::Scalar(expr),
-            attrs: Default::default(),
+            props: Default::default(),
         };
 
         let mut memo = Memo::new();
@@ -1786,11 +1780,16 @@ mod test {
 "#,
         );
 
-        let inputs = group.mexpr().inputs();
-        assert_eq!(inputs.len(), 2, "Filter expression has 2 child expressions: an input and a filter: {:?}", inputs);
+        let children = group.mexpr().children();
+        assert_eq!(
+            children.len(),
+            2,
+            "Filter expression has 2 child expressions: an input and a filter: {:?}",
+            children
+        );
 
-        let expr = inputs[1].mexpr();
-        assert_eq!(expr.inputs().len(), 2, "Filter expression has 2 nested expressions: {:?}", expr.inputs());
+        let expr = children[1].mexpr();
+        assert_eq!(expr.children().len(), 2, "Filter expression has 2 nested expressions: {:?}", expr.children());
 
         let filter_expr = TestScalarExpr::Gt {
             lhs: Box::new(inner_filter),
@@ -1826,15 +1825,15 @@ mod test {
         }
         impl MemoExprCallback for Callback {
             type Expr = TestOperator;
-            type Attrs = TestAttrs;
+            type Props = TestProps;
 
-            fn new_expr(&self, expr: &Self::Expr, attrs: Self::Attrs) -> Self::Attrs {
+            fn new_expr(&self, expr: &Self::Expr, props: Self::Props) -> Self::Props {
                 let mut added = self.added.borrow_mut();
                 let mut buf = String::new();
                 let mut fmt = StringMemoFormatter::new(&mut buf);
                 expr.format_expr(&mut fmt);
                 added.push(buf);
-                attrs
+                props
             }
         }
 
@@ -1886,7 +1885,7 @@ mod test {
         assert_eq!(buf.trim(), expected.trim());
     }
 
-    fn expect_memo_with_attrs(memo: &Memo<TestOperator>, expected: &str) {
+    fn expect_memo_with_props(memo: &Memo<TestOperator>, expected: &str) {
         let lines: Vec<String> = expected.split('\n').map(String::from).collect();
         let expected = lines.join("\n");
 
@@ -1894,7 +1893,7 @@ mod test {
         assert_eq!(buf.trim(), expected.trim());
     }
 
-    fn format_test_memo(memo: &Memo<TestOperator>, include_attrs: bool) -> String {
+    fn format_test_memo(memo: &Memo<TestOperator>, include_props: bool) -> String {
         let mut buf = String::new();
         let mut f = StringMemoFormatter::new(&mut buf);
         for group in memo.groups.iter().rev() {
@@ -1906,8 +1905,8 @@ mod test {
                     expr.mexpr().format_expr(&mut f);
                 } else {
                     expr.mexpr().format_expr(&mut f);
-                    if include_attrs && group.attrs != TestAttrs::default() {
-                        f.write_value("a", &group.attrs.a)
+                    if include_props && group.props != TestProps::default() {
+                        f.write_value("a", &group.props.a)
                     }
                 }
             }

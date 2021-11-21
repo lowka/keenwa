@@ -23,9 +23,9 @@ pub struct CostEstimationContext {
 }
 
 impl CostEstimationContext {
-    /// Returns statistics of the i-th input expression.
-    pub fn input_statistics(&self, i: usize) -> Option<&Statistics> {
+    /// Returns statistics of the i-th child expression.
+    pub fn child_statistics(&self, i: usize) -> Option<&Statistics> {
         let group = &self.input_groups[i];
-        group.attrs().logical().statistics()
+        group.props().logical().statistics()
     }
 }

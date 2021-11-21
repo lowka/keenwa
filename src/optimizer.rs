@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::cost::{Cost, CostEstimationContext, CostEstimator};
-use crate::memo::{format_memo, ExprId, GroupId, InputNode, MemoExprCallback, NewInputs};
+use crate::memo::{format_memo, ExprId, ExprNode, GroupId, MemoExprCallback, NewChildExprs};
 use crate::meta::Metadata;
 use crate::operators::{
     ExprCallback, ExprMemo, ExprRef, GroupRef, Operator, OperatorExpr, OperatorInputs, Properties, RelExpr, RelNode,
@@ -45,11 +45,11 @@ where
             P: PropertiesProvider,
         {
             type Expr = Operator;
-            type Attrs = Properties;
+            type Props = Properties;
 
-            fn new_expr(&self, expr: &Self::Expr, attrs: Self::Attrs) -> Self::Attrs {
+            fn new_expr(&self, expr: &Self::Expr, props: Self::Props) -> Self::Props {
                 // Every time a new expression is added to a memo we need to compute logical properties of that expression.
-                let Properties { logical, required } = attrs;
+                let Properties { logical, required } = props;
                 let logical = self
                     .properties_provider
                     .build_properties(expr.expr(), logical.statistics())
@@ -96,7 +96,7 @@ where
 
         log::debug!("Final memo:\n{}", format_memo(&memo));
 
-        self.get_result(runtime_state, &memo, &ctx)
+        self.build_result(runtime_state, &memo, &ctx)
     }
 
     fn do_optimize(&self, runtime_state: &mut RuntimeState, memo: &mut ExprMemo, metadata: &Metadata) {
@@ -145,7 +145,7 @@ where
         runtime_state.stats.optimization_time = start_time.elapsed();
     }
 
-    fn get_result(
+    fn build_result(
         &self,
         runtime_state: RuntimeState,
         memo: &ExprMemo,
@@ -294,7 +294,7 @@ where
     if ctx.group.expr().is_scalar() {
         let expr = ctx.group.mexpr();
 
-        if expr.inputs().is_empty() {
+        if expr.children().is_empty() {
             let best_expr = BestExpr::new(expr.clone(), 0, vec![]);
             state.best_expr = Some(best_expr);
         } else {
@@ -495,8 +495,8 @@ fn enforce_properties<R>(
         // because adding an enforcer to a group won't allow the optimizer to complete the optimization process:
         // 1) When an enforcer is added from explore_group task the next optimize_group task will call
         // optimize_inputs on the enforcer which then calls optimize group on the same group and we have an infinite loop.
-        // 2) copy_out_best_expr traverses its input expressions recursively so adding an enforcer to a group which
-        // is used as an input expression results an infinite loop during the traversal.
+        // 2) copy_out_best_expr traverses its child expressions recursively so adding an enforcer to a group which
+        // is used as its input results an infinite loop during the traversal.
         let (_, enforcer_expr) = memo.insert(Operator::from(enforcer_expr));
 
         (enforcer_expr, remaining_properties)
@@ -555,7 +555,7 @@ fn optimize_inputs<T>(
         let group = &ctx.group;
         let cost = match expr.expr() {
             OperatorExpr::Relational(expr) => {
-                let logical_properties = group.attrs().logical();
+                let logical_properties = group.props().logical();
                 let statistics = logical_properties.statistics();
                 let (cost_ctx, inputs_cost) = new_cost_estimation_ctx(&inputs, &runtime_state.state);
                 let expr_cost = cost_estimator.estimate_cost(expr.as_physical(), &cost_ctx, statistics);
@@ -603,7 +603,9 @@ where
 
     if ctx.required_properties.is_empty() && required_properties.is_none() {
         // Optimization context has no required properties + expression does not require any property from its inputs.
-        // -> optimize each input expression using required properties for group attributes (if any)
+        // -> optimize each child expression using required properties of child expressions.
+        // In this case every child expression is optimized using required properties of its memo group.
+
         let inputs = InputContexts::from_inputs(expr);
         Task::OptimizeInputs {
             ctx: ctx.clone(),
@@ -612,7 +614,7 @@ where
         }
     } else if retains_property {
         // Expression retains the required properties.
-        // -> optimize each input expression with required properties from the current optimization context.
+        // -> optimize each child expression with required properties from the current optimization context.
         //??? combine with required properties
 
         let inputs = InputContexts::new(expr, ctx.required_properties.clone());
@@ -622,8 +624,8 @@ where
             inputs,
         }
     } else if provides_property {
-        // Expression can provide the required properties OR
-        // -> optimize input expressions with properties required by the expression.
+        // Expression can provide the required properties
+        // -> optimize child expressions with properties required by the expression.
         // OR
         // Expression requires properties from its inputs.
         // -> same as the above
@@ -871,16 +873,16 @@ struct InputContexts {
 impl InputContexts {
     fn with_required_properties(expr: &ExprRef, required_properties: Option<Vec<PhysicalProperties>>) -> Self {
         let required_properties = match required_properties {
-            None => (0..expr.inputs().len()).map(|_| PhysicalProperties::none()).collect(),
+            None => (0..expr.children().len()).map(|_| PhysicalProperties::none()).collect(),
             Some(props) => {
-                let num = expr.inputs().len();
+                let num = expr.children().len();
                 assert_eq!(props.len(), num,
-                           "Number of required properties must be equal to the number of input expressions. Expected: {} but got {}", num, props.len());
+                           "Number of required properties must be equal to the number of child expressions. Expected: {} but got {}", num, props.len());
                 props
             }
         };
         let inputs = expr
-            .inputs()
+            .children()
             .iter()
             .zip(required_properties.into_iter())
             .map(|(group, required)| OptimizationContext {
@@ -897,7 +899,7 @@ impl InputContexts {
     fn new(expr: &ExprRef, required_properties: PhysicalProperties) -> Self {
         InputContexts {
             inputs: expr
-                .inputs()
+                .children()
                 .iter()
                 .map(|group| OptimizationContext {
                     group: group.clone(),
@@ -922,10 +924,10 @@ impl InputContexts {
 
     fn from_inputs(expr: &ExprRef) -> Self {
         let inputs = expr
-            .inputs()
+            .children()
             .iter()
             .map(|group| {
-                let required_properties = group.attrs().required();
+                let required_properties = group.props().required();
                 OptimizationContext {
                     group: group.clone(),
                     required_properties: required_properties.clone(),
@@ -992,26 +994,26 @@ impl<'o> BestExprContext for OptimizerResultCallbackContext<'o> {
     }
 
     fn logical(&self) -> &LogicalProperties {
-        self.ctx.group.attrs().logical()
+        self.ctx.group.props().logical()
     }
 
     fn required(&self) -> &PhysicalProperties {
-        self.ctx.group.attrs().required()
+        self.ctx.group.props().required()
     }
 
     fn group_id(&self) -> GroupId {
         self.ctx.group_id()
     }
 
-    fn inputs_num(&self) -> usize {
+    fn num_children(&self) -> usize {
         self.inputs.len()
     }
 
-    fn input_group_id(&self, i: usize) -> GroupId {
+    fn child_group_id(&self, i: usize) -> GroupId {
         self.inputs[i].group_id()
     }
 
-    fn input_required(&self, i: usize) -> &PhysicalProperties {
+    fn child_required(&self, i: usize) -> &PhysicalProperties {
         &self.inputs[i].required_properties
     }
 }
@@ -1043,13 +1045,13 @@ where
 
             for input_ctx in &best_expr.inputs {
                 let out = copy_out_best_expr(result_callback, state, memo, input_ctx)?;
-                new_inputs.push_back(InputNode::from(out));
+                new_inputs.push_back(ExprNode::from(out));
             }
 
             let best_expr_ctx = OptimizerResultCallbackContext { ctx, best_expr, inputs };
             result_callback.on_best_expr(best_expr_ref.clone(), &best_expr_ctx);
             //TODO: Copy required properties.
-            let new_inputs = NewInputs::new(new_inputs);
+            let new_inputs = NewChildExprs::new(new_inputs);
             let mut new_inputs = OperatorInputs::from(new_inputs);
             let new_expr = match best_expr_ref {
                 BestExprRef::Relational(exr) => OperatorExpr::from(exr.with_new_inputs(&mut new_inputs)),

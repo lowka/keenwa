@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use keenwa::memo::{
-    Attributes, CopyInExprs, CopyInNestedExprs, Expr, ExprContext, InputNode, InputNodeRef, Memo, MemoExpr,
-    MemoExprFormatter, MemoGroupRef, NewInputs,
+    CopyInExprs, CopyInNestedExprs, Expr, ExprContext, ExprNode, ExprNodeRef, Memo, MemoExpr, MemoExprFormatter,
+    MemoGroupRef, NewChildExprs, Properties,
 };
 use keenwa::operators::RelNode;
 use std::fmt::{Display, Formatter};
@@ -44,19 +44,19 @@ enum RelExpr {
 }
 
 impl RelExpr {
-    fn get_ref(&self) -> InputNodeRef<TestOperator> {
+    fn get_ref(&self) -> ExprNodeRef<TestOperator> {
         match self {
-            RelExpr::Expr(expr) => InputNodeRef::Expr(&**expr),
-            RelExpr::Group(group) => InputNodeRef::Group(group),
+            RelExpr::Expr(expr) => ExprNodeRef::Expr(&**expr),
+            RelExpr::Group(group) => ExprNodeRef::Group(group),
         }
     }
 }
 
-impl From<InputNode<TestOperator>> for RelExpr {
-    fn from(expr: InputNode<TestOperator>) -> Self {
+impl From<ExprNode<TestOperator>> for RelExpr {
+    fn from(expr: ExprNode<TestOperator>) -> Self {
         match expr {
-            InputNode::Expr(expr) => RelExpr::Expr(expr),
-            InputNode::Group(group) => RelExpr::Group(group),
+            ExprNode::Expr(expr) => RelExpr::Expr(expr),
+            ExprNode::Group(group) => RelExpr::Group(group),
         }
     }
 }
@@ -68,10 +68,10 @@ enum ScalarExpr {
 }
 
 impl ScalarExpr {
-    fn get_ref(&self) -> InputNodeRef<TestOperator> {
+    fn get_ref(&self) -> ExprNodeRef<TestOperator> {
         match self {
-            ScalarExpr::Expr(expr) => InputNodeRef::Expr(&**expr),
-            ScalarExpr::Group(group) => InputNodeRef::Group(group),
+            ScalarExpr::Expr(expr) => ExprNodeRef::Expr(&**expr),
+            ScalarExpr::Group(group) => ExprNodeRef::Group(group),
         }
     }
 }
@@ -107,7 +107,7 @@ impl Display for TestScalarExpr {
 }
 
 impl TestScalarExpr {
-    fn with_new_inputs(&self, inputs: &mut NewInputs<TestOperator>) -> Self {
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<TestOperator>) -> Self {
         match self {
             TestScalarExpr::Value(_) => self.clone(),
             TestScalarExpr::Gt { lhs, rhs } => {
@@ -118,7 +118,7 @@ impl TestScalarExpr {
                     rhs: Box::new(rhs),
                 }
             }
-            TestScalarExpr::SubQuery(_) => TestScalarExpr::SubQuery(RelExpr::from(inputs.input())),
+            TestScalarExpr::SubQuery(_) => TestScalarExpr::SubQuery(RelExpr::from(inputs.expr())),
         }
     }
 
@@ -146,11 +146,11 @@ impl TraversalWrapper<'_, '_> {
     }
 
     fn visit_rel(&mut self, expr_ctx: &mut ExprContext<TestOperator>, rel: &RelExpr) {
-        self.ctx.visit_input(expr_ctx, rel.get_ref());
+        self.ctx.visit_expr_node(expr_ctx, rel.get_ref());
     }
 
     fn visit_scalar(&mut self, expr_ctx: &mut ExprContext<TestOperator>, scalar: &ScalarExpr) {
-        self.ctx.visit_input(expr_ctx, scalar.get_ref());
+        self.ctx.visit_expr_node(expr_ctx, scalar.get_ref());
     }
 
     fn copy_in_nested(&mut self, expr_ctx: &mut ExprContext<TestOperator>, expr: &TestScalarExpr) {
@@ -168,26 +168,26 @@ impl TraversalWrapper<'_, '_> {
 #[derive(Debug, Clone)]
 struct TestOperator {
     expr: TestExpr,
-    attrs: TestAttrs,
+    props: TestProps,
 }
 
 #[derive(Debug, Clone, Default)]
-struct TestAttrs {
+struct TestProps {
     a: i32,
 }
 
-impl Attributes for TestAttrs {}
+impl Properties for TestProps {}
 
 impl MemoExpr for TestOperator {
     type Expr = TestExpr;
-    type Attrs = TestAttrs;
+    type Props = TestProps;
 
     fn expr(&self) -> &Self::Expr {
         &self.expr
     }
 
-    fn attrs(&self) -> &Self::Attrs {
-        &self.attrs
+    fn props(&self) -> &Self::Props {
+        &self.props
     }
 
     fn copy_in(&self, ctx: &mut CopyInExprs<Self>) {
@@ -210,7 +210,7 @@ impl MemoExpr for TestOperator {
         ctx.copy_in(self, expr_ctx)
     }
 
-    fn with_new_inputs(&self, mut inputs: NewInputs<Self>) -> Self {
+    fn with_new_children(&self, mut inputs: NewChildExprs<Self>) -> Self {
         let expr = match self.expr() {
             TestExpr::Relational(expr) => {
                 let expr = match expr {
@@ -221,15 +221,15 @@ impl MemoExpr for TestOperator {
                     TestRelExpr::Filter { .. } => {
                         assert_eq!(inputs.len(), 2, "expects 1 input");
                         TestRelExpr::Filter {
-                            input: RelExpr::from(inputs.input()),
-                            filter: ScalarExpr::from(inputs.input()),
+                            input: RelExpr::from(inputs.expr()),
+                            filter: ScalarExpr::from(inputs.expr()),
                         }
                     }
                     TestRelExpr::Join { .. } => {
                         assert_eq!(inputs.len(), 2, "expects 2 inputs");
                         TestRelExpr::Join {
-                            left: RelExpr::from(inputs.input()),
-                            right: RelExpr::from(inputs.input()),
+                            left: RelExpr::from(inputs.expr()),
+                            right: RelExpr::from(inputs.expr()),
                         }
                     }
                 };
@@ -239,7 +239,7 @@ impl MemoExpr for TestOperator {
         };
         TestOperator {
             expr,
-            attrs: self.attrs.clone(),
+            props: self.props.clone(),
         }
     }
 
@@ -255,13 +255,13 @@ impl MemoExpr for TestOperator {
                 }
                 TestRelExpr::Filter { input, filter } => {
                     f.write_name("Filter");
-                    f.write_input("input", input.get_ref());
-                    f.write_input("filter", filter.get_ref());
+                    f.write_expr("input", input.get_ref());
+                    f.write_expr("filter", filter.get_ref());
                 }
                 TestRelExpr::Join { left, right } => {
                     f.write_name("Join");
-                    f.write_input("left", left.get_ref());
-                    f.write_input("right", right.get_ref());
+                    f.write_expr("left", left.get_ref());
+                    f.write_expr("right", right.get_ref());
                 }
             },
             TestExpr::Scalar(expr) => {
@@ -276,7 +276,7 @@ impl From<TestExpr> for TestOperator {
     fn from(expr: TestExpr) -> Self {
         TestOperator {
             expr,
-            attrs: TestAttrs::default(),
+            props: TestProps::default(),
         }
     }
 }
@@ -285,7 +285,7 @@ impl From<TestRelExpr> for TestOperator {
     fn from(expr: TestRelExpr) -> Self {
         TestOperator {
             expr: TestExpr::Relational(expr),
-            attrs: TestAttrs::default(),
+            props: TestProps::default(),
         }
     }
 }
@@ -294,7 +294,7 @@ impl From<TestScalarExpr> for TestOperator {
     fn from(expr: TestScalarExpr) -> Self {
         TestOperator {
             expr: TestExpr::Scalar(expr),
-            attrs: TestAttrs::default(),
+            props: TestProps::default(),
         }
     }
 }
@@ -311,11 +311,11 @@ impl From<TestOperator> for ScalarExpr {
     }
 }
 
-impl From<InputNode<TestOperator>> for ScalarExpr {
-    fn from(expr: InputNode<TestOperator>) -> Self {
+impl From<ExprNode<TestOperator>> for ScalarExpr {
+    fn from(expr: ExprNode<TestOperator>) -> Self {
         match expr {
-            InputNode::Expr(expr) => ScalarExpr::Expr(expr),
-            InputNode::Group(group) => ScalarExpr::Group(group),
+            ExprNode::Expr(expr) => ScalarExpr::Expr(expr),
+            ExprNode::Group(group) => ScalarExpr::Group(group),
         }
     }
 }
