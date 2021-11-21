@@ -134,7 +134,7 @@ mod test {
     use crate::catalog::mutable::MutableCatalog;
     use crate::catalog::TableBuilder;
     use crate::datatypes::DataType;
-    use crate::operators::expressions::{AggregateFunction, Expr};
+    use crate::operators::expr::{AggregateFunction, Expr};
     use crate::operators::logical::LogicalExpr;
     use crate::operators::ScalarNode;
     use crate::properties::statistics::{CatalogStatisticsBuilder, Statistics, StatisticsBuilder};

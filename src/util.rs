@@ -1,6 +1,6 @@
 use crate::cost::Cost;
 use crate::memo::GroupId;
-use crate::operators::expressions::Expr;
+use crate::operators::expr::Expr;
 use crate::operators::physical::PhysicalExpr;
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;

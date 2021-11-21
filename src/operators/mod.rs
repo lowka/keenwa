@@ -2,7 +2,7 @@ use crate::memo::{
     CopyInExprs, CopyInNestedExprs, ExprContext, ExprNode, ExprNodeRef, MemoExpr, MemoExprCallback, MemoExprFormatter,
     MemoGroupRef, NewChildExprs,
 };
-use crate::operators::expressions::Expr;
+use crate::operators::expr::Expr;
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;
 use crate::properties::logical::LogicalProperties;
@@ -10,7 +10,7 @@ use crate::properties::physical::PhysicalProperties;
 use crate::properties::statistics::Statistics;
 use std::fmt::Debug;
 
-pub mod expressions;
+pub mod expr;
 pub mod join;
 pub mod logical;
 pub mod physical;
@@ -21,8 +21,8 @@ pub type GroupRef = crate::memo::MemoGroupRef<Operator>;
 pub type ExprRef = crate::memo::MemoExprRef<Operator>;
 pub type ExprCallback = dyn MemoExprCallback<Expr = Operator, Props = Properties>;
 
-/// A node of an operator tree that represent both initial and optimized query plan.
 /// An operator is an expression (which can be either logical or physical) with a set of properties.
+/// A tree of operators can represent both initial (unoptimized) and optimized query plans.
 // TODO: Docs
 #[derive(Debug, Clone)]
 pub struct Operator {
@@ -132,7 +132,7 @@ impl OperatorExpr {
         }
     }
 
-    /// Returns `true` if this is a relational expression.
+    /// Returns `true` if this is a scalar expression.
     pub fn is_scalar(&self) -> bool {
         !self.is_relational()
     }
@@ -176,13 +176,21 @@ impl RelExpr {
 }
 
 /// A relational node of an operator tree.
+///
+/// Should not be created directly and it is responsibility of the caller to provide a instance of `Operator`
+/// which is a valid relational expression.
 #[derive(Debug, Clone)]
 pub enum RelNode {
+    /// A node is an expression.
     Expr(Box<Operator>),
+    /// A node is a memo-group.
     Group(MemoGroupRef<Operator>),
 }
 
 impl RelNode {
+    /// Returns a reference to a relational expression stored inside this node:
+    /// * if this node is an expression returns a reference to the underlying expression.
+    /// * If this node is a memo group returns a reference to the first expression of this memo group.
     pub fn expr(&self) -> &RelExpr {
         match self {
             RelNode::Expr(expr) => expr.expr().as_relational(),
@@ -190,17 +198,13 @@ impl RelNode {
         }
     }
 
+    /// Returns a reference to properties associated with this node:
+    /// * if this node is an expression returns properties of the expression.
+    /// * If this node is a memo group returns a reference to the properties of this memo group.
     pub fn props(&self) -> &Properties {
         match self {
             RelNode::Expr(expr) => expr.props(),
             RelNode::Group(group) => group.props(),
-        }
-    }
-
-    pub(crate) fn get_ref(&self) -> ExprNodeRef<Operator> {
-        match self {
-            RelNode::Expr(expr) => ExprNodeRef::Expr(&**expr),
-            RelNode::Group(group) => ExprNodeRef::Group(group),
         }
     }
 }
@@ -224,13 +228,21 @@ impl From<ExprNode<Operator>> for RelNode {
 }
 
 /// A scalar node of an operator tree.
+///
+/// Should not be created directly and it is responsibility of the caller to provide a instance of `Operator`
+/// which is a valid scalar expression.
 #[derive(Debug, Clone)]
 pub enum ScalarNode {
+    /// A node is an expression.
     Expr(Box<Operator>),
+    /// A node is a memo-group.
     Group(MemoGroupRef<Operator>),
 }
 
 impl ScalarNode {
+    /// Returns a reference to a scalar expression stored inside this node:
+    /// * if this node is an expression returns a reference to the underlying expression.
+    /// * If this node is a memo group returns a reference to the first expression of this memo group.
     pub fn expr(&self) -> &Expr {
         match self {
             ScalarNode::Expr(expr) => expr.expr().as_scalar(),
@@ -378,7 +390,8 @@ impl OperatorCopyIn<'_, '_> {
     }
 }
 
-/// A wrapper round [`NewChildExprs`](crate::memo::NewChildExprs) that provides convenient methods to retrieve both relational and scalar expressions.
+/// A wrapper round [`NewChildExprs`](crate::memo::NewChildExprs) that provides convenient methods
+/// to retrieve both relational and scalar expressions.
 //???: Improve error reporting
 #[derive(Debug)]
 pub struct OperatorInputs {
@@ -395,36 +408,66 @@ impl OperatorInputs {
     ///
     /// # Panics
     ///
-    /// This method panics if there is no relational expressions left.
+    /// This method panics if there is no relational expressions left or the retrieved expression is
+    /// not a relational expression.
     pub fn rel_node(&mut self) -> RelNode {
-        RelNode::from(self.inputs.expr())
+        let expr = self.inputs.expr();
+        Self::expect_relational(&expr);
+        RelNode::from(expr)
     }
 
     /// Retrieves the next `n` relational expressions.
     ///
     /// # Panics
     ///
-    /// This method panics if there is not enough expressions left.
+    /// This method panics if there is not enough expressions left or some of the retrieved expressions are
+    /// not relational expressions.
     pub fn rel_nodes(&mut self, n: usize) -> Vec<RelNode> {
-        self.inputs.exprs(n).into_iter().map(|i| RelNode::from(i)).collect()
+        self.inputs
+            .exprs(n)
+            .into_iter()
+            .map(|i| {
+                Self::expect_relational(&i);
+                RelNode::from(i)
+            })
+            .collect()
     }
 
     /// Retrieves the next scalar expression.
     ///
     /// # Panics
     ///
-    /// This method panics if there is no expressions left.
+    /// This method panics if there is no expressions left or the retrieved expression is
+    /// not a scalar expression.
     pub fn scalar_node(&mut self) -> ScalarNode {
-        ScalarNode::from(self.inputs.expr())
+        let expr = self.inputs.expr();
+        Self::expect_scalar(&expr);
+        ScalarNode::from(expr)
     }
 
     /// Retrieves the next `n` scalar expressions.
     ///
     /// # Panics
     ///
-    /// This method panics if there is not enough expressions left.
+    /// This method panics if there is not enough expressions left or some of the retrieved expressions are
+    /// not scalar expressions.
     pub fn scalar_nodes(&mut self, n: usize) -> Vec<ScalarNode> {
-        self.inputs.exprs(n).into_iter().map(|i| ScalarNode::from(i)).collect()
+        self.inputs
+            .exprs(n)
+            .into_iter()
+            .map(|i| {
+                Self::expect_scalar(&i);
+                ScalarNode::from(i)
+            })
+            .collect()
+    }
+
+    fn expect_relational(expr: &ExprNode<Operator>) {
+        assert!(expr.expr().is_relational(), "expected a relational expression");
+    }
+
+    fn expect_scalar(expr: &ExprNode<Operator>) {
+        assert!(expr.expr().is_scalar(), "expected a scalar expression");
     }
 }
 

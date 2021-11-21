@@ -1,6 +1,6 @@
 use crate::error::OptimizerError;
 use crate::meta::ColumnId;
-use crate::operators::expressions::Expr;
+use crate::operators::expr::Expr;
 use crate::operators::join::JoinCondition;
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;

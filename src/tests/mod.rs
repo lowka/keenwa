@@ -1,6 +1,6 @@
 use crate::catalog::*;
 use crate::meta::*;
-use crate::operators::expressions::*;
+use crate::operators::expr::*;
 use crate::operators::join::*;
 use crate::operators::logical::*;
 use crate::operators::scalar::ScalarValue;

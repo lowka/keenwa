@@ -9,7 +9,7 @@ use keenwa::catalog::{Catalog, TableBuilder, DEFAULT_SCHEMA};
 use keenwa::cost::simple::SimpleCostEstimator;
 use keenwa::datatypes::DataType;
 use keenwa::meta::{ColumnId, Metadata};
-use keenwa::operators::expressions::{BinaryOp, Expr};
+use keenwa::operators::expr::{BinaryOp, Expr};
 use keenwa::operators::join::JoinCondition;
 use keenwa::operators::logical::*;
 use keenwa::operators::scalar::ScalarValue;
