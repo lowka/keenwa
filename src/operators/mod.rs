@@ -58,7 +58,7 @@ impl Operator {
             properties: old_properties,
             ..
         } = self;
-        assert!(expr.is_relational(), "Scalar expressions do not support physical properties: {:?}", self);
+        assert!(expr.is_relational(), "Scalar expressions do not support physical properties: {:?}", expr);
         Operator {
             expr,
             properties: Properties {
