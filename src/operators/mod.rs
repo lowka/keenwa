@@ -89,7 +89,7 @@ impl Operator {
 /// Expression can be either a [relational] or [scalar] expression.
 ///
 /// [relational]: crate::operators::RelExpr
-/// [scalar]: crate::operators::expressions::Expr
+/// [scalar]: crate::operators::expr::Expr
 // TODO: Docs
 #[derive(Debug, Clone)]
 pub enum OperatorExpr {
@@ -391,7 +391,7 @@ impl OperatorCopyIn<'_, '_> {
     }
 
     /// Visits the given scalar expression and copies it into a memo.
-    /// See [`memo`][crate::memo::CopyInExprs::visit_input] for details.
+    /// See [`memo`][crate::memo::CopyInExprs::visit_expr_node] for details.
     pub fn visit_scalar(&mut self, expr_ctx: &mut ExprContext<Operator>, expr: &ScalarNode) {
         self.visitor.visit_expr_node(expr_ctx, expr);
     }
