@@ -374,7 +374,7 @@ impl OperatorCopyIn<'_, '_> {
     }
 
     /// Visits the given relational expression and copies it into a memo.
-    /// See [`memo`][crate::memo::CopyInExprs::visit_input] for details.
+    /// See [`memo`][crate::memo::CopyInExprs::visit_expr_node] for details.
     pub fn visit_rel(&mut self, expr_ctx: &mut ExprContext<Operator>, expr: &RelNode) {
         self.visitor.visit_expr_node(expr_ctx, expr);
     }
@@ -403,7 +403,7 @@ impl OperatorCopyIn<'_, '_> {
     }
 
     /// Traverses the given scalar expression and all of its nested relational expressions into a memo.
-    /// See [`memo`][crate::memo::CopyInExprs::visit_input] for details.
+    /// See [`memo`][crate::memo::CopyInExprs::visit_expr_node] for details.
     pub fn copy_in_nested(&mut self, expr_ctx: &mut ExprContext<Operator>, expr: &Expr) {
         let nested_ctx = CopyInNestedExprs::new(self.visitor, expr_ctx);
         nested_ctx.execute(expr, |expr, collector: &mut CopyInNestedExprs<Operator>| {

@@ -108,7 +108,7 @@ impl TableStatistics {
 
 /// A builder to create instances of a [table].
 ///
-/// [table]: crate::catalog::schema::Table
+/// [table]: crate::catalog::Table
 #[derive(Debug, Clone)]
 pub struct TableBuilder {
     name: String,
@@ -186,7 +186,7 @@ impl Index {
 
 /// A builder to create instances of an [Index].
 ///
-/// [Index]: crate::catalog::schema::Index
+/// [Index]: crate::catalog::Index
 #[derive(Debug, Clone)]
 pub struct IndexBuilder {
     name: String,
