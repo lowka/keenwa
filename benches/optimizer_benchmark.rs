@@ -105,7 +105,7 @@ fn memo_bench(c: &mut Criterion) {
             condition: JoinCondition::using(vec![(1, 2)]),
         }
         .into(),
-        filter: ScalarNode::Expr(Box::new(Operator::from(OperatorExpr::from(filter)))),
+        filter: Some(ScalarNode::from(filter)),
     }
     .to_operator()
     .with_required(ordering(vec![1]))

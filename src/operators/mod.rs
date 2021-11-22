@@ -249,6 +249,16 @@ impl ScalarNode {
             ScalarNode::Group(group) => group.expr().as_scalar(),
         }
     }
+
+    /// Returns a reference to properties of the underlying expression.
+    /// * If this is an expression returns a references to the properties of that expression.
+    /// * If this is a memo-group returns a reference to the properties of the first expression in that group.
+    pub fn props(&self) -> &Properties {
+        match self {
+            ScalarNode::Expr(expr) => expr.props(),
+            ScalarNode::Group(group) => group.props(),
+        }
+    }
 }
 
 impl<'a> From<&'a ScalarNode> for ExprNodeRef<'a, Operator> {
@@ -369,10 +379,27 @@ impl OperatorCopyIn<'_, '_> {
         self.visitor.visit_expr_node(expr_ctx, expr);
     }
 
+    /// Visits the given optional relational expression if it is present and copies it into a memo. This method is equivalent to:
+    /// ```text
+    ///   if let Some(expr) = expr {
+    ///     visitor.visit_rel(expr_ctx, expr);
+    ///   }
+    /// ```
+    /// See [`memo::CopyInExprs`][crate::memo::CopyInExprs::visit_opt_expr_node] for details.
+    pub fn visit_opt_rel(&mut self, expr_ctx: &mut ExprContext<Operator>, expr: Option<&RelNode>) {
+        self.visitor.visit_opt_expr_node(expr_ctx, expr);
+    }
+
     /// Visits the given scalar expression and copies it into a memo.
     /// See [`memo`][crate::memo::CopyInExprs::visit_input] for details.
     pub fn visit_scalar(&mut self, expr_ctx: &mut ExprContext<Operator>, expr: &ScalarNode) {
         self.visitor.visit_expr_node(expr_ctx, expr);
+    }
+
+    /// Visits the given optional scalar expression if it is present and copies it into a memo.
+    /// See [`memo::CopyInExprs`][crate::memo::CopyInExprs::visit_opt_expr_node] for details.
+    pub fn visit_opt_scalar(&mut self, expr_ctx: &mut ExprContext<Operator>, expr: Option<&ScalarNode>) {
+        self.visitor.visit_opt_expr_node(expr_ctx, expr);
     }
 
     /// Traverses the given scalar expression and all of its nested relational expressions into a memo.

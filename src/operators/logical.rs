@@ -14,7 +14,7 @@ pub enum LogicalExpr {
     },
     Select {
         input: RelNode,
-        filter: ScalarNode,
+        filter: Option<ScalarNode>,
     },
     Aggregate {
         input: RelNode,
@@ -40,7 +40,7 @@ impl LogicalExpr {
             }
             LogicalExpr::Select { input, filter } => {
                 visitor.visit_rel(expr_ctx, input);
-                visitor.visit_scalar(expr_ctx, filter);
+                visitor.visit_opt_scalar(expr_ctx, filter.as_ref());
             }
             LogicalExpr::Join { left, right, .. } => {
                 visitor.visit_rel(expr_ctx, left);
@@ -72,11 +72,12 @@ impl LogicalExpr {
                     columns: columns.clone(),
                 }
             }
-            LogicalExpr::Select { .. } => {
-                inputs.expect_len(2, "LogicalSelect");
+            LogicalExpr::Select { filter, .. } => {
+                let num_opt = filter.as_ref().map(|_| 1).unwrap_or_default();
+                inputs.expect_len(1 + num_opt, "LogicalSelect");
                 LogicalExpr::Select {
                     input: inputs.rel_node(),
-                    filter: inputs.scalar_node(),
+                    filter: filter.as_ref().map(|_| inputs.scalar_node()),
                 }
             }
             LogicalExpr::Join { condition, .. } => {
@@ -122,7 +123,7 @@ impl LogicalExpr {
             LogicalExpr::Select { input, filter } => {
                 f.write_name("LogicalSelect");
                 f.write_expr("input", input);
-                f.write_expr("filter", filter);
+                f.write_expr_if_present("filter", filter.as_ref());
             }
             LogicalExpr::Join { left, right, condition } => {
                 f.write_name("LogicalJoin");

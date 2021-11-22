@@ -91,10 +91,15 @@ impl StatisticsBuilder for CatalogStatisticsBuilder {
                 let statistics = logical.statistics().unwrap();
                 statistics.clone()
             }
-            LogicalExpr::Select { input, .. } => {
+            LogicalExpr::Select { input, filter, .. } => {
                 let logical = input.props().logical();
                 let input_statistics = logical.statistics().unwrap();
-                let selectivity = statistics.map_or(1.0, |s| s.selectivity());
+                let selectivity = if let Some(filter) = filter {
+                    let filter_statistics = filter.props().logical().statistics().unwrap();
+                    filter_statistics.selectivity()
+                } else {
+                    1.0
+                };
                 let row_count = selectivity * input_statistics.row_count();
                 Statistics::new(row_count, selectivity)
             }

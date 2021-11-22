@@ -614,11 +614,7 @@ where
     /// Visits the given child expression and recursively copies that expression into the memo:
     /// * If the given expression is an expression this methods recursively copies it into the memo.
     /// * If the child expression is a group this method returns a reference to that group.
-    pub fn visit_expr_node<'e>(
-        &mut self,
-        expr_ctx: &mut ExprContext<T>,
-        expr_node: impl Into<ExprNodeRef<'e, T>>,
-    ) -> (MemoGroupRef<T>, MemoExprRef<T>)
+    pub fn visit_expr_node<'e>(&mut self, expr_ctx: &mut ExprContext<T>, expr_node: impl Into<ExprNodeRef<'e, T>>)
     where
         T: 'e,
     {
@@ -632,14 +628,30 @@ where
                 };
                 let (group, expr) = copy_in.execute(expr);
                 expr_ctx.children.push_back(ExprNode::Group(group.clone()));
-                (group, expr)
             }
             ExprNodeRef::Group(group) => {
                 expr_ctx.children.push_back(ExprNode::Group(group.clone()));
-                let expr = group.mexpr();
-                (group.clone(), expr.clone())
             }
         }
+    }
+
+    /// Visits the given optional child expression if it is present and recursively copies it into a memo.
+    /// This method is equivalent to:
+    /// ```text
+    /// if let Some(expr_node) = expr_node {
+    ///   visitor.visit_expr_node(expr_ctx, expr_node);
+    /// }
+    /// ```
+    pub fn visit_opt_expr_node<'e>(
+        &mut self,
+        expr_ctx: &mut ExprContext<T>,
+        expr_node: Option<impl Into<ExprNodeRef<'e, T>>>,
+    ) where
+        T: MemoExpr + 'e,
+    {
+        if let Some(expr_node) = expr_node {
+            self.visit_expr_node(expr_ctx, expr_node);
+        };
     }
 
     /// Copies the expression into the memo.
@@ -914,6 +926,21 @@ pub trait MemoExprFormatter {
     fn write_expr<'e, T>(&mut self, name: &str, input: impl Into<ExprNodeRef<'e, T>>)
     where
         T: MemoExpr + 'e;
+
+    /// Writes a child expression it is present. This method is equivalent to:
+    /// ```text
+    /// if let Some(expr) = expr {
+    ///   fmt.write_expr(name, expr);
+    /// }
+    /// ```
+    fn write_expr_if_present<'e, T>(&mut self, name: &str, expr: Option<impl Into<ExprNodeRef<'e, T>>>)
+    where
+        T: MemoExpr + 'e,
+    {
+        if let Some(expr) = expr {
+            self.write_expr(name, expr);
+        }
+    }
 
     /// Writes a value of some attribute of an expression.
     fn write_value<D>(&mut self, name: &str, value: D)

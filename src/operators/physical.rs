@@ -17,7 +17,7 @@ pub enum PhysicalExpr {
     },
     Select {
         input: RelNode,
-        filter: ScalarNode,
+        filter: Option<ScalarNode>,
     },
     HashAggregate {
         input: RelNode,
@@ -56,7 +56,7 @@ impl PhysicalExpr {
             }
             PhysicalExpr::Select { input, filter } => {
                 visitor.visit_rel(expr_ctx, input);
-                visitor.visit_scalar(expr_ctx, filter)
+                visitor.visit_opt_scalar(expr_ctx, filter.as_ref());
             }
             PhysicalExpr::HashAggregate {
                 input,
@@ -96,11 +96,12 @@ impl PhysicalExpr {
                     columns: columns.clone(),
                 }
             }
-            PhysicalExpr::Select { .. } => {
-                inputs.expect_len(2, "Select");
+            PhysicalExpr::Select { filter, .. } => {
+                let num_opt = filter.as_ref().map(|_| 1).unwrap_or_default();
+                inputs.expect_len(1 + num_opt, "Select");
                 PhysicalExpr::Select {
                     input: inputs.rel_node(),
-                    filter: inputs.scalar_node(),
+                    filter: filter.as_ref().map(|_| inputs.scalar_node()),
                 }
             }
             PhysicalExpr::HashAggregate {
@@ -190,7 +191,7 @@ impl PhysicalExpr {
             PhysicalExpr::Select { input, filter } => {
                 f.write_name("Select");
                 f.write_expr("input", input);
-                f.write_expr("filter", filter)
+                f.write_expr_if_present("filter", filter.as_ref())
             }
             PhysicalExpr::HashJoin { left, right, condition } => {
                 f.write_name("HashJoin");

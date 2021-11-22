@@ -16,13 +16,19 @@ fn ordering(cols: Vec<ColumnId>) -> PhysicalProperties {
     PhysicalProperties::new(OrderingChoice::new(cols))
 }
 
-fn binary_op_col_gt(left: ColumnId, value: ScalarValue) -> ScalarNode {
+fn filter(left: ColumnId, value: ScalarValue) -> Option<ScalarNode> {
+    filter_with_selectivity(left, value, 1.0)
+}
+
+fn filter_with_selectivity(left: ColumnId, value: ScalarValue, selectivity: f64) -> Option<ScalarNode> {
     let expr = Expr::BinaryExpr {
         lhs: Box::new(Expr::Column(left)),
         op: BinaryOp::Gt,
         rhs: Box::new(Expr::Scalar(value)),
     };
-    ScalarNode::Expr(Box::new(Operator::from(OperatorExpr::Scalar(expr))))
+    let operator = Operator::from(OperatorExpr::Scalar(expr));
+    let statistics = Statistics::from_selectivity(selectivity);
+    Some(ScalarNode::Expr(Box::new(operator.with_statistics(statistics))))
 }
 
 #[test]
@@ -97,7 +103,7 @@ fn test_select() {
             columns: vec![1, 2],
         }
         .into(),
-        filter: binary_op_col_gt(1, ScalarValue::Int32(10)),
+        filter: filter(1, ScalarValue::Int32(10)),
     }
     .to_operator();
 
@@ -134,7 +140,7 @@ fn test_select_with_a_nested_query() {
             columns: vec![1, 2],
         }
         .into(),
-        filter: filter.into(),
+        filter: Some(filter.into()),
     }
     .to_operator();
 
@@ -162,11 +168,11 @@ fn test_get_ordered_top_level_enforcer() {
             columns: vec![1, 2, 3],
         }
         .into(),
-        filter: binary_op_col_gt(1, ScalarValue::Int32(10)),
+        filter: filter_with_selectivity(1, ScalarValue::Int32(10), 0.1),
     }
     .to_operator()
-    .with_required(ordering(vec![3]))
-    .with_statistics(Statistics::from_selectivity(0.1));
+    .with_required(ordering(vec![3]));
+    // .with_statistics(Statistics::from_selectivity(0.1));
 
     let mut tester = OptimizerTester::new();
 
@@ -191,7 +197,7 @@ fn test_get_ordered_no_top_level_enforcer() {
             columns: vec![1, 2, 3],
         }
         .into(),
-        filter: binary_op_col_gt(1, ScalarValue::Int32(10)),
+        filter: filter(1, ScalarValue::Int32(10)),
     }
     .to_operator()
     .with_required(ordering(vec![3]));
@@ -252,7 +258,7 @@ fn test_join_commutativity() {
             condition: JoinCondition::using(vec![(1, 2)]),
         }
         .into(),
-        filter: binary_op_col_gt(1, ScalarValue::Int32(10)),
+        filter: filter(1, ScalarValue::Int32(10)),
     }
     .to_operator();
 
@@ -292,11 +298,10 @@ fn test_join_commutativity_ordered() {
             condition: JoinCondition::using(vec![(1, 2)]),
         }
         .into(),
-        filter: binary_op_col_gt(1, ScalarValue::Int32(10)),
+        filter: filter_with_selectivity(1, ScalarValue::Int32(10), 0.1),
     }
     .to_operator()
-    .with_required(ordering(vec![1]))
-    .with_statistics(Statistics::from_selectivity(0.1));
+    .with_required(ordering(vec![1]));
 
     let mut tester = OptimizerTester::new();
 
@@ -596,7 +601,7 @@ fn test_inner_sort_with_enforcer() {
         .to_operator()
         .with_required(ordering(vec![1]))
         .into(),
-        filter: binary_op_col_gt(1, ScalarValue::Int32(10)),
+        filter: filter(1, ScalarValue::Int32(10)),
     }
     .to_operator();
 
@@ -638,7 +643,7 @@ fn test_inner_sort_satisfied_by_ordering_providing_operator() {
         .to_operator()
         .with_required(ordering(vec![1]))
         .into(),
-        filter: binary_op_col_gt(1, ScalarValue::Int32(10)),
+        filter: filter_with_selectivity(1, ScalarValue::Int32(10), 0.1),
     }
     .to_operator();
 
