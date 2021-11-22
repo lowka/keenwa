@@ -1,0 +1,36 @@
+name: Rust
+
+on:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build/Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [ amd64 ]
+        rust: [ stable ]
+    steps:
+    - uses: actions/checkout@v2
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      run: cargo test --verbose
+
+  lint_docs:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Add rust fmt
+        run: rustup component add rustfmt
+      # run rustdoc lints.
+      - name: Run docs
+        run: RUSTDOCFLAGS="-Dwarnings" cargo doc
+      # run linter
+      - name: rustfmt
+        run: cargo fmt --all -- --check
