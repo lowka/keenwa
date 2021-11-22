@@ -43,7 +43,7 @@ impl PhysicalProperties {
         }
     }
 
-    /// Returns this physical properties object in the form of an [`Option`](core:option:::Option).
+    /// Returns this physical properties object in the form of an [`Option`](std::option::Option).
     pub fn as_option(&self) -> Option<Option<&OrderingChoice>> {
         self.inner.as_ref().map(|_| self.ordering())
     }

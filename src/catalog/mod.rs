@@ -141,7 +141,7 @@ impl TableBuilder {
 
     /// Creates an instance of a [table] with previously specified properties.
     ///
-    /// [table]: crate::catalog::schema::Table
+    /// [table]: crate::catalog::Table
     pub fn build(self) -> Table {
         // assert!(!self.columns.is_empty(), "No columns has been specified");
         Table {
@@ -227,7 +227,7 @@ impl IndexBuilder {
 
     /// Creates an instance of an [index] with previously specified properties.
     ///
-    /// [index]: crate::catalog::schema::Index
+    /// [index]: crate::catalog::Index
     pub fn build(self) -> Index {
         assert!(!self.columns.is_empty(), "No columns have been specified");
 
