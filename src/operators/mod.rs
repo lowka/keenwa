@@ -2,7 +2,7 @@ use crate::memo::{
     CopyInExprs, CopyInNestedExprs, ExprContext, ExprNode, ExprNodeRef, MemoExpr, MemoExprCallback, MemoExprFormatter,
     MemoGroupRef, NewChildExprs,
 };
-use crate::operators::expr::{Expr, ExprRewriter, ExprVisitor};
+use crate::operators::expr::{Expr, ExprVisitor};
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;
 use crate::properties::logical::LogicalProperties;

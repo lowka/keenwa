@@ -142,8 +142,3 @@ fn ordering_is_preserved(ord: &OrderingChoice, other: Option<&OrderingChoice>) -
         None => false,
     }
 }
-
-fn operator_does_not_support_properties(expr: &PhysicalExpr, p: &PhysicalProperties) -> Result<bool, OptimizerError> {
-    let message = format!("Operator does not support physical properties. Operator: {:?}. Properties: {:?}", expr, p);
-    Err(OptimizerError::Internal(message))
-}

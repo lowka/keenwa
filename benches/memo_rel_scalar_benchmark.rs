@@ -3,7 +3,7 @@ use keenwa::memo::{
     CopyInExprs, CopyInNestedExprs, Expr, ExprContext, ExprNode, ExprNodeRef, Memo, MemoExpr, MemoExprFormatter,
     MemoGroupRef, NewChildExprs, Properties,
 };
-use keenwa::operators::RelNode;
+
 use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone)]
@@ -216,7 +216,7 @@ impl MemoExpr for TestOperator {
                 let expr = match expr {
                     TestRelExpr::Scan { src } => {
                         assert!(inputs.is_empty(), "expects no inputs");
-                        TestRelExpr::Scan { src: src.clone() }
+                        TestRelExpr::Scan { src }
                     }
                     TestRelExpr::Filter { .. } => {
                         assert_eq!(inputs.len(), 2, "expects 1 input");

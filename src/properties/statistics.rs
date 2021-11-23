@@ -83,7 +83,7 @@ impl StatisticsBuilder for CatalogStatisticsBuilder {
     fn build_statistics(
         &self,
         expr: &LogicalExpr,
-        statistics: Option<&Statistics>,
+        _statistics: Option<&Statistics>,
     ) -> Result<Option<Statistics>, OptimizerError> {
         let statistics = match expr {
             LogicalExpr::Projection { input, .. } => {
@@ -172,7 +172,7 @@ mod test {
                 args: vec![Expr::Column(1)],
                 filter: None,
             })],
-            group_exprs: groups.into_iter().map(|e| ScalarNode::from(e)).collect(),
+            group_exprs: groups.into_iter().map(ScalarNode::from).collect(),
         }
     }
 

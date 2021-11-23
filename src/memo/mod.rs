@@ -626,8 +626,8 @@ where
                     parent: None,
                     depth: self.depth + 1,
                 };
-                let (group, expr) = copy_in.execute(expr);
-                expr_ctx.children.push_back(ExprNode::Group(group.clone()));
+                let (group, _expr) = copy_in.execute(expr);
+                expr_ctx.children.push_back(ExprNode::Group(group));
             }
             ExprNodeRef::Group(group) => {
                 expr_ctx.children.push_back(ExprNode::Group(group.clone()));
@@ -667,7 +667,7 @@ where
             .collect();
 
         let ExprContext {
-            children: children,
+            children,
             props,
             parent,
         } = expr_ctx;
