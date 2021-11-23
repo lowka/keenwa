@@ -2,7 +2,7 @@ use crate::memo::{
     CopyInExprs, CopyInNestedExprs, ExprContext, ExprNode, ExprNodeRef, MemoExpr, MemoExprCallback, MemoExprFormatter,
     MemoGroupRef, NewChildExprs,
 };
-use crate::operators::expr::Expr;
+use crate::operators::expr::{Expr, ExprRewriter, ExprVisitor};
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;
 use crate::properties::logical::LogicalProperties;
@@ -405,9 +405,21 @@ impl OperatorCopyIn<'_, '_> {
     /// Traverses the given scalar expression and all of its nested relational expressions into a memo.
     /// See [`memo`][crate::memo::CopyInExprs::visit_expr_node] for details.
     pub fn copy_in_nested(&mut self, expr_ctx: &mut ExprContext<Operator>, expr: &Expr) {
+        struct CopyNestedRelExprs<'b, 'a, 'c> {
+            collector: &'b mut CopyInNestedExprs<'a, 'c, Operator>,
+        }
+        impl ExprVisitor for CopyNestedRelExprs<'_, '_, '_> {
+            fn post_visit(&mut self, expr: &Expr) {
+                if let Expr::SubQuery(rel_node) = expr {
+                    self.collector.visit_expr(rel_node.into())
+                }
+            }
+        }
+
         let nested_ctx = CopyInNestedExprs::new(self.visitor, expr_ctx);
         nested_ctx.execute(expr, |expr, collector: &mut CopyInNestedExprs<Operator>| {
-            expr.copy_in_nested(collector);
+            let mut visitor = CopyNestedRelExprs { collector };
+            expr.accept(&mut visitor)
         });
     }
 
