@@ -21,7 +21,7 @@ jobs:
     - name: Run tests
       run: cargo test --verbose
 
-  lint_docs:
+  lint:
     name: Lint
     runs-on: ubuntu-latest
     steps:
@@ -30,7 +30,7 @@ jobs:
         run: rustup component add rustfmt
       # run rustdoc lints.
       - name: Run docs
-        run: RUSTDOCFLAGS="-Dwarnings" cargo doc
-      # run linter
+        run: RUSTDOCFLAGS="-Dwarnings" cargo doc --no-deps
+      # run rust lints.
       - name: rustfmt
         run: cargo fmt --all -- --check
