@@ -1,4 +1,4 @@
-use crate::memo::{CopyInNestedExprs, MemoExprFormatter};
+use crate::memo::MemoExprFormatter;
 use crate::meta::ColumnId;
 use crate::operators::scalar::ScalarValue;
 use crate::operators::{Operator, OperatorInputs, RelNode};
@@ -135,10 +135,7 @@ fn rewrite_option<T>(expr: Option<Expr>, rewriter: &mut T) -> Option<Expr>
 where
     T: ExprRewriter,
 {
-    match expr {
-        None => None,
-        Some(expr) => Some(expr.rewrite(rewriter)),
-    }
+    expr.map(|expr| expr.rewrite(rewriter))
 }
 
 fn rewrite_vec<T>(exprs: Vec<Expr>, rewriter: &mut T) -> Vec<Expr>
@@ -152,10 +149,7 @@ fn rewrite_boxed_option<T>(expr: Option<Box<Expr>>, rewriter: &mut T) -> Option<
 where
     T: ExprRewriter,
 {
-    match expr {
-        None => None,
-        Some(expr) => Some(rewrite_boxed(expr, rewriter)),
-    }
+    expr.map(|expr| rewrite_boxed(expr, rewriter))
 }
 
 /// Binary operators.
@@ -365,7 +359,6 @@ mod test {
         let actual: Vec<String> = visitor
             .exprs
             .into_iter()
-            .map(|s| s.to_string())
             .map(|s| s.split(" ptr 0x").take(1).collect::<String>())
             .collect();
 
@@ -378,6 +371,6 @@ mod test {
         T: ExprRewriter,
     {
         let rewritten_expr = expr.rewrite(&mut rewriter);
-        assert_eq!(format!("{}", rewritten_expr), format!("{}", result), "rewritten expression does not match");
+        assert_eq!(format!("{}", rewritten_expr), result.to_string(), "rewritten expression does not match");
     }
 }

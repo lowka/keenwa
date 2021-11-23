@@ -87,7 +87,7 @@ impl PropertiesProvider for LogicalPropertiesBuilder {
                 }
             },
             OperatorExpr::Scalar(_) => {
-                let statistics = statistics.cloned().unwrap_or(Statistics::default());
+                let statistics = statistics.cloned().unwrap_or_default();
                 let props = LogicalProperties::new(Vec::new(), Some(statistics));
                 Ok(props)
             }
