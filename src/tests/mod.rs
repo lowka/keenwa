@@ -826,3 +826,53 @@ fn test_enforce_grouping() {
 "#,
     );
 }
+
+#[test]
+fn test_union() {
+    fn union_op(all: bool) -> Operator {
+        let left = LogicalExpr::Get {
+            source: "A".into(),
+            columns: vec![1, 2],
+        };
+        let right = LogicalExpr::Get {
+            source: "B".into(),
+            columns: vec![3, 4],
+        };
+        let union = LogicalExpr::Union {
+            left: left.into(),
+            right: right.into(),
+            all,
+        };
+        Operator::from(OperatorExpr::from(union))
+    }
+
+    let mut tester = OptimizerTester::new();
+
+    tester.set_table_access_cost("A", 100);
+    tester.set_table_access_cost("B", 100);
+
+    tester.add_rules(|_| vec![Box::new(UnionRule)]);
+
+    let union = union_op(false);
+
+    tester.optimize(
+        union,
+        r#"query: union all=false -> unique
+02 Unique [ord:[1, 2]=00 ord:[3, 4]=01]
+01 Sort [01] ord=[3, 4]
+01 Scan B cols=[3, 4]
+00 Sort [00] ord=[1, 2]
+00 Scan A cols=[1, 2]
+"#,
+    );
+
+    let union = union_op(true);
+    tester.optimize(
+        union,
+        r#"query: union all=true -> append
+02 Append [00 01]
+01 Scan B cols=[3, 4]
+00 Scan A cols=[1, 2]
+"#,
+    );
+}

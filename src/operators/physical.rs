@@ -46,6 +46,22 @@ pub enum PhysicalExpr {
         input: RelNode,
         ordering: OrderingChoice,
     },
+    Append {
+        left: RelNode,
+        right: RelNode,
+    },
+    Unique {
+        left: RelNode,
+        right: RelNode,
+    },
+    HashedSetOp {
+        left: RelNode,
+        right: RelNode,
+        /// Whether this is an INTERSECT or EXCEPT operator.
+        intersect: bool,
+        /// If `true` this an INTERSECT ALL/EXCEPT ALL operator.
+        all: bool,
+    },
 }
 
 impl PhysicalExpr {
@@ -83,6 +99,18 @@ impl PhysicalExpr {
             PhysicalExpr::IndexScan { .. } => {}
             PhysicalExpr::Sort { input, .. } => {
                 visitor.visit_rel(expr_ctx, input);
+            }
+            PhysicalExpr::Unique { left, right, .. } => {
+                visitor.visit_rel(expr_ctx, left);
+                visitor.visit_rel(expr_ctx, right);
+            }
+            PhysicalExpr::Append { left, right } => {
+                visitor.visit_rel(expr_ctx, left);
+                visitor.visit_rel(expr_ctx, right);
+            }
+            PhysicalExpr::HashedSetOp { left, right, .. } => {
+                visitor.visit_rel(expr_ctx, left);
+                visitor.visit_rel(expr_ctx, right);
             }
         }
     }
@@ -153,6 +181,29 @@ impl PhysicalExpr {
                     ordering: ordering.clone(),
                 }
             }
+            PhysicalExpr::Unique { .. } => {
+                inputs.expect_len(2, "Unique");
+                PhysicalExpr::Unique {
+                    left: inputs.rel_node(),
+                    right: inputs.rel_node(),
+                }
+            }
+            PhysicalExpr::Append { .. } => {
+                inputs.expect_len(2, "Append");
+                PhysicalExpr::Append {
+                    left: inputs.rel_node(),
+                    right: inputs.rel_node(),
+                }
+            }
+            PhysicalExpr::HashedSetOp { intersect, all, .. } => {
+                inputs.expect_len(2, "SortedSetOp");
+                PhysicalExpr::HashedSetOp {
+                    left: inputs.rel_node(),
+                    intersect: *intersect,
+                    right: inputs.rel_node(),
+                    all: *all,
+                }
+            }
         }
     }
 
@@ -175,6 +226,16 @@ impl PhysicalExpr {
             PhysicalExpr::IndexScan { .. } => None,
             PhysicalExpr::Sort { .. } => None,
             PhysicalExpr::HashAggregate { .. } => None,
+            PhysicalExpr::Unique { left, right, .. } | PhysicalExpr::HashedSetOp { left, right, .. } => {
+                let left = left.props().logical().output_columns().iter().copied().collect();
+                let right = right.props().logical().output_columns().iter().copied().collect();
+                let left_ordering = PhysicalProperties::new(OrderingChoice::new(left));
+                let right_ordering = PhysicalProperties::new(OrderingChoice::new(right));
+
+                let requirements = vec![left_ordering, right_ordering];
+                Some(requirements)
+            }
+            PhysicalExpr::Append { .. } => None,
         }
     }
 
@@ -237,6 +298,28 @@ impl PhysicalExpr {
                 for group_expr in group_exprs {
                     f.write_expr("", group_expr);
                 }
+            }
+            PhysicalExpr::Unique { left, right } => {
+                f.write_name("Unique");
+                f.write_expr("left", left);
+                f.write_expr("right", right);
+            }
+            PhysicalExpr::Append { left, right } => {
+                f.write_name("Append");
+                f.write_expr("left", left);
+                f.write_expr("right", right);
+            }
+            PhysicalExpr::HashedSetOp {
+                left,
+                right,
+                intersect,
+                all,
+            } => {
+                f.write_name("HashedSetOp");
+                f.write_expr("left", left);
+                f.write_expr("right", right);
+                f.write_value("intersect", intersect);
+                f.write_value("all", all);
             }
         }
     }
