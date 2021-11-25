@@ -120,6 +120,16 @@ impl LogicalPropertiesBuilder {
             }
             LogicalExpr::Join { left, right, condition } => collect_columns_from_join_condition(left, right, condition),
             LogicalExpr::Get { columns, .. } => columns.clone(),
+            LogicalExpr::Union { left, right, .. }
+            | LogicalExpr::Intersect { left, right, .. }
+            | LogicalExpr::Except { left, right, .. } => {
+                let left_columns = collect_columns_from_input(left, &[]);
+                let right_columns = collect_columns_from_input(right, &[]);
+
+                assert_eq!(left_columns.len(), right_columns.len(), "each side must have the same number of columns");
+                // FIXME: operators should use output columns from logical properties.
+                left_columns
+            }
         };
         LogicalProperties::new(columns, statistics)
     }
@@ -155,6 +165,14 @@ impl LogicalPropertiesBuilder {
             PhysicalExpr::Sort { input, ordering } => {
                 let required = ordering.columns();
                 collect_columns_from_input(input, required);
+            }
+            PhysicalExpr::Append { left, right }
+            | PhysicalExpr::Unique { left, right }
+            | PhysicalExpr::HashedSetOp { left, right, .. } => {
+                let left_columns = collect_columns_from_input(left, &[]);
+                let right_columns = collect_columns_from_input(right, &[]);
+
+                assert_eq!(left_columns.len(), right_columns.len(), "the number of columns does not match");
             }
         };
         //FIXME:

@@ -70,6 +70,49 @@ impl CostEstimator for SimpleCostEstimator {
 
                 (row_count.ln() * row_count) as usize
             }
+            PhysicalExpr::Unique { .. } => {
+                // Inputs are sorted
+                let left_stats = ctx.child_statistics(0).unwrap();
+                let right_stats = ctx.child_statistics(1).unwrap();
+
+                (left_stats.row_count() + right_stats.row_count()) as usize
+            }
+            PhysicalExpr::Append { .. } => {
+                let left_stats = ctx.child_statistics(0).unwrap();
+                let right_stats = ctx.child_statistics(1).unwrap();
+
+                (left_stats.row_count() + right_stats.row_count()) as usize
+            }
+            PhysicalExpr::HashedSetOp { intersect, all, .. } => {
+                let left_stats = ctx.child_statistics(0).unwrap();
+                let right_stats = ctx.child_statistics(1).unwrap();
+
+                let (rows, hashtable_cost) = if *intersect {
+                    // For INTERSECT a hash table is built from the left input
+                    let hashtable_cost = left_stats.row_count();
+                    let hashtable_access_cost = hashtable_cost * 0.01;
+                    let right_rows = right_stats.row_count();
+
+                    (right_rows, hashtable_access_cost)
+                } else {
+                    // For EXCEPT a hash table is built from the right input
+                    let hashtable_cost = right_stats.row_count();
+                    let hashtable_access_cost = hashtable_cost * 0.01;
+                    let left_rows = left_stats.row_count();
+
+                    (left_rows, hashtable_access_cost)
+                };
+
+                let deduplication_cost = if !*all {
+                    // For both INTERSECT and EXCEPT operators an operator requires a hashtable
+                    // with at most number_of_rows(left_side) records.
+                    left_stats.row_count()
+                } else {
+                    0.0
+                };
+
+                (rows + hashtable_cost + deduplication_cost) as usize
+            }
         }
     }
 }

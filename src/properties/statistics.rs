@@ -129,6 +129,19 @@ impl StatisticsBuilder for CatalogStatisticsBuilder {
                 };
                 Statistics::new(row_count as f64, 1.0)
             }
+            LogicalExpr::Union { left, right, all, .. }
+            | LogicalExpr::Intersect { left, right, all, .. }
+            | LogicalExpr::Except { left, right, all, .. } => {
+                let left_statistics = left.props().logical().statistics().unwrap();
+                let right_statistics = right.props().logical().statistics().unwrap();
+                let row_count = left_statistics.row_count() + right_statistics.row_count();
+                if *all {
+                    Statistics::from_row_count(row_count)
+                } else {
+                    //FIXME: The result of union operation includes only non-duplicate rows.
+                    Statistics::from_row_count(row_count)
+                }
+            }
         };
         Ok(Some(statistics))
     }
@@ -141,24 +154,11 @@ mod test {
     use crate::datatypes::DataType;
     use crate::operators::expr::{AggregateFunction, Expr};
     use crate::operators::logical::LogicalExpr;
-    use crate::operators::ScalarNode;
+    use crate::operators::{Operator, OperatorExpr, Properties, ScalarNode};
+    use crate::properties::logical::LogicalProperties;
+    use crate::properties::physical::PhysicalProperties;
     use crate::properties::statistics::{CatalogStatisticsBuilder, Statistics, StatisticsBuilder};
     use std::sync::Arc;
-
-    fn new_statistics_builder(tables: Vec<(&str, usize)>) -> impl StatisticsBuilder {
-        let catalog = MutableCatalog::new();
-
-        for (name, _row_count) in tables {
-            let table = TableBuilder::new(name)
-                .add_column(format!("{}1", name).as_str(), DataType::Int32)
-                .add_column(format!("{}2", name).as_str(), DataType::Int32)
-                .build();
-
-            catalog.add_table("s", table);
-        }
-
-        CatalogStatisticsBuilder::new(Arc::new(catalog))
-    }
 
     fn new_aggregate(groups: Vec<Expr>) -> LogicalExpr {
         LogicalExpr::Aggregate {
@@ -178,35 +178,115 @@ mod test {
 
     #[test]
     fn test_aggregate_statistics_no_groups() {
-        let statistics_builder = new_statistics_builder(vec![("A", 0)]);
+        let tester = StatisticsTester::new(Vec::<(String, usize)>::new());
 
         let aggr = new_aggregate(vec![]);
-        let stats = compute_statistics(&statistics_builder, &aggr, None);
-        expect_statistics(&stats, 1.0, 1.0);
+
+        tester.expect_statistics(&aggr, None, Some(Statistics::new(1.0, 1.0)));
     }
 
     #[test]
     fn test_aggregate_statistics_multiple_groups() {
-        let statistics_builder = new_statistics_builder(vec![("A", 0)]);
-
+        let tester = StatisticsTester::new(Vec::<(String, usize)>::new());
         let aggr = new_aggregate(vec![Expr::Column(1), Expr::Column(2)]);
-        let stats = compute_statistics(&statistics_builder, &aggr, None);
-        expect_statistics(&stats, 2.0, 1.0);
+
+        tester.expect_statistics(&aggr, None, Some(Statistics::new(2.0, 1.0)));
     }
 
-    fn compute_statistics(
-        statistics_builder: &impl StatisticsBuilder,
-        expr: &LogicalExpr,
-        statistics: Option<Statistics>,
-    ) -> Statistics {
-        let statistics = statistics_builder
-            .build_statistics(expr, statistics.as_ref())
-            .expect("Failed to build logical properties");
-        statistics.expect("No statistics")
+    #[test]
+    fn test_union_statistics() {
+        let tester = StatisticsTester::new(vec![("A", 10), ("B", 5)]);
+        let left = tester.new_operator("A", OperatorStatistics::FromTable("A"));
+        let right = tester.new_operator("A", OperatorStatistics::FromTable("B"));
+
+        let union = LogicalExpr::Union {
+            left: left.into(),
+            right: right.into(),
+            all: false,
+        };
+
+        tester.expect_statistics(&union, None, Some(Statistics::from_row_count(15.0)))
     }
 
-    fn expect_statistics(statistics: &Statistics, row_count: f64, selectivity: f64) {
-        assert_eq!(statistics.row_count(), row_count, "row_count");
-        assert_eq!(statistics.selectivity(), selectivity, "selectivity");
+    enum OperatorStatistics {
+        Provided(Statistics),
+        FromTable(&'static str),
+    }
+
+    struct StatisticsTester {
+        statistics_builder: CatalogStatisticsBuilder,
+    }
+
+    impl StatisticsTester {
+        fn new(table_statistics: Vec<(impl Into<String>, usize)>) -> Self {
+            let catalog = MutableCatalog::new();
+
+            for (name, row_count) in table_statistics {
+                let name = name.into();
+                let table = TableBuilder::new(name.as_str())
+                    .add_column(format!("{}1", name).as_str(), DataType::Int32)
+                    .add_column(format!("{}2", name).as_str(), DataType::Int32)
+                    .add_row_count(row_count)
+                    .build();
+
+                catalog.add_table(crate::catalog::DEFAULT_SCHEMA, table);
+            }
+
+            StatisticsTester {
+                statistics_builder: CatalogStatisticsBuilder::new(Arc::new(catalog)),
+            }
+        }
+
+        fn new_operator(&self, table: &str, statistics: OperatorStatistics) -> Operator {
+            let statistics = match statistics {
+                OperatorStatistics::Provided(statistics) => statistics,
+                OperatorStatistics::FromTable(source) => {
+                    let table = self
+                        .statistics_builder
+                        .catalog
+                        .get_table(source)
+                        .expect(format!("No table {}", source).as_str());
+                    let stats = table.statistics().expect(format!("Table {} has no statistics", source).as_str());
+                    Statistics::from_row_count(stats.row_count().expect("No row count") as f64)
+                }
+            };
+
+            let expr = LogicalExpr::Get {
+                source: table.into(),
+                // Currently is not used when statistics is computed.
+                columns: vec![],
+            };
+
+            let logical = LogicalProperties::new(vec![], Some(statistics));
+            let properties = Properties::new(logical, PhysicalProperties::none());
+
+            Operator::new(OperatorExpr::from(expr), properties)
+        }
+
+        fn expect_statistics(
+            &self,
+            expr: &LogicalExpr,
+            expr_statistics: Option<Statistics>,
+            expected: Option<Statistics>,
+        ) {
+            let actual = self
+                .statistics_builder
+                .build_statistics(expr, expr_statistics.as_ref())
+                .expect("Failed to compute statistics");
+            match expected {
+                None => assert!(actual.is_none(), "Expected no statistics but got: {:?}. Operator: {:?}", actual, expr),
+                Some(expected) => {
+                    assert!(
+                        actual.is_some(),
+                        "Expected statistics no has been computed. Expected: {:?}, Operator: {:?}",
+                        expected,
+                        expr
+                    );
+                    let actual = actual.unwrap();
+                    assert_eq!(actual.row_count(), expected.row_count(), "row count");
+                    assert_eq!(actual.selectivity(), expected.selectivity(), "selectivity");
+                }
+            }
+        }
     }
 }

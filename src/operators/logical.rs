@@ -30,6 +30,21 @@ pub enum LogicalExpr {
         source: String,
         columns: Vec<ColumnId>,
     },
+    Union {
+        left: RelNode,
+        right: RelNode,
+        all: bool,
+    },
+    Intersect {
+        left: RelNode,
+        right: RelNode,
+        all: bool,
+    },
+    Except {
+        left: RelNode,
+        right: RelNode,
+        all: bool,
+    },
 }
 
 impl LogicalExpr {
@@ -59,6 +74,18 @@ impl LogicalExpr {
                 for group_expr in group_exprs {
                     visitor.visit_scalar(expr_ctx, group_expr);
                 }
+            }
+            LogicalExpr::Union { left, right, .. } => {
+                visitor.visit_rel(expr_ctx, left);
+                visitor.visit_rel(expr_ctx, right);
+            }
+            LogicalExpr::Intersect { left, right, .. } => {
+                visitor.visit_rel(expr_ctx, left);
+                visitor.visit_rel(expr_ctx, right);
+            }
+            LogicalExpr::Except { left, right, .. } => {
+                visitor.visit_rel(expr_ctx, left);
+                visitor.visit_rel(expr_ctx, right);
             }
         }
     }
@@ -107,6 +134,30 @@ impl LogicalExpr {
                     group_exprs: inputs.scalar_nodes(group_exprs.len()),
                 }
             }
+            LogicalExpr::Union { all, .. } => {
+                inputs.expect_len(2, "LogicalUnion");
+                LogicalExpr::Union {
+                    left: inputs.rel_node(),
+                    right: inputs.rel_node(),
+                    all: *all,
+                }
+            }
+            LogicalExpr::Intersect { all, .. } => {
+                inputs.expect_len(2, "LogicalIntersect");
+                LogicalExpr::Intersect {
+                    left: inputs.rel_node(),
+                    right: inputs.rel_node(),
+                    all: *all,
+                }
+            }
+            LogicalExpr::Except { all, .. } => {
+                inputs.expect_len(2, "LogicalExcept");
+                LogicalExpr::Except {
+                    left: inputs.rel_node(),
+                    right: inputs.rel_node(),
+                    all: *all,
+                }
+            }
         }
     }
 
@@ -151,6 +202,24 @@ impl LogicalExpr {
                 for group_expr in group_exprs {
                     f.write_expr("", group_expr);
                 }
+            }
+            LogicalExpr::Union { left, right, all } => {
+                f.write_name("LogicalUnion");
+                f.write_expr("left", left);
+                f.write_expr("right", right);
+                f.write_value("all", all);
+            }
+            LogicalExpr::Intersect { left, right, all } => {
+                f.write_name("LogicalIntersect");
+                f.write_expr("left", left);
+                f.write_expr("right", right);
+                f.write_value("all", all);
+            }
+            LogicalExpr::Except { left, right, all } => {
+                f.write_name("LogicalIntersect");
+                f.write_expr("left", left);
+                f.write_expr("right", right);
+                f.write_value("all", all);
             }
         }
     }
