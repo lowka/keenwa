@@ -198,8 +198,10 @@ fn collect_columns_from_input(input: &RelNode, used: &[ColumnId]) -> Vec<ColumnI
 fn collect_columns_from_join_condition(left: &RelNode, right: &RelNode, condition: &JoinCondition) -> Vec<ColumnId> {
     match condition {
         JoinCondition::Using(using) => {
-            let mut left_columns = collect_columns_from_input(left, using.left_columns());
-            let right_columns = collect_columns_from_input(right, using.right_columns());
+            let (left_side, right_side): (Vec<ColumnId>, Vec<ColumnId>) = using.get_columns_pair();
+            let mut left_columns = collect_columns_from_input(left, &left_side);
+            let right_columns = collect_columns_from_input(right, &right_side);
+
             left_columns.extend(right_columns.into_iter());
             left_columns
         }

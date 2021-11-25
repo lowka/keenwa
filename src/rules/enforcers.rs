@@ -79,7 +79,7 @@ pub fn expr_retains_property(expr: &PhysicalExpr, required: &PhysicalProperties)
         (PhysicalExpr::Select { .. }, Some(_)) => true,
         (PhysicalExpr::MergeSortJoin { condition, .. }, Some(ordering)) => {
             let (left, right) = match condition {
-                JoinCondition::Using(using) => using.as_columns_pair(),
+                JoinCondition::Using(using) => using.get_columns_pair(),
             };
             let left_ordering = OrderingChoice::new(left);
             let right_ordering = OrderingChoice::new(right);
@@ -108,7 +108,7 @@ pub fn expr_provides_property(expr: &PhysicalExpr, required: &PhysicalProperties
         (_, None) => true,
         (PhysicalExpr::MergeSortJoin { condition, .. }, Some(ordering)) => {
             let (left, right) = match condition {
-                JoinCondition::Using(using) => using.as_columns_pair(),
+                JoinCondition::Using(using) => using.get_columns_pair(),
             };
             let left_ordering = OrderingChoice::new(left);
             let right_ordering = OrderingChoice::new(right);

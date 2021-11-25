@@ -214,7 +214,7 @@ impl PhysicalExpr {
             PhysicalExpr::HashJoin { .. } => None,
             PhysicalExpr::MergeSortJoin { condition, .. } => {
                 let (left, right) = match condition {
-                    JoinCondition::Using(using) => using.as_columns_pair(),
+                    JoinCondition::Using(using) => using.get_columns_pair(),
                 };
                 let left_ordering = PhysicalProperties::new(OrderingChoice::new(left));
                 let right_ordering = PhysicalProperties::new(OrderingChoice::new(right));
