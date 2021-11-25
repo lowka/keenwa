@@ -27,7 +27,7 @@ impl Rule for JoinCommutativityRule {
         match expr {
             LogicalExpr::Join { left, right, condition } => {
                 let (left_columns, right_columns) = match condition {
-                    JoinCondition::Using(using) => using.as_columns_pair(),
+                    JoinCondition::Using(using) => using.get_columns_pair(),
                 };
 
                 let expr = LogicalExpr::Join {
@@ -74,7 +74,7 @@ impl Rule for JoinAssociativityRule {
                 condition: top_condition,
             } => {
                 let (top_left_columns, top_right_columns) = match top_condition {
-                    JoinCondition::Using(using) => using.as_columns_pair(),
+                    JoinCondition::Using(using) => using.get_columns_pair(),
                 };
 
                 match (top_left.expr().as_logical(), top_right.expr().as_logical()) {
@@ -88,7 +88,7 @@ impl Rule for JoinAssociativityRule {
                         _,
                     ) => {
                         let (inner_left_columns, inner_right_columns) = match inner_condition {
-                            JoinCondition::Using(using) => using.as_columns_pair(),
+                            JoinCondition::Using(using) => using.get_columns_pair(),
                         };
 
                         let expr = LogicalExpr::Join {
@@ -121,7 +121,7 @@ impl Rule for JoinAssociativityRule {
                         },
                     ) => {
                         let (inner_left_columns, inner_right_columns) = match inner_condition {
-                            JoinCondition::Using(using) => using.as_columns_pair(),
+                            JoinCondition::Using(using) => using.get_columns_pair(),
                         };
                         let expr = LogicalExpr::Join {
                             left: LogicalExpr::Join {
