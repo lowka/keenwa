@@ -1054,6 +1054,7 @@ impl<'f, 'a> MemoExprFormatter for DisplayMemoExprFormatter<'f, 'a> {
         T: MemoExpr + 'e,
     {
         let s = format_node_ref(input.into());
+        self.fmt.write_char(' ').unwrap();
         self.fmt.write_str(s.as_str()).unwrap();
     }
 
