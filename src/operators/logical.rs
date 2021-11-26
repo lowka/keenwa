@@ -182,6 +182,7 @@ impl LogicalExpr {
                 f.write_expr("right", right);
                 match condition {
                     JoinCondition::Using(using) => f.write_value("using", using),
+                    JoinCondition::On(on) => f.write_value("on", on),
                 }
             }
             LogicalExpr::Get { source, columns } => {

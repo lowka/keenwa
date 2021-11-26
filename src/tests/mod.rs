@@ -876,3 +876,46 @@ fn test_union() {
 "#,
     );
 }
+
+#[test]
+fn test_nested_loop_join() {
+    let query = LogicalExpr::Projection {
+        input: LogicalExpr::Join {
+            left: LogicalExpr::Get {
+                source: "A".into(),
+                columns: vec![1, 2],
+            }
+            .into(),
+            right: LogicalExpr::Get {
+                source: "B".into(),
+                columns: vec![3, 4],
+            }
+            .into(),
+            condition: JoinCondition::On(JoinOn::new(Expr::BinaryExpr {
+                lhs: Box::new(Expr::Column(1)),
+                op: BinaryOp::Gt,
+                rhs: Box::new(Expr::Scalar(ScalarValue::Int32(100))),
+            })),
+        }
+        .into(),
+        columns: vec![1, 2, 3],
+    }
+    .to_operator();
+
+    let mut tester = OptimizerTester::new();
+
+    tester.add_rules(|_| vec![Box::new(NestedLoopJoin)]);
+
+    tester.set_table_access_cost("A", 100);
+    tester.set_table_access_cost("B", 120);
+
+    tester.optimize(
+        query,
+        r#"
+03 Projection [02] cols=[1, 2, 3]
+02 NestedLoopJoin [00 01] on=col:1 > 100
+01 Scan B cols=[3, 4]
+00 Scan A cols=[1, 2]
+"#,
+    );
+}

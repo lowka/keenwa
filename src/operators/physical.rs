@@ -1,6 +1,6 @@
 use crate::memo::{ExprContext, MemoExprFormatter};
 use crate::meta::ColumnId;
-use crate::operators::join::JoinCondition;
+use crate::operators::join::{get_join_columns_pair, JoinCondition};
 use crate::operators::{Operator, OperatorCopyIn, OperatorInputs, RelNode, ScalarNode};
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::OrderingChoice;
@@ -30,6 +30,11 @@ pub enum PhysicalExpr {
         condition: JoinCondition,
     },
     MergeSortJoin {
+        left: RelNode,
+        right: RelNode,
+        condition: JoinCondition,
+    },
+    NestedLoopJoin {
         left: RelNode,
         right: RelNode,
         condition: JoinCondition,
@@ -92,6 +97,10 @@ impl PhysicalExpr {
                 visitor.visit_rel(expr_ctx, right);
             }
             PhysicalExpr::MergeSortJoin { left, right, .. } => {
+                visitor.visit_rel(expr_ctx, left);
+                visitor.visit_rel(expr_ctx, right);
+            }
+            PhysicalExpr::NestedLoopJoin { left, right, .. } => {
                 visitor.visit_rel(expr_ctx, left);
                 visitor.visit_rel(expr_ctx, right);
             }
@@ -160,6 +169,14 @@ impl PhysicalExpr {
                     condition: condition.clone(),
                 }
             }
+            PhysicalExpr::NestedLoopJoin { condition, .. } => {
+                inputs.expect_len(2, "NestedLoopJoin");
+                PhysicalExpr::NestedLoopJoin {
+                    left: inputs.rel_node(),
+                    right: inputs.rel_node(),
+                    condition: condition.clone(),
+                }
+            }
             PhysicalExpr::Scan { source, columns } => {
                 inputs.expect_len(0, "Scan");
                 PhysicalExpr::Scan {
@@ -212,16 +229,19 @@ impl PhysicalExpr {
             PhysicalExpr::Projection { .. } => None,
             PhysicalExpr::Select { .. } => None,
             PhysicalExpr::HashJoin { .. } => None,
-            PhysicalExpr::MergeSortJoin { condition, .. } => {
-                let (left, right) = match condition {
-                    JoinCondition::Using(using) => using.get_columns_pair(),
-                };
-                let left_ordering = PhysicalProperties::new(OrderingChoice::new(left));
-                let right_ordering = PhysicalProperties::new(OrderingChoice::new(right));
+            PhysicalExpr::MergeSortJoin {
+                left, right, condition, ..
+            } => match get_join_columns_pair(left, right, condition) {
+                Some((left, right)) if !left.is_empty() && !right.is_empty() => {
+                    let left_ordering = PhysicalProperties::new(OrderingChoice::new(left));
+                    let right_ordering = PhysicalProperties::new(OrderingChoice::new(right));
 
-                let requirements = vec![left_ordering, right_ordering];
-                Some(requirements)
-            }
+                    let requirements = vec![left_ordering, right_ordering];
+                    Some(requirements)
+                }
+                _ => None,
+            },
+            PhysicalExpr::NestedLoopJoin { .. } => None,
             PhysicalExpr::Scan { .. } => None,
             PhysicalExpr::IndexScan { .. } => None,
             PhysicalExpr::Sort { .. } => None,
@@ -259,7 +279,8 @@ impl PhysicalExpr {
                 f.write_expr("left", left);
                 f.write_expr("right", right);
                 match condition {
-                    JoinCondition::Using(using) => f.write_value("using", format!("{}", using).as_str()),
+                    JoinCondition::Using(using) => f.write_value("using", using),
+                    JoinCondition::On(on) => f.write_value("on", on),
                 };
             }
             PhysicalExpr::MergeSortJoin { left, right, condition } => {
@@ -267,7 +288,17 @@ impl PhysicalExpr {
                 f.write_expr("left", left);
                 f.write_expr("right", right);
                 match condition {
-                    JoinCondition::Using(using) => f.write_value("using", format!("{}", using).as_str()),
+                    JoinCondition::Using(using) => f.write_value("using", using),
+                    JoinCondition::On(on) => f.write_value("on", on),
+                }
+            }
+            PhysicalExpr::NestedLoopJoin { left, right, condition } => {
+                f.write_name("NestedLoopJoin");
+                f.write_expr("left", left);
+                f.write_expr("right", right);
+                match condition {
+                    JoinCondition::Using(using) => f.write_value("using", using),
+                    JoinCondition::On(on) => f.write_value("on", on),
                 }
             }
             PhysicalExpr::Scan { source, columns } => {

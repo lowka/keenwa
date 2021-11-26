@@ -1,6 +1,7 @@
 use crate::catalog::{CatalogRef, IndexRef};
 use crate::error::OptimizerError;
 use crate::meta::ColumnId;
+use crate::operators::join::get_non_empty_join_columns_pair;
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;
 use crate::rules::{Rule, RuleContext, RuleMatch, RuleResult, RuleType};
@@ -146,12 +147,16 @@ impl Rule for HashJoinRule {
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
             LogicalExpr::Join { left, right, condition } => {
-                let expr = PhysicalExpr::HashJoin {
-                    left: left.clone(),
-                    right: right.clone(),
-                    condition: condition.clone(),
-                };
-                Ok(Some(RuleResult::Implementation(expr)))
+                if get_non_empty_join_columns_pair(left, right, condition).is_some() {
+                    let expr = PhysicalExpr::HashJoin {
+                        left: left.clone(),
+                        right: right.clone(),
+                        condition: condition.clone(),
+                    };
+                    Ok(Some(RuleResult::Implementation(expr)))
+                } else {
+                    Ok(None)
+                }
             }
             _ => Ok(None),
         }
@@ -181,14 +186,52 @@ impl Rule for MergeSortJoinRule {
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
             LogicalExpr::Join { left, right, condition } => {
-                let expr = PhysicalExpr::MergeSortJoin {
-                    left: left.clone(),
-                    right: right.clone(),
-                    condition: condition.clone(),
-                };
-                Ok(Some(RuleResult::Implementation(expr)))
+                if get_non_empty_join_columns_pair(left, right, condition).is_some() {
+                    let expr = PhysicalExpr::MergeSortJoin {
+                        left: left.clone(),
+                        right: right.clone(),
+                        condition: condition.clone(),
+                    };
+                    println!("MERGE SORT JOIN");
+                    Ok(Some(RuleResult::Implementation(expr)))
+                } else {
+                    Ok(None)
+                }
             }
             _ => Ok(None),
+        }
+    }
+}
+
+pub struct NestedLoopJoin;
+
+impl Rule for NestedLoopJoin {
+    fn name(&self) -> String {
+        "NestedLoopJoin".into()
+    }
+
+    fn rule_type(&self) -> RuleType {
+        RuleType::Implementation
+    }
+
+    fn matches(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Option<RuleMatch> {
+        if matches!(expr, LogicalExpr::Join { .. }) {
+            Some(RuleMatch::Expr)
+        } else {
+            None
+        }
+    }
+
+    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
+        if let LogicalExpr::Join { left, right, condition } = expr {
+            let expr = PhysicalExpr::NestedLoopJoin {
+                left: left.clone(),
+                right: right.clone(),
+                condition: condition.clone(),
+            };
+            Ok(Some(RuleResult::Implementation(expr)))
+        } else {
+            Ok(None)
         }
     }
 }
