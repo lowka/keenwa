@@ -40,6 +40,7 @@ fn test_get() {
         }
         .into(),
         columns: vec![1, 2],
+        exprs: vec![],
     }
     .to_operator();
 
@@ -74,6 +75,7 @@ fn test_join() {
         }
         .into(),
         columns: vec![1, 2, 3],
+        exprs: vec![],
     }
     .to_operator();
 

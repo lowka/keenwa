@@ -111,7 +111,11 @@ impl Rule for ProjectionRule {
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
-            LogicalExpr::Projection { input, columns } => {
+            LogicalExpr::Projection {
+                input,
+                columns,
+                exprs: _exprs,
+            } => {
                 let expr = PhysicalExpr::Projection {
                     input: input.clone(),
                     columns: columns.clone(),

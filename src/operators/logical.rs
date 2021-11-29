@@ -1,5 +1,6 @@
 use crate::memo::{ExprContext, MemoExprFormatter};
 use crate::meta::ColumnId;
+use crate::operators::expr::Expr;
 use crate::operators::join::JoinCondition;
 use crate::operators::{Operator, OperatorExpr};
 use crate::operators::{OperatorCopyIn, OperatorInputs, RelExpr, RelNode, ScalarNode};
@@ -10,6 +11,8 @@ use crate::operators::{OperatorCopyIn, OperatorInputs, RelExpr, RelNode, ScalarN
 pub enum LogicalExpr {
     Projection {
         input: RelNode,
+        // This list of expressions is converted into a list of columns.
+        exprs: Vec<Expr>,
         columns: Vec<ColumnId>,
     },
     Select {
@@ -92,11 +95,12 @@ impl LogicalExpr {
 
     pub fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
         match self {
-            LogicalExpr::Projection { columns, .. } => {
+            LogicalExpr::Projection { columns, exprs, .. } => {
                 inputs.expect_len(1, "LogicalProjection");
                 LogicalExpr::Projection {
                     input: inputs.rel_node(),
                     columns: columns.clone(),
+                    exprs: exprs.clone(),
                 }
             }
             LogicalExpr::Select { filter, .. } => {
@@ -166,10 +170,13 @@ impl LogicalExpr {
         F: MemoExprFormatter,
     {
         match self {
-            LogicalExpr::Projection { input, columns } => {
+            LogicalExpr::Projection {
+                input, columns, exprs, ..
+            } => {
                 f.write_name("LogicalProjection");
                 f.write_expr("input", input);
                 f.write_values("cols", columns);
+                f.write_values("exprs", exprs);
             }
             LogicalExpr::Select { input, filter } => {
                 f.write_name("LogicalSelect");

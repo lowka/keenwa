@@ -26,8 +26,8 @@ pub type ExprCallback = dyn MemoExprCallback<Expr = Operator, Props = Properties
 // TODO: Docs
 #[derive(Debug, Clone)]
 pub struct Operator {
-    expr: OperatorExpr,
-    properties: Properties,
+    pub(crate) expr: OperatorExpr,
+    pub(crate) properties: Properties,
 }
 
 impl Operator {

@@ -145,7 +145,7 @@ where
 ///    ...
 ///    Expr_n [expr_n-properties]
 /// ```
-fn format_expr(expr: &Operator) -> String {
+pub fn format_expr(expr: &Operator) -> String {
     let mut buf = String::new();
     let fmt = StringMemoFormatter::new(&mut buf);
     let mut fmt = FormatHeader { fmt };
