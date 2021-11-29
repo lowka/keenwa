@@ -1,3 +1,4 @@
+use crate::datatypes::DataType;
 use crate::memo::MemoExprFormatter;
 use crate::meta::ColumnId;
 use crate::operators::scalar::ScalarValue;
@@ -45,7 +46,7 @@ impl Expr {
                 for arg in args {
                     arg.accept(visitor);
                 }
-                filter.as_ref().map(|f| f.accept(visitor));
+                if let Some(f) = filter.as_ref() { f.accept(visitor) }
             }
             Expr::SubQuery(_) => {}
         }
@@ -163,6 +164,12 @@ pub enum BinaryOp {
     LtEq,
     Gt,
     GtEq,
+}
+
+impl BinaryOp {
+    pub fn return_type(&self) -> DataType {
+        DataType::Bool
+    }
 }
 
 impl Display for Expr {
