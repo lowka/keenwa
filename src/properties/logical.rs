@@ -102,7 +102,11 @@ impl LogicalPropertiesBuilder {
 
     fn build_for_logical(&self, expr: &LogicalExpr, statistics: Option<Statistics>) -> LogicalProperties {
         let columns = match expr {
-            LogicalExpr::Projection { input, columns } => collect_columns_from_input(input, columns),
+            LogicalExpr::Projection {
+                input,
+                columns,
+                exprs: _exprs,
+            } => collect_columns_from_input(input, columns),
             LogicalExpr::Select { input, .. } => {
                 let empty = Vec::with_capacity(0);
                 collect_columns_from_input(input, &empty)

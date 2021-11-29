@@ -76,6 +76,11 @@ where
         copy_in.execute(&expr)
     }
 
+    /// Returns `true` if this memo contains no expressions.
+    pub fn is_empty(&self) -> bool {
+        self.groups.is_empty()
+    }
+
     fn get_expr_ref(&self, expr_id: &ExprId) -> MemoExprRef<T> {
         assert!(self.exprs.get(expr_id.index()).is_some(), "expr id is invalid: {}", expr_id);
         MemoExprRef::new(*expr_id, self as *const Memo<T>)
