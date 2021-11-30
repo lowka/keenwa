@@ -1,14 +1,14 @@
 use crate::catalog::mutable::MutableCatalog;
-use crate::catalog::{Column, ColumnRef, TableBuilder};
+use crate::catalog::{Catalog, Column, ColumnRef, TableBuilder};
 use crate::datatypes::DataType;
 use crate::memo::Memo;
 use crate::meta::ColumnId;
 use crate::operators::expr::{AggregateFunction, Expr, ExprRewriter, ExprVisitor};
 use crate::operators::join::JoinCondition;
-use crate::operators::logical::LogicalExpr;
+use crate::operators::logical::{LogicalExpr, LogicalExprVisitor};
 use crate::operators::{Operator, OperatorExpr, Properties, RelExpr, RelNode, ScalarNode};
 use crate::properties::logical::LogicalProperties;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug)]
 struct ColumnMetadata {
@@ -20,46 +20,72 @@ struct MetadataBuilder<'a> {
     memo: &'a mut Memo<Operator>,
     catalog: MutableCatalog,
     metadata: HashMap<ColumnId, ColumnMetadata>,
+    table_column_ids: HashMap<(String, String), ColumnId>,
+    data: Vec<(String, Vec<(String, DataType)>)>,
 }
 
 impl<'a> MetadataBuilder<'a> {
     pub fn new(memo: &'a mut Memo<Operator>, data: Vec<(String, Vec<(String, DataType)>)>) -> Self {
         let mut metadata = HashMap::new();
-        let mut tables = HashMap::new();
-        let mut column_id_column = HashMap::new();
-        let mut max_id = 1;
-
-        for (table_name, columns) in data {
-            let mut table = TableBuilder::new(table_name.as_str());
-            for (name, tpe) in columns.iter() {
-                table = table.add_column(name, tpe.clone());
-                column_id_column.insert(max_id, (String::from(table_name.as_str()), String::from(name)));
-                max_id += 1;
-            }
-            let table = table.build();
-            tables.insert(table_name, table);
-        }
-
-        for (id, (table, column)) in column_id_column {
-            let table = tables.get(&table).expect("Table does not exist");
-            let column = table.get_column(&column).expect("Column does not exist");
-            let column_meta = ColumnMetadata { column, expr: None };
-            metadata.insert(id, column_meta);
-        }
-
-        let catalog = MutableCatalog::new();
-        for (_, table) in tables {
-            catalog.add_table(crate::catalog::DEFAULT_SCHEMA, table);
-        }
 
         MetadataBuilder {
             memo,
-            catalog,
+            catalog: MutableCatalog::new(),
             metadata,
+            table_column_ids: HashMap::new(),
+            data,
         }
     }
 
     pub fn build_metadata(&mut self, expr: Operator) -> Operator {
+        struct CollectTables {
+            tables: HashSet<String>,
+        }
+        impl LogicalExprVisitor for CollectTables {
+            fn post_visit(&mut self, expr: &LogicalExpr) {
+                if let LogicalExpr::Get { source, .. } = expr {
+                    self.tables.insert(source.into());
+                }
+            }
+        }
+
+        let mut collector = CollectTables { tables: HashSet::new() };
+        expr.expr().as_relational().as_logical().accept(&mut collector);
+        let queried_tables = collector.tables;
+
+        let mut tables = HashMap::new();
+        let mut next_col_id = 1;
+
+        for (table_name, columns) in self.data.clone() {
+            if !queried_tables.contains(&table_name) {
+                continue;
+            }
+
+            let mut column_id_column = HashMap::new();
+            let mut table = TableBuilder::new(table_name.as_str());
+
+            for (name, tpe) in columns.iter() {
+                table = table.add_column(name, tpe.clone());
+                column_id_column.insert(next_col_id, String::from(name));
+                self.table_column_ids.insert((table_name.clone(), name.into()), next_col_id);
+
+                next_col_id += 1;
+            }
+            let table = table.build();
+
+            for (id, column) in column_id_column {
+                let column = table.get_column(&column).expect("Column does not exist");
+                let column_meta = ColumnMetadata { column, expr: None };
+                self.metadata.insert(id, column_meta);
+            }
+
+            tables.insert(table_name, table);
+        }
+
+        for (_, table) in tables {
+            self.catalog.add_table(crate::catalog::DEFAULT_SCHEMA, table);
+        }
+
         let (expr, properties) = self.do_build_metadata(expr);
         Operator::new(expr, properties)
     }
@@ -90,7 +116,7 @@ impl<'a> MetadataBuilder<'a> {
                 LogicalExpr::Join { left, right, condition } => {
                     self.build_join_metadata(left, right, condition, properties)
                 }
-                LogicalExpr::Get { source, columns } => self.build_get_metadata(source, columns, properties),
+                LogicalExpr::Get { source, columns } => self.build_get_metadata(source, columns, vec![], properties),
                 LogicalExpr::Union { left, right, all } => {
                     self.build_set_op_metadata(left, right, SetOp::Union, all, properties)
                 }
@@ -109,17 +135,34 @@ impl<'a> MetadataBuilder<'a> {
         &mut self,
         source: String,
         columns: Vec<ColumnId>,
+        column_names: Vec<String>,
         properties: Properties,
     ) -> (OperatorExpr, Properties) {
-        for column_id in columns.iter() {
-            let column_meta = self.metadata.get(column_id).expect("Unknown column id");
-            let table_name = column_meta.column.table().expect("Get expression contains unexpected column");
-            assert_eq!(table_name, source.as_str(), "column source");
-        }
+        let expr = if column_names.is_empty() {
+            for column_id in columns.iter() {
+                let column_meta = self.metadata.get(column_id).expect("Unknown column id");
+                let table_name = column_meta.column.table().expect("Get expression contains unexpected column");
+                assert_eq!(table_name, source.as_str(), "column source");
+            }
 
-        let expr = LogicalExpr::Get {
-            source,
-            columns: columns.clone(),
+            LogicalExpr::Get {
+                source,
+                columns: columns.clone(),
+            }
+        } else {
+            let mut columns = Vec::new();
+            for column_name in column_names {
+                let table = self.catalog.get_table(source.as_str()).expect("Unknown table");
+                let _column = table.get_column(column_name.as_str()).expect("Unexpected column");
+                let column_id = self
+                    .table_column_ids
+                    .get(&(table.name().clone(), column_name))
+                    .expect("Column does not exists");
+
+                columns.push(*column_id);
+            }
+            todo!("add column names to LogicalExpr::Get");
+            LogicalExpr::Get { source, columns }
         };
 
         let statistics = properties.logical.statistics().cloned();
@@ -629,8 +672,6 @@ LogicalGet A cols=[1, 2]
 Metadata:
   col:1 A.a1 Int32
   col:2 A.a2 Int32
-  col:3 B.b1 Int32
-  col:4 B.b2 Int32
 "#,
         )
     }
@@ -691,8 +732,6 @@ LogicalSelect
 Metadata:
   col:1 A.a1 Int32
   col:2 A.a2 Int32
-  col:3 B.b1 Int32
-  col:4 B.b2 Int32
 "#,
         )
     }
@@ -749,15 +788,13 @@ Memo:
             vec![],
             vec![Expr::Column(1), Expr::Scalar(ScalarValue::Int32(10))],
             r#"
-LogicalProjection cols=[1, 5]
+LogicalProjection cols=[1, 3]
   input: LogicalGet A cols=[1, 2]
-  output cols: [1, 5]
+  output cols: [1, 3]
 Metadata:
   col:1 A.a1 Int32
   col:2 A.a2 Int32
-  col:3 B.b1 Int32
-  col:4 B.b2 Int32
-  col:5 ?column? Int32, expr: 10
+  col:3 ?column? Int32, expr: 10
 "#,
         )
     }
@@ -836,14 +873,12 @@ LogicalAggregate
   input: LogicalGet A cols=[1, 2]
   : Expr count(col:1)
   : Expr max(col:1)
-  output cols: [5, 6]
+  output cols: [3, 4]
 Metadata:
   col:1 A.a1 Int32
   col:2 A.a2 Int32
-  col:3 B.b1 Int32
-  col:4 B.b2 Int32
-  col:5 count Int32, expr: count(col:1)
-  col:6 max Int32, expr: max(col:1)
+  col:3 count Int32, expr: count(col:1)
+  col:4 max Int32, expr: max(col:1)
 "#,
         )
     }
@@ -873,13 +908,11 @@ LogicalAggregate
   input: LogicalGet A cols=[1, 2]
   : Expr count(col:1)
   : Expr col:1
-  output cols: [5]
+  output cols: [3]
 Metadata:
   col:1 A.a1 Int32
   col:2 A.a2 Int32
-  col:3 B.b1 Int32
-  col:4 B.b2 Int32
-  col:5 count Int32, expr: count(col:1)
+  col:3 count Int32, expr: count(col:1)
 "#,
         )
     }
@@ -893,8 +926,8 @@ Metadata:
             }
             .into(),
             right: LogicalExpr::Get {
-                source: "A".into(),
-                columns: vec![1, 2],
+                source: "B".into(),
+                columns: vec![3, 4],
             }
             .into(),
             all: false,
@@ -906,7 +939,7 @@ Metadata:
             r#"
 LogicalUnion all=false
   left: LogicalGet A cols=[1, 2]
-  right: LogicalGet A cols=[1, 2]
+  right: LogicalGet B cols=[3, 4]
   output cols: [5, 6]
 Metadata:
   col:1 A.a1 Int32
@@ -928,8 +961,8 @@ Metadata:
             }
             .into(),
             right: LogicalExpr::Get {
-                source: "A".into(),
-                columns: vec![1, 2],
+                source: "B".into(),
+                columns: vec![3, 4],
             }
             .into(),
             all: false,
@@ -941,7 +974,7 @@ Metadata:
             r#"
 LogicalIntersect all=false
   left: LogicalGet A cols=[1, 2]
-  right: LogicalGet A cols=[1, 2]
+  right: LogicalGet B cols=[3, 4]
   output cols: [5, 6]
 Metadata:
   col:1 A.a1 Int32
@@ -963,8 +996,8 @@ Metadata:
             }
             .into(),
             right: LogicalExpr::Get {
-                source: "A".into(),
-                columns: vec![1, 2],
+                source: "B".into(),
+                columns: vec![3, 4],
             }
             .into(),
             all: false,
@@ -976,7 +1009,7 @@ Metadata:
             r#"
 LogicalExcept all=false
   left: LogicalGet A cols=[1, 2]
-  right: LogicalGet A cols=[1, 2]
+  right: LogicalGet B cols=[3, 4]
   output cols: [5, 6]
 Metadata:
   col:1 A.a1 Int32
