@@ -245,8 +245,8 @@ mod test {
                         .statistics_builder
                         .catalog
                         .get_table(source)
-                        .expect(format!("No table {}", source).as_str());
-                    let stats = table.statistics().expect(format!("Table {} has no statistics", source).as_str());
+                        .unwrap_or_else(|| panic!("No table {}", source));
+                    let stats = table.statistics().unwrap_or_else(|| panic!("Table {} has no statistics", source));
                     Statistics::from_row_count(stats.row_count().expect("No row count") as f64)
                 }
             };

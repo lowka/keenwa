@@ -223,7 +223,7 @@ impl LogicalExpr {
                 f.write_value("all", all);
             }
             LogicalExpr::Except { left, right, all } => {
-                f.write_name("LogicalIntersect");
+                f.write_name("LogicalExcept");
                 f.write_expr("left", left);
                 f.write_expr("right", right);
                 f.write_value("all", all);
