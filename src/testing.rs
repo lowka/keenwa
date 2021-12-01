@@ -111,7 +111,7 @@ impl OptimizerTester {
     ///
     pub fn optimize(&self, operator: Operator, expected_plan: &str) {
         let tables = TestTables::new();
-        let columns = tables.columns2;
+        let columns = tables.columns;
 
         let catalog = Arc::new(MutableCatalog::new());
         let statistics_builder = CatalogStatisticsBuilder::new(catalog.clone());
@@ -167,64 +167,18 @@ impl OptimizerTester {
 }
 
 pub struct TestTables {
-    columns: HashMap<String, Vec<(String, DataType)>>,
-    columns2: Vec<(String, Vec<(String, DataType)>)>,
+    columns: Vec<(String, Vec<(String, DataType)>)>,
 }
 
 impl TestTables {
     pub fn new() -> Self {
         TestTables {
-            columns: HashMap::from([
-                ("A".into(), vec![("a1".into(), DataType::Int32), ("a2".into(), DataType::Int32)]),
-                ("B".into(), vec![("b1".into(), DataType::Int32), ("b2".into(), DataType::Int32)]),
-                ("C".into(), vec![("c1".into(), DataType::Int32), ("c2".into(), DataType::Int32)]),
-            ]),
-            columns2: vec![
+            columns: vec![
                 ("A".into(), vec![("a1".into(), DataType::Int32), ("a2".into(), DataType::Int32)]),
                 ("B".into(), vec![("b1".into(), DataType::Int32), ("b2".into(), DataType::Int32)]),
                 ("C".into(), vec![("c1".into(), DataType::Int32), ("c2".into(), DataType::Int32)]),
             ],
         }
-    }
-
-    pub fn build(
-        &self,
-        table_access_costs: &HashMap<String, usize>,
-        update_catalog: &dyn Fn(&MutableCatalog),
-    ) -> (MutableCatalog, Metadata) {
-        let mut tables = HashMap::new();
-        let mut column_id_column = HashMap::new();
-        let mut max_id = 1;
-
-        for (table_name, columns) in self.columns.iter() {
-            let cost = table_access_costs.get(table_name).copied();
-            if cost.is_none() {
-                continue;
-            }
-            let mut table = TableBuilder::new(table_name).add_row_count(cost.unwrap());
-            for (name, tpe) in columns.iter() {
-                table = table.add_column(name, tpe.clone());
-                column_id_column.insert(max_id, (String::from(table_name), String::from(name)));
-                max_id += 1;
-            }
-            let table = table.build();
-            tables.insert(table_name.to_string(), table);
-        }
-
-        let mut metadata = HashMap::new();
-        for (id, (table, column)) in column_id_column {
-            let table = tables.get(&table).expect("Table does not exist");
-            let column = table.get_column(&column).expect("Column does not exist");
-            metadata.insert(id, column);
-        }
-
-        let catalog = MutableCatalog::new();
-        for (_, table) in tables {
-            catalog.add_table(DEFAULT_SCHEMA, table);
-        }
-        (update_catalog)(&catalog);
-
-        (catalog, Metadata::new(metadata))
     }
 }
 

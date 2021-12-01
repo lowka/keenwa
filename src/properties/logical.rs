@@ -13,9 +13,9 @@ use std::fmt::Debug;
 #[derive(Debug, Clone)]
 pub struct LogicalProperties {
     // FIXME: use a bit set instead of a vec.
-    output_columns: Vec<ColumnId>,
-    //FIXME: Make non-optional?
-    statistics: Option<Statistics>,
+    pub(crate) output_columns: Vec<ColumnId>,
+    //FIXME: Make this non-optional when logical properties builder API becomes stable.
+    pub(crate) statistics: Option<Statistics>,
 }
 
 impl LogicalProperties {

@@ -1,13 +1,15 @@
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 use keenwa::catalog::mutable::MutableCatalog;
-use keenwa::catalog::{Catalog, TableBuilder, DEFAULT_SCHEMA};
+use keenwa::catalog::{Catalog, CatalogRef, TableBuilder, DEFAULT_SCHEMA};
 use keenwa::cost::simple::SimpleCostEstimator;
 use keenwa::datatypes::DataType;
+use keenwa::dump::OperatorMetadataBuilder;
 use keenwa::meta::{ColumnId, Metadata};
 use keenwa::operators::expr::{BinaryOp, Expr};
 use keenwa::operators::join::JoinCondition;
@@ -47,41 +49,37 @@ fn memo_bench(c: &mut Criterion) {
     }
 
     fn add_benchmark(c: &mut Criterion, name: &str, query: Operator) {
-        let catalog = MutableCatalog::new();
-        let table1 = TableBuilder::new("A").add_column("a", DataType::Int32).add_row_count(100).build();
-        let table2 = TableBuilder::new("B").add_column("b", DataType::Int32).add_row_count(110).build();
-        catalog.add_table(DEFAULT_SCHEMA, table1);
-        catalog.add_table(DEFAULT_SCHEMA, table2);
-
-        let catalog = Arc::new(catalog);
-        let metadata = metadata_from_catalog(catalog.as_ref());
-
-        let rules: Vec<Box<dyn Rule>> = vec![
-            Box::new(GetToScanRule::new(catalog.clone())),
-            Box::new(SelectRule),
-            Box::new(HashJoinRule),
-            Box::new(JoinCommutativityRule),
-        ];
-
-        let rules = StaticRuleSet::new(rules);
-        let cost_estimator = SimpleCostEstimator::new();
-        let statistics_builder = CatalogStatisticsBuilder::new(catalog);
-        let properties_builder = LogicalPropertiesBuilder::new(Box::new(statistics_builder));
-        let propagate_properties = SetPropertiesCallback::new(Rc::new(properties_builder));
-        let memo_callback = Rc::new(propagate_properties);
-
-        let optimizer = Optimizer::new(Rc::new(rules), Rc::new(cost_estimator), Rc::new(NoOpResultCallback));
-        let optimizer = Rc::new(optimizer);
-
         c.bench_function(format!("optimize_query_{}", name).as_str(), |b| {
-            b.iter(|| {
-                let mut memo = ExprMemo::with_callback(memo_callback.clone());
-                let optimized_expr = optimizer
-                    .optimize(query.clone(), metadata.clone(), &mut memo)
-                    .expect("Failed to optimize a query");
+            b.iter_custom(|iters| {
+                let mut total = Duration::default();
 
-                black_box(optimized_expr);
-            });
+                for _i in 0..iters {
+                    let tables = vec![
+                        ("A".into(), vec![("a1".into(), DataType::Int32), ("a2".into(), DataType::Int32)]),
+                        ("B".into(), vec![("b1".into(), DataType::Int32), ("b2".into(), DataType::Int32)]),
+                        ("C".into(), vec![("c1".into(), DataType::Int32), ("c2".into(), DataType::Int32)]),
+                    ];
+                    let catalog = Arc::new(MutableCatalog::new());
+                    let mut memo = create_memo(catalog.clone());
+
+                    let table_access_costs = HashMap::from([("A".into(), 100), ("B".into(), 100), ("C".into(), 100)]);
+                    let (query, metadata) =
+                        prepare_query(catalog.clone(), &mut memo, query.clone(), tables, table_access_costs);
+
+                    let optimizer = create_optimizer(catalog.clone());
+
+                    let start = Instant::now();
+                    let optimized_expr = optimizer
+                        .optimize(query.clone(), metadata.clone(), &mut memo)
+                        .expect("Failed to optimize a query");
+
+                    black_box(optimized_expr);
+
+                    total += start.elapsed();
+                }
+
+                total
+            })
         });
     }
 
@@ -99,10 +97,10 @@ fn memo_bench(c: &mut Criterion) {
             .into(),
             right: LogicalExpr::Get {
                 source: "B".into(),
-                columns: vec![2],
+                columns: vec![3],
             }
             .into(),
-            condition: JoinCondition::using(vec![(1, 2)]),
+            condition: JoinCondition::using(vec![(1, 3)]),
         }
         .into(),
         filter: Some(ScalarNode::from(filter)),
@@ -112,6 +110,45 @@ fn memo_bench(c: &mut Criterion) {
     .with_statistics(Statistics::from_selectivity(0.1));
 
     add_benchmark(c, "Join AxB ordered", query);
+}
+
+fn prepare_query(
+    catalog: CatalogRef,
+    memo: &mut ExprMemo,
+    query: Operator,
+    tables: Vec<(String, Vec<(String, DataType)>)>,
+    table_access_costs: HashMap<String, usize>,
+) -> (Operator, Metadata) {
+    let mut builder = OperatorMetadataBuilder::new(memo, catalog, tables, table_access_costs);
+    let (query, metadata) = builder.build_metadata(query);
+    let mut metadata_columns = HashMap::new();
+    for (id, col) in metadata {
+        metadata_columns.insert(id, col.column);
+    }
+    let metadata = Metadata::new(metadata_columns);
+    (query, metadata)
+}
+
+fn create_memo(catalog: CatalogRef) -> ExprMemo {
+    let statistics_builder = CatalogStatisticsBuilder::new(catalog.clone());
+    let properties_builder = LogicalPropertiesBuilder::new(Box::new(statistics_builder));
+    let propagate_properties = SetPropertiesCallback::new(Rc::new(properties_builder));
+    let memo_callback = Rc::new(propagate_properties);
+
+    ExprMemo::with_callback(memo_callback.clone())
+}
+
+fn create_optimizer(catalog: CatalogRef) -> Optimizer<StaticRuleSet, SimpleCostEstimator, NoOpResultCallback> {
+    let rules: Vec<Box<dyn Rule>> = vec![
+        Box::new(GetToScanRule::new(catalog)),
+        Box::new(SelectRule),
+        Box::new(HashJoinRule),
+        Box::new(JoinCommutativityRule),
+    ];
+
+    let rules = StaticRuleSet::new(rules);
+    let cost_estimator = SimpleCostEstimator::new();
+    Optimizer::new(Rc::new(rules), Rc::new(cost_estimator), Rc::new(NoOpResultCallback))
 }
 
 criterion_group!(benches, memo_bench,);

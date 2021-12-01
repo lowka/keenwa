@@ -8,6 +8,7 @@ use crate::operators::join::JoinCondition;
 use crate::operators::logical::{LogicalExpr, LogicalExprVisitor};
 use crate::operators::{Operator, OperatorExpr, Properties, RelExpr, RelNode, ScalarNode};
 use crate::properties::logical::LogicalProperties;
+use crate::properties::statistics::Statistics;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -547,6 +548,7 @@ impl<'a> OperatorMetadataBuilder<'a> {
                     OperatorExpr::Relational(expr) => panic!("ScalarNode contains a relational expr: {:?}", expr),
                     OperatorExpr::Scalar(scalar_expr) => {
                         let new_scalar_expr = self.build_scalar_expr_metadata(scalar_expr, properties.logical());
+                        let properties = self.scalar_expr_properties(properties);
                         (OperatorExpr::from(new_scalar_expr), properties)
                     }
                 }
@@ -574,13 +576,23 @@ impl<'a> OperatorMetadataBuilder<'a> {
         }
         let f = |rel_node: RelNode| {
             let (expr, properties) = self.build_rel_node_metadata(rel_node);
-            println!("{:#?}", properties);
             let expr = Operator::new(expr, properties);
             let (group, _) = self.memo.insert(expr);
             RelNode::Group(group)
         };
         let mut rewriter = InternNestedRelExprs { build_metadata: f };
         expr.rewrite(&mut rewriter)
+    }
+
+    fn scalar_expr_properties(&self, properties: Properties) -> Properties {
+        let Properties { logical, required } = properties;
+        let LogicalProperties {
+            output_columns,
+            statistics,
+        } = logical;
+        let statistics = statistics.or_else(|| Some(Statistics::default()));
+
+        Properties::new(LogicalProperties::new(output_columns, statistics), required)
     }
 
     fn resolve_expr_type(&self, expr: &Expr) -> DataType {
