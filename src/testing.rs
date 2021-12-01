@@ -5,15 +5,15 @@ use std::rc::Rc;
 use std::sync::{Arc, Once};
 
 use crate::catalog::mutable::MutableCatalog;
-use crate::catalog::{Catalog, CatalogRef, TableBuilder, DEFAULT_SCHEMA};
+use crate::catalog::{Catalog, CatalogRef};
 use crate::cost::simple::SimpleCostEstimator;
 use crate::datatypes::DataType;
 use crate::dump::OperatorMetadataBuilder;
-use crate::memo::{ExprNodeRef, MemoExpr, MemoExprCallback, MemoExprFormatter, StringMemoFormatter};
+use crate::memo::{ExprNodeRef, MemoExpr, MemoExprFormatter, StringMemoFormatter};
 use crate::meta::Metadata;
-use crate::operators::{ExprMemo, Operator, Properties};
+use crate::operators::{ExprMemo, Operator};
 use crate::optimizer::{Optimizer, SetPropertiesCallback};
-use crate::properties::logical::{LogicalPropertiesBuilder, PropertiesProvider};
+use crate::properties::logical::LogicalPropertiesBuilder;
 use crate::properties::statistics::CatalogStatisticsBuilder;
 use crate::rules::implementation::{GetToScanRule, ProjectionRule, SelectRule};
 use crate::rules::testing::TestRuleSet;
@@ -120,7 +120,7 @@ impl OptimizerTester {
         let memo_callback = Rc::new(propagate_properties);
 
         let mut memo = ExprMemo::with_callback(memo_callback);
-        let mut builder =
+        let builder =
             OperatorMetadataBuilder::new(&mut memo, catalog.clone(), columns, self.table_access_costs.clone());
 
         let (operator, metadata) = builder.build_metadata(operator);

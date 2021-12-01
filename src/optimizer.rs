@@ -9,7 +9,7 @@ use crate::cost::{Cost, CostEstimationContext, CostEstimator};
 use crate::memo::{format_memo, ExprId, ExprNode, GroupId, MemoExprCallback, NewChildExprs};
 use crate::meta::Metadata;
 use crate::operators::{
-    ExprCallback, ExprMemo, ExprRef, GroupRef, Operator, OperatorExpr, OperatorInputs, Properties, RelExpr, RelNode,
+    ExprMemo, ExprRef, GroupRef, Operator, OperatorExpr, OperatorInputs, Properties, RelExpr, RelNode,
 };
 use crate::properties::logical::LogicalProperties;
 use crate::properties::logical::PropertiesProvider;

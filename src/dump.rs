@@ -1,5 +1,5 @@
 use crate::catalog::mutable::MutableCatalog;
-use crate::catalog::{Catalog, CatalogRef, Column, ColumnRef, TableBuilder};
+use crate::catalog::{CatalogRef, Column, ColumnRef, TableBuilder};
 use crate::datatypes::DataType;
 use crate::memo::Memo;
 use crate::meta::ColumnId;
@@ -10,7 +10,6 @@ use crate::operators::{Operator, OperatorExpr, Properties, RelExpr, RelNode, Sca
 use crate::properties::logical::LogicalProperties;
 use crate::properties::statistics::Statistics;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct ColumnMetadata {
