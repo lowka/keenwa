@@ -14,7 +14,7 @@ use keenwa::operators::join::JoinCondition;
 use keenwa::operators::logical::*;
 use keenwa::operators::scalar::ScalarValue;
 use keenwa::operators::*;
-use keenwa::optimizer::Optimizer;
+use keenwa::optimizer::{Optimizer, SetPropertiesCallback};
 use keenwa::properties::logical::LogicalPropertiesBuilder;
 use keenwa::properties::physical::PhysicalProperties;
 use keenwa::properties::statistics::{CatalogStatisticsBuilder, Statistics};
@@ -67,17 +67,15 @@ fn memo_bench(c: &mut Criterion) {
         let cost_estimator = SimpleCostEstimator::new();
         let statistics_builder = CatalogStatisticsBuilder::new(catalog);
         let properties_builder = LogicalPropertiesBuilder::new(Box::new(statistics_builder));
-        let optimizer = Optimizer::new(
-            Rc::new(rules),
-            Rc::new(cost_estimator),
-            // Rc::new(properties_builder),
-            Rc::new(NoOpResultCallback),
-        );
+        let propagate_properties = SetPropertiesCallback::new(Rc::new(properties_builder));
+        let memo_callback = Rc::new(propagate_properties);
+
+        let optimizer = Optimizer::new(Rc::new(rules), Rc::new(cost_estimator), Rc::new(NoOpResultCallback));
         let optimizer = Rc::new(optimizer);
 
         c.bench_function(format!("optimize_query_{}", name).as_str(), |b| {
             b.iter(|| {
-                let mut memo = ExprMemo::new();
+                let mut memo = ExprMemo::with_callback(memo_callback.clone());
                 let optimized_expr = optimizer
                     .optimize(query.clone(), metadata.clone(), &mut memo)
                     .expect("Failed to optimize a query");

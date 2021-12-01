@@ -147,18 +147,20 @@ where
     }
 }
 
+/// Callback that sets logical properties when expression is added into a [memo](crate::memo::Memo).
 #[derive(Debug)]
-pub struct PropagateProperties<P> {
+pub struct SetPropertiesCallback<P> {
     properties_provider: Rc<P>,
 }
 
-impl<P> PropagateProperties<P> {
+impl<P> SetPropertiesCallback<P> {
+    /// Creates a new callback with the given `properties_provider`.
     pub fn new(properties_provider: Rc<P>) -> Self {
-        PropagateProperties { properties_provider }
+        SetPropertiesCallback { properties_provider }
     }
 }
 
-impl<P> MemoExprCallback for PropagateProperties<P>
+impl<P> MemoExprCallback for SetPropertiesCallback<P>
 where
     P: PropertiesProvider,
 {
@@ -166,10 +168,10 @@ where
     type Props = Properties;
 
     fn new_expr(&self, expr: &Self::Expr, props: Self::Props) -> Self::Props {
-        // Every time a new expression is added to a memo we need to compute logical properties of that expression.
+        // Every time a new expression is added into a memo we need to compute logical properties of that expression.
         let properties = self
             .properties_provider
-            .build_properties2(expr.expr(), &props)
+            .build_properties2(expr.expr(), props)
             // If we has not been able to assemble logical properties for the given expression
             // than something has gone terribly wrong and we have no other option but to unwrap an error.
             .expect("Failed to build logical properties");

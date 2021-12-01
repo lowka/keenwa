@@ -45,7 +45,7 @@ where
     }
 
     /// Creates a new memo with the given callback.
-    pub(crate) fn with_callback(callback: Rc<dyn MemoExprCallback<Expr = T, Props = T::Props>>) -> Self {
+    pub fn with_callback(callback: Rc<dyn MemoExprCallback<Expr = T, Props = T::Props>>) -> Self {
         //TODO: Unit test for a Memo with a callback.
         Memo {
             groups: Vec::new(),

@@ -57,13 +57,14 @@ impl Default for LogicalProperties {
 
 /// Provides logical properties for memo expressions.
 pub trait PropertiesProvider: Debug {
+    #[deprecated]
     fn build_properties(
         &self,
         expr: &OperatorExpr,
         statistics: Option<&Statistics>,
     ) -> Result<LogicalProperties, OptimizerError>;
 
-    fn build_properties2(&self, expr: &OperatorExpr, props: &Properties) -> Result<Properties, OptimizerError>;
+    fn build_properties2(&self, expr: &OperatorExpr, props: Properties) -> Result<Properties, OptimizerError>;
 }
 
 #[derive(Debug)]
@@ -97,22 +98,24 @@ impl PropertiesProvider for LogicalPropertiesBuilder {
         }
     }
 
-    fn build_properties2(&self, expr: &OperatorExpr, props: &Properties) -> Result<Properties, OptimizerError> {
-        let output_columns = props.logical().output_columns().to_vec();
-        let statistics = props.logical().statistics();
+    fn build_properties2(&self, expr: &OperatorExpr, props: Properties) -> Result<Properties, OptimizerError> {
+        let Properties { logical, required } = props;
+        let output_columns = logical.output_columns;
+        let statistics = logical.statistics;
         match expr {
             OperatorExpr::Relational(RelExpr::Logical(expr)) => {
-                let statistics = self.statistics.build_statistics(expr, statistics)?;
+                let statistics = self.statistics.build_statistics(expr, statistics.as_ref())?;
                 let logical = LogicalProperties::new(output_columns, statistics);
-                Ok(Properties::new(logical, props.required.clone()))
+                Ok(Properties::new(logical, required))
             }
-            OperatorExpr::Relational(RelExpr::Physical(expr)) => {
-                // Properties are not used by physical expressions
-                Ok(Properties::new(LogicalProperties::empty(), PhysicalProperties::none()))
+            OperatorExpr::Relational(RelExpr::Physical(_)) => {
+                //TODO: compute statistics for physical expressions
+                let logical = LogicalProperties::new(output_columns, statistics);
+                Ok(Properties::new(logical, required))
             }
-            OperatorExpr::Scalar(expr) => {
-                let statistics = statistics.cloned().unwrap_or_default();
-                let logical = LogicalProperties::new(output_columns, Some(statistics));
+            OperatorExpr::Scalar(_) => {
+                assert!(required.is_empty(), "Physical properties can not be set for scalar expressions");
+                let logical = LogicalProperties::new(output_columns, statistics);
                 Ok(Properties::new(logical, PhysicalProperties::none()))
             }
         }

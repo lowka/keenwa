@@ -12,7 +12,7 @@ use crate::dump::OperatorMetadataBuilder;
 use crate::memo::{ExprNodeRef, MemoExpr, MemoExprCallback, MemoExprFormatter, StringMemoFormatter};
 use crate::meta::Metadata;
 use crate::operators::{ExprMemo, Operator, Properties};
-use crate::optimizer::Optimizer;
+use crate::optimizer::{Optimizer, SetPropertiesCallback};
 use crate::properties::logical::{LogicalPropertiesBuilder, PropertiesProvider};
 use crate::properties::statistics::CatalogStatisticsBuilder;
 use crate::rules::implementation::{GetToScanRule, ProjectionRule, SelectRule};
@@ -116,12 +116,10 @@ impl OptimizerTester {
         let catalog = Arc::new(MutableCatalog::new());
         let statistics_builder = CatalogStatisticsBuilder::new(catalog.clone());
         let properties_builder = LogicalPropertiesBuilder::new(Box::new(statistics_builder));
+        let propagate_properties = SetPropertiesCallback::new(Rc::new(properties_builder));
+        let memo_callback = Rc::new(propagate_properties);
 
-        let properties_provider = PropagateProperties {
-            properties_provider: Rc::new(properties_builder),
-        };
-
-        let mut memo = ExprMemo::with_callback(Rc::new(properties_provider));
+        let mut memo = ExprMemo::with_callback(memo_callback);
         let mut builder =
             OperatorMetadataBuilder::new(&mut memo, catalog.clone(), columns, self.table_access_costs.clone());
 
