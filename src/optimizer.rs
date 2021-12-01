@@ -171,7 +171,7 @@ where
         // Every time a new expression is added into a memo we need to compute logical properties of that expression.
         let properties = self
             .properties_provider
-            .build_properties2(expr.expr(), props)
+            .build_properties(expr.expr(), props)
             // If we has not been able to assemble logical properties for the given expression
             // than something has gone terribly wrong and we have no other option but to unwrap an error.
             .expect("Failed to build logical properties");

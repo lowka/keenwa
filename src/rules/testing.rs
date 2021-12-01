@@ -4,7 +4,7 @@ use crate::meta::Metadata;
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;
 use crate::operators::{ExprMemo, Operator, OperatorExpr, Properties, RelNode};
-use crate::properties::logical::{LogicalPropertiesBuilder, PropertiesProvider};
+use crate::properties::logical::LogicalPropertiesBuilder;
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::statistics::{Statistics, StatisticsBuilder};
 use crate::rules::{Rule, RuleContext, RuleId, RuleIterator, RuleResult, RuleSet};
@@ -279,10 +279,7 @@ impl MemoExprCallback for LogicalPropertiesBuilder {
     type Expr = Operator;
     type Props = Properties;
 
-    fn new_expr(&self, expr: &Self::Expr, props: Self::Props) -> Self::Props {
-        let logical = self
-            .build_properties(expr.expr(), props.logical().statistics())
-            .expect("Failed to build logical properties");
-        Properties::new(logical, props.required)
+    fn new_expr(&self, _expr: &Self::Expr, props: Self::Props) -> Self::Props {
+        props
     }
 }
