@@ -5,14 +5,15 @@ use std::rc::Rc;
 use std::sync::{Arc, Once};
 
 use crate::catalog::mutable::MutableCatalog;
-use crate::catalog::{CatalogRef, TableBuilder, DEFAULT_SCHEMA};
+use crate::catalog::{Catalog, CatalogRef, TableBuilder, DEFAULT_SCHEMA};
 use crate::cost::simple::SimpleCostEstimator;
 use crate::datatypes::DataType;
-use crate::memo::{ExprNodeRef, MemoExpr, MemoExprFormatter, StringMemoFormatter};
+use crate::dump::OperatorMetadataBuilder;
+use crate::memo::{ExprNodeRef, MemoExpr, MemoExprCallback, MemoExprFormatter, StringMemoFormatter};
 use crate::meta::Metadata;
-use crate::operators::Operator;
+use crate::operators::{ExprMemo, Operator, Properties};
 use crate::optimizer::Optimizer;
-use crate::properties::logical::LogicalPropertiesBuilder;
+use crate::properties::logical::{LogicalPropertiesBuilder, PropertiesProvider};
 use crate::properties::statistics::CatalogStatisticsBuilder;
 use crate::rules::implementation::{GetToScanRule, ProjectionRule, SelectRule};
 use crate::rules::testing::TestRuleSet;
@@ -110,8 +111,29 @@ impl OptimizerTester {
     ///
     pub fn optimize(&self, operator: Operator, expected_plan: &str) {
         let tables = TestTables::new();
-        let (catalog, metadata) = tables.build(&self.table_access_costs, &self.update_catalog);
-        let catalog = Arc::new(catalog);
+        let columns = tables.columns2;
+
+        let catalog = Arc::new(MutableCatalog::new());
+        let statistics_builder = CatalogStatisticsBuilder::new(catalog.clone());
+        let properties_builder = LogicalPropertiesBuilder::new(Box::new(statistics_builder));
+
+        let properties_provider = PropagateProperties {
+            properties_provider: Rc::new(properties_builder),
+        };
+
+        let mut memo = ExprMemo::with_callback(Rc::new(properties_provider));
+        let mut builder =
+            OperatorMetadataBuilder::new(&mut memo, catalog.clone(), columns, self.table_access_costs.clone());
+
+        let (operator, metadata) = builder.build_metadata(operator);
+        let mut metadata_columns = HashMap::new();
+        for (id, col) in metadata {
+            metadata_columns.insert(id, col.column);
+        }
+        let metadata = Metadata::new(metadata_columns);
+
+        let mutable_catalog = catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();
+        (self.update_catalog)(mutable_catalog);
 
         let mut default_rules: Vec<Box<dyn Rule>> = vec![
             Box::new(GetToScanRule::new(catalog.clone())),
@@ -125,19 +147,14 @@ impl OptimizerTester {
 
         let rules = TestRuleSet::new(StaticRuleSet::new(rules), self.shuffle_rules, self.explore_with_enforcer);
         let cost_estimator = SimpleCostEstimator::new();
-        let statistics_builder = CatalogStatisticsBuilder::new(catalog);
-        let properties_builder = LogicalPropertiesBuilder::new(Box::new(statistics_builder));
         let test_result = Rc::new(RefCell::new(VecDeque::new()));
         let result_callback = TestResultBuilder::new(test_result.clone());
 
-        let optimizer = Optimizer::new(
-            Rc::new(rules),
-            Rc::new(cost_estimator),
-            Rc::new(properties_builder),
-            Rc::new(result_callback),
-        );
+        let optimizer = Optimizer::new(Rc::new(rules), Rc::new(cost_estimator), Rc::new(result_callback));
 
-        let _opt_expr = optimizer.optimize(operator, metadata).expect("Failed to optimize an operator tree");
+        let _opt_expr = optimizer
+            .optimize(operator, metadata, &mut memo)
+            .expect("Failed to optimize an operator tree");
         let expected_lines: Vec<String> = expected_plan.split('\n').map(|l| l.to_string()).collect();
         let label = if expected_plan.starts_with("query:") {
             expected_lines[0].trim()
@@ -153,6 +170,7 @@ impl OptimizerTester {
 
 pub struct TestTables {
     columns: HashMap<String, Vec<(String, DataType)>>,
+    columns2: Vec<(String, Vec<(String, DataType)>)>,
 }
 
 impl TestTables {
@@ -163,6 +181,11 @@ impl TestTables {
                 ("B".into(), vec![("b1".into(), DataType::Int32), ("b2".into(), DataType::Int32)]),
                 ("C".into(), vec![("c1".into(), DataType::Int32), ("c2".into(), DataType::Int32)]),
             ]),
+            columns2: vec![
+                ("A".into(), vec![("a1".into(), DataType::Int32), ("a2".into(), DataType::Int32)]),
+                ("B".into(), vec![("b1".into(), DataType::Int32), ("b2".into(), DataType::Int32)]),
+                ("C".into(), vec![("c1".into(), DataType::Int32), ("c2".into(), DataType::Int32)]),
+            ],
         }
     }
 

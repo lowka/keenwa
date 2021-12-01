@@ -154,10 +154,10 @@ fn test_select_with_a_nested_query() {
     tester.optimize(
         query,
         r#"
-03 Select [00 02]
-02 Expr SubQuery 01 > 1
-01 Scan B cols=[3]
-00 Scan A cols=[1, 2]
+03 Select [01 02]
+02 Expr SubQuery 00 > 1
+00 Scan B cols=[3]
+01 Scan A cols=[1, 2]
 "#,
     );
 }
@@ -167,13 +167,13 @@ fn test_get_ordered_top_level_enforcer() {
     let query = LogicalExpr::Select {
         input: LogicalExpr::Get {
             source: "A".into(),
-            columns: vec![1, 2, 3],
+            columns: vec![1, 2],
         }
         .into(),
         filter: filter_with_selectivity(1, ScalarValue::Int32(10), 0.1),
     }
     .to_operator()
-    .with_required(ordering(vec![3]));
+    .with_required(ordering(vec![2]));
     // .with_statistics(Statistics::from_selectivity(0.1));
 
     let mut tester = OptimizerTester::new();
@@ -183,10 +183,10 @@ fn test_get_ordered_top_level_enforcer() {
     tester.optimize(
         query,
         r#"
-02 Sort [02] ord=[3]
+02 Sort [02] ord=[2]
 02 Select [00 01]
 01 Expr col:1 > 10
-00 Scan A cols=[1, 2, 3]
+00 Scan A cols=[1, 2]
 "#,
     );
 }
@@ -196,13 +196,13 @@ fn test_get_ordered_no_top_level_enforcer() {
     let query = LogicalExpr::Select {
         input: LogicalExpr::Get {
             source: "A".into(),
-            columns: vec![1, 2, 3],
+            columns: vec![1, 2],
         }
         .into(),
         filter: filter(1, ScalarValue::Int32(10)),
     }
     .to_operator()
-    .with_required(ordering(vec![3]));
+    .with_required(ordering(vec![2]));
 
     let mut tester = OptimizerTester::new();
 
@@ -212,10 +212,10 @@ fn test_get_ordered_no_top_level_enforcer() {
     tester.optimize(
         query,
         r#"
-02 Select [ord:[3]=00 ord:[3]=01]
+02 Select [ord:[2]=00 ord:[2]=01]
 01 Expr col:1 > 10
-00 Sort [00] ord=[3]
-00 Scan A cols=[1, 2, 3]
+00 Sort [00] ord=[2]
+00 Scan A cols=[1, 2]
 "#,
     );
 }
@@ -254,10 +254,10 @@ fn test_join_commutativity() {
             .into(),
             right: LogicalExpr::Get {
                 source: "B".into(),
-                columns: vec![2],
+                columns: vec![3],
             }
             .into(),
-            condition: JoinCondition::using(vec![(1, 2)]),
+            condition: JoinCondition::using(vec![(1, 3)]),
         }
         .into(),
         filter: filter(1, ScalarValue::Int32(10)),
@@ -276,9 +276,9 @@ fn test_join_commutativity() {
         r#"
 04 Select [02 03]
 03 Expr col:1 > 10
-02 HashJoin [01 00] using=[(2, 1)]
+02 HashJoin [01 00] using=[(3, 1)]
 00 Scan A cols=[1]
-01 Scan B cols=[2]
+01 Scan B cols=[3]
 "#,
     );
 }
@@ -294,10 +294,10 @@ fn test_join_commutativity_ordered() {
             .into(),
             right: LogicalExpr::Get {
                 source: "B".into(),
-                columns: vec![2],
+                columns: vec![3],
             }
             .into(),
-            condition: JoinCondition::using(vec![(1, 2)]),
+            condition: JoinCondition::using(vec![(1, 3)]),
         }
         .into(),
         filter: filter_with_selectivity(1, ScalarValue::Int32(10), 0.1),
@@ -318,8 +318,8 @@ fn test_join_commutativity_ordered() {
 04 Sort [04] ord=[1]
 04 Select [02 03]
 03 Expr col:1 > 10
-02 HashJoin [00 01] using=[(1, 2)]
-01 Scan B cols=[2]
+02 HashJoin [00 01] using=[(1, 3)]
+01 Scan B cols=[3]
 00 Scan A cols=[1]
 "#,
     );

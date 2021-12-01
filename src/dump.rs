@@ -1,43 +1,51 @@
 use crate::catalog::mutable::MutableCatalog;
-use crate::catalog::{Catalog, Column, ColumnRef, TableBuilder};
+use crate::catalog::{Catalog, CatalogRef, Column, ColumnRef, TableBuilder};
 use crate::datatypes::DataType;
 use crate::memo::Memo;
 use crate::meta::ColumnId;
-use crate::operators::expr::{AggregateFunction, Expr, ExprRewriter, ExprVisitor};
+use crate::operators::expr::{AggregateFunction, BinaryOp, Expr, ExprRewriter, ExprVisitor};
 use crate::operators::join::JoinCondition;
 use crate::operators::logical::{LogicalExpr, LogicalExprVisitor};
 use crate::operators::{Operator, OperatorExpr, Properties, RelExpr, RelNode, ScalarNode};
 use crate::properties::logical::LogicalProperties;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 #[derive(Debug)]
-struct ColumnMetadata {
-    column: ColumnRef,
-    expr: Option<Expr>,
+pub struct ColumnMetadata {
+    pub column: ColumnRef,
+    pub expr: Option<Expr>,
 }
 
-struct MetadataBuilder<'a> {
+pub struct OperatorMetadataBuilder<'a> {
     memo: &'a mut Memo<Operator>,
-    catalog: MutableCatalog,
+    catalog: CatalogRef,
     metadata: HashMap<ColumnId, ColumnMetadata>,
     table_column_ids: HashMap<(String, String), ColumnId>,
+    table_statistics: HashMap<String, usize>,
     data: Vec<(String, Vec<(String, DataType)>)>,
 }
 
-impl<'a> MetadataBuilder<'a> {
-    pub fn new(memo: &'a mut Memo<Operator>, data: Vec<(String, Vec<(String, DataType)>)>) -> Self {
+impl<'a> OperatorMetadataBuilder<'a> {
+    pub fn new(
+        memo: &'a mut Memo<Operator>,
+        catalog: CatalogRef,
+        data: Vec<(String, Vec<(String, DataType)>)>,
+        table_statistics: HashMap<String, usize>,
+    ) -> Self {
         let mut metadata = HashMap::new();
 
-        MetadataBuilder {
+        OperatorMetadataBuilder {
             memo,
-            catalog: MutableCatalog::new(),
+            catalog,
             metadata,
             table_column_ids: HashMap::new(),
+            table_statistics,
             data,
         }
     }
 
-    pub fn build_metadata(&mut self, expr: Operator) -> Operator {
+    pub fn build_metadata(mut self, expr: Operator) -> (Operator, HashMap<ColumnId, ColumnMetadata>) {
         struct CollectTables {
             tables: HashSet<String>,
         }
@@ -71,7 +79,9 @@ impl<'a> MetadataBuilder<'a> {
 
                 next_col_id += 1;
             }
-            let table = table.build();
+
+            let row_count = self.table_statistics[&table_name];
+            let table = table.add_row_count(row_count).build();
 
             for (id, column) in column_id_column {
                 let column = table.get_column(&column).expect("Column does not exist");
@@ -83,11 +93,13 @@ impl<'a> MetadataBuilder<'a> {
         }
 
         for (_, table) in tables {
-            self.catalog.add_table(crate::catalog::DEFAULT_SCHEMA, table);
+            let catalog = self.catalog.as_any().downcast_ref::<MutableCatalog>().expect("Expected a MutableCatalog");
+            catalog.add_table(crate::catalog::DEFAULT_SCHEMA, table);
         }
 
         let (expr, properties) = self.do_build_metadata(expr);
-        Operator::new(expr, properties)
+        let expr = Operator::new(expr, properties);
+        (expr, self.metadata)
     }
 
     fn do_build_metadata(&mut self, expr: Operator) -> (OperatorExpr, Properties) {
@@ -97,7 +109,7 @@ impl<'a> MetadataBuilder<'a> {
                 let (expr, properties) = self.build_rel_expr_metadata(rel_expr, properties);
                 (expr, properties)
             }
-            OperatorExpr::Scalar(_) => todo!(),
+            OperatorExpr::Scalar(_) => panic!("top level scalar expressions are not supported"),
         }
     }
 
@@ -562,6 +574,7 @@ impl<'a> MetadataBuilder<'a> {
         }
         let f = |rel_node: RelNode| {
             let (expr, properties) = self.build_rel_node_metadata(rel_node);
+            println!("{:#?}", properties);
             let expr = Operator::new(expr, properties);
             let (group, _) = self.memo.insert(expr);
             RelNode::Group(group)
@@ -577,8 +590,7 @@ impl<'a> MetadataBuilder<'a> {
             Expr::BinaryExpr { lhs, op, rhs } => {
                 let left_tpe = self.resolve_expr_type(lhs);
                 let right_tpe = self.resolve_expr_type(rhs);
-                assert_eq!(left_tpe, right_tpe, "Types does not match");
-                op.return_type()
+                self.resolve_binary_expr_type(left_tpe, op, right_tpe)
             }
             Expr::Not(expr) => {
                 let tpe = self.resolve_expr_type(expr);
@@ -603,12 +615,13 @@ impl<'a> MetadataBuilder<'a> {
                 }
                 DataType::Int32
             }
-            Expr::SubQuery(expr) => {
-                let props = expr.props();
-                println!("{:#?}", props);
-                DataType::Int32
-            }
+            Expr::SubQuery(_) => DataType::Int32,
         }
+    }
+
+    fn resolve_binary_expr_type(&self, lhs: DataType, _op: &BinaryOp, rhs: DataType) -> DataType {
+        assert_eq!(lhs, rhs, "Types does not match");
+        DataType::Bool
     }
 }
 
@@ -642,8 +655,9 @@ fn check_column_exists(column_id: &ColumnId, input_properties: &LogicalPropertie
 
 #[cfg(test)]
 mod test {
+    use crate::catalog::mutable::MutableCatalog;
     use crate::datatypes::DataType;
-    use crate::dump::MetadataBuilder;
+    use crate::dump::OperatorMetadataBuilder;
     use crate::memo::{format_memo, Memo};
     use crate::meta::ColumnId;
     use crate::operators::expr::{AggregateFunction, BinaryOp, Expr};
@@ -653,8 +667,9 @@ mod test {
     use crate::operators::{Operator, RelNode, ScalarNode};
     use crate::rules::testing::format_expr;
     use itertools::Itertools;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::iter::FromIterator;
+    use std::sync::Arc;
 
     #[test]
     fn test_get() {
@@ -1045,9 +1060,15 @@ Metadata:
             ("B".into(), vec![("b1".into(), DataType::Int32), ("b2".into(), DataType::Int32)]),
         ];
         let mut memo = Memo::new();
-        let mut builder = MetadataBuilder::new(&mut memo, tables);
+        let catalog = Arc::new(MutableCatalog::new());
+        let mut builder = OperatorMetadataBuilder::new(
+            &mut memo,
+            catalog,
+            tables,
+            HashMap::from([("A".into(), 10), ("B".into(), 10)]),
+        );
 
-        let expr = builder.build_metadata(expr);
+        let (expr, metadata) = builder.build_metadata(expr);
         let mut buf = String::new();
         buf.push('\n');
 
@@ -1057,7 +1078,7 @@ Metadata:
         buf.push_str(format!("  output cols: {:?}\n", expr.logical().output_columns()).as_str());
         buf.push_str("Metadata:\n");
 
-        for (id, column) in BTreeMap::from_iter(builder.metadata.into_iter()) {
+        for (id, column) in BTreeMap::from_iter(metadata.into_iter()) {
             let column_name = if column.expr.is_none() && column.column.table().is_none() {
                 format!("  col:{} {} {:?}", id, column.column.name(), column.column.data_type())
             } else if column.expr.is_none() {
@@ -1081,9 +1102,9 @@ Metadata:
             buf.push('\n');
         }
 
-        if !builder.memo.is_empty() {
+        if !memo.is_empty() {
             buf.push_str("Memo:\n");
-            let memo_as_string = format_memo(builder.memo);
+            let memo_as_string = format_memo(&memo);
             let lines = memo_as_string
                 .split('\n')
                 .map(|l| {

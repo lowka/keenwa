@@ -70,15 +70,17 @@ fn memo_bench(c: &mut Criterion) {
         let optimizer = Optimizer::new(
             Rc::new(rules),
             Rc::new(cost_estimator),
-            Rc::new(properties_builder),
+            // Rc::new(properties_builder),
             Rc::new(NoOpResultCallback),
         );
         let optimizer = Rc::new(optimizer);
 
         c.bench_function(format!("optimize_query_{}", name).as_str(), |b| {
             b.iter(|| {
-                let optimized_expr =
-                    optimizer.optimize(query.clone(), metadata.clone()).expect("Failed to optimize a query");
+                let mut memo = ExprMemo::new();
+                let optimized_expr = optimizer
+                    .optimize(query.clone(), metadata.clone(), &mut memo)
+                    .expect("Failed to optimize a query");
 
                 black_box(optimized_expr);
             });

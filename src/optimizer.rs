@@ -18,62 +18,30 @@ use crate::rules::{RuleContext, RuleId, RuleMatch, RuleResult, RuleSet, RuleType
 use crate::util::{BestExprContext, BestExprRef, ResultCallback};
 
 /// Cost-based optimizer.
-pub struct Optimizer<R, T, C, P> {
+pub struct Optimizer<R, T, C> {
     rule_set: Rc<R>,
     cost_estimator: Rc<T>,
-    memo_callback: Rc<ExprCallback>,
     result_callback: Rc<C>,
-    properties_provider_type: std::marker::PhantomData<P>,
 }
 
-impl<R, T, C, P> Optimizer<R, T, C, P>
+impl<R, T, C> Optimizer<R, T, C>
 where
     R: RuleSet,
     T: CostEstimator,
     C: ResultCallback,
-    P: PropertiesProvider + 'static,
 {
     /// Creates a new instance of `Optimizer`.
-    pub fn new(rule_set: Rc<R>, cost_estimator: Rc<T>, properties_provider: Rc<P>, result_callback: Rc<C>) -> Self {
-        #[derive(Debug)]
-        struct PropagateProperties<P> {
-            properties_provider: Rc<P>,
-        }
-
-        impl<P> MemoExprCallback for PropagateProperties<P>
-        where
-            P: PropertiesProvider,
-        {
-            type Expr = Operator;
-            type Props = Properties;
-
-            fn new_expr(&self, expr: &Self::Expr, props: Self::Props) -> Self::Props {
-                // Every time a new expression is added to a memo we need to compute logical properties of that expression.
-                let Properties { logical, required } = props;
-                let logical = self
-                    .properties_provider
-                    .build_properties(expr.expr(), logical.statistics())
-                    // If we has not been able to assemble logical properties for the given expression
-                    // than something has gone terribly wrong and we have no other option but to unwrap an error.
-                    .expect("Failed to build logical properties");
-
-                Properties::new(logical, required)
-            }
-        }
-
+    pub fn new(rule_set: Rc<R>, cost_estimator: Rc<T>, result_callback: Rc<C>) -> Self {
         Optimizer {
             rule_set,
             cost_estimator,
-            memo_callback: Rc::new(PropagateProperties { properties_provider }),
             result_callback,
-            properties_provider_type: Default::default(),
         }
     }
 
     /// Optimizes the given operator tree.
-    pub fn optimize(&self, expr: Operator, metadata: Metadata) -> Result<Operator, String> {
+    pub fn optimize(&self, expr: Operator, metadata: Metadata, memo: &mut ExprMemo) -> Result<Operator, String> {
         let mut runtime_state = RuntimeState::new();
-        let mut memo = ExprMemo::with_callback(self.memo_callback.clone());
 
         log::debug!("Optimizing expression: {:?}", expr);
 
@@ -89,14 +57,14 @@ where
 
         runtime_state.tasks.schedule(Task::OptimizeGroup { ctx: ctx.clone() });
 
-        self.do_optimize(&mut runtime_state, &mut memo, &metadata);
+        self.do_optimize(&mut runtime_state, memo, &metadata);
 
         let state = runtime_state.state.get_state(&ctx);
         assert!(state.optimized, "Root node has not been optimized: {:?}", state);
 
-        log::debug!("Final memo:\n{}", format_memo(&memo));
+        log::debug!("Final memo:\n{}", format_memo(memo));
 
-        self.build_result(runtime_state, &memo, &ctx)
+        self.build_result(runtime_state, memo, &ctx)
     }
 
     fn do_optimize(&self, runtime_state: &mut RuntimeState, memo: &mut ExprMemo, metadata: &Metadata) {
@@ -164,21 +132,49 @@ where
     }
 }
 
-impl<R, T, C, P> Debug for Optimizer<R, T, C, P>
+impl<R, T, C> Debug for Optimizer<R, T, C>
 where
     R: RuleSet,
     T: CostEstimator,
     C: ResultCallback,
-    P: PropertiesProvider + 'static,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Optimizer")
             .field("rule_set", self.rule_set.as_ref())
             .field("cost_estimator", self.cost_estimator.as_ref())
-            //FIXME: add properties_provider to debug output
-            // .field("properties_provider", self.memo_callback.as_ref())
             .field("result_callback", self.result_callback.as_ref())
             .finish()
+    }
+}
+
+#[derive(Debug)]
+pub struct PropagateProperties<P> {
+    properties_provider: Rc<P>,
+}
+
+impl<P> PropagateProperties<P> {
+    pub fn new(properties_provider: Rc<P>) -> Self {
+        PropagateProperties { properties_provider }
+    }
+}
+
+impl<P> MemoExprCallback for PropagateProperties<P>
+where
+    P: PropertiesProvider,
+{
+    type Expr = Operator;
+    type Props = Properties;
+
+    fn new_expr(&self, expr: &Self::Expr, props: Self::Props) -> Self::Props {
+        // Every time a new expression is added to a memo we need to compute logical properties of that expression.
+        let properties = self
+            .properties_provider
+            .build_properties2(expr.expr(), &props)
+            // If we has not been able to assemble logical properties for the given expression
+            // than something has gone terribly wrong and we have no other option but to unwrap an error.
+            .expect("Failed to build logical properties");
+
+        properties
     }
 }
 
@@ -557,6 +553,9 @@ fn optimize_inputs<T>(
             OperatorExpr::Relational(expr) => {
                 let logical_properties = group.props().logical();
                 let statistics = logical_properties.statistics();
+                if statistics.is_none() {
+                    println!("{:#?}", expr);
+                }
                 let (cost_ctx, inputs_cost) = new_cost_estimation_ctx(&inputs, &runtime_state.state);
                 let expr_cost = cost_estimator.estimate_cost(expr.as_physical(), &cost_ctx, statistics);
                 expr_cost + inputs_cost

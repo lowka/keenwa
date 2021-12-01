@@ -4,7 +4,8 @@ use crate::operators::expr::Expr;
 use crate::operators::join::JoinCondition;
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;
-use crate::operators::{OperatorExpr, RelExpr, RelNode, ScalarNode};
+use crate::operators::{OperatorExpr, Properties, RelExpr, RelNode, ScalarNode};
+use crate::properties::physical::PhysicalProperties;
 use crate::properties::statistics::{Statistics, StatisticsBuilder};
 use std::fmt::Debug;
 
@@ -61,6 +62,8 @@ pub trait PropertiesProvider: Debug {
         expr: &OperatorExpr,
         statistics: Option<&Statistics>,
     ) -> Result<LogicalProperties, OptimizerError>;
+
+    fn build_properties2(&self, expr: &OperatorExpr, props: &Properties) -> Result<Properties, OptimizerError>;
 }
 
 #[derive(Debug)]
@@ -90,6 +93,27 @@ impl PropertiesProvider for LogicalPropertiesBuilder {
                 let statistics = statistics.cloned().unwrap_or_default();
                 let props = LogicalProperties::new(Vec::new(), Some(statistics));
                 Ok(props)
+            }
+        }
+    }
+
+    fn build_properties2(&self, expr: &OperatorExpr, props: &Properties) -> Result<Properties, OptimizerError> {
+        let output_columns = props.logical().output_columns().to_vec();
+        let statistics = props.logical().statistics();
+        match expr {
+            OperatorExpr::Relational(RelExpr::Logical(expr)) => {
+                let statistics = self.statistics.build_statistics(expr, statistics)?;
+                let logical = LogicalProperties::new(output_columns, statistics);
+                Ok(Properties::new(logical, props.required.clone()))
+            }
+            OperatorExpr::Relational(RelExpr::Physical(expr)) => {
+                // Properties are not used by physical expressions
+                Ok(Properties::new(LogicalProperties::empty(), PhysicalProperties::none()))
+            }
+            OperatorExpr::Scalar(expr) => {
+                let statistics = statistics.cloned().unwrap_or_default();
+                let logical = LogicalProperties::new(output_columns, Some(statistics));
+                Ok(Properties::new(logical, PhysicalProperties::none()))
             }
         }
     }

@@ -56,6 +56,10 @@ where
         }
     }
 
+    pub fn set_callback(&mut self, callback: Option<Rc<dyn MemoExprCallback<Expr = T, Props = T::Props>>>) {
+        self.callback = callback;
+    }
+
     /// Copies the expression `expr` into this memo.
     pub fn insert(&mut self, expr: T) -> (MemoGroupRef<T>, MemoExprRef<T>) {
         let copy_in = CopyIn {
