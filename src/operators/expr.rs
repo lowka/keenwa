@@ -10,6 +10,9 @@ use std::fmt::{Display, Formatter};
 #[derive(Debug, Clone)]
 pub enum Expr {
     Column(ColumnId),
+    // METADATA: AliasColumn(table, column_name)
+    // AliasColumn should be used instead of Column(column_id) to simplify testing.
+    // MetadataBuilder replaces all instances of AliasColumn expressions to corresponding Column(column_id) expressions.
     Scalar(ScalarValue),
     BinaryExpr {
         lhs: Box<Expr>,
@@ -46,7 +49,9 @@ impl Expr {
                 for arg in args {
                     arg.accept(visitor);
                 }
-                if let Some(f) = filter.as_ref() { f.accept(visitor) }
+                if let Some(f) = filter.as_ref() {
+                    f.accept(visitor)
+                }
             }
             Expr::SubQuery(_) => {}
         }
