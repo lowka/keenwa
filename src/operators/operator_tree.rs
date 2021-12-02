@@ -462,7 +462,11 @@ impl<'a> TestOperatorTreeBuilder<'a> {
             let left_type = left_column.column.data_type().clone();
             let right_type = right_column.column.data_type().clone();
 
-            assert_eq!(left_type, right_type, "Data type of {}-th does not match. Type casting is not implemented", i);
+            assert_eq!(
+                left_type, right_type,
+                "Data type of {}-th column does not match. Type casting is not implemented",
+                i
+            );
 
             let column_id = self.add_column("?column?".into(), left_type);
             output_columns.push(column_id);
