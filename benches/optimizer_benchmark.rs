@@ -9,7 +9,7 @@ use keenwa::catalog::mutable::MutableCatalog;
 use keenwa::catalog::{Catalog, CatalogRef, TableBuilder, DEFAULT_SCHEMA};
 use keenwa::cost::simple::SimpleCostEstimator;
 use keenwa::datatypes::DataType;
-use keenwa::dump::OperatorMetadataBuilder;
+use keenwa::dump::TestOperatorTreeBuilder;
 use keenwa::meta::{ColumnId, Metadata};
 use keenwa::operators::expr::{BinaryOp, Expr};
 use keenwa::operators::join::JoinCondition;
@@ -119,8 +119,8 @@ fn prepare_query(
     tables: Vec<(String, Vec<(String, DataType)>)>,
     table_access_costs: HashMap<String, usize>,
 ) -> (Operator, Metadata) {
-    let mut builder = OperatorMetadataBuilder::new(memo, catalog, tables, table_access_costs);
-    let (query, metadata) = builder.build_metadata(query);
+    let mut builder = TestOperatorTreeBuilder::new(memo, catalog, tables, table_access_costs);
+    let (query, metadata) = builder.build_initialized(query);
     let mut metadata_columns = HashMap::new();
     for (id, col) in metadata {
         metadata_columns.insert(id, col.column);

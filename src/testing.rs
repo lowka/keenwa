@@ -8,7 +8,7 @@ use crate::catalog::mutable::MutableCatalog;
 use crate::catalog::{Catalog, CatalogRef};
 use crate::cost::simple::SimpleCostEstimator;
 use crate::datatypes::DataType;
-use crate::dump::OperatorMetadataBuilder;
+use crate::dump::TestOperatorTreeBuilder;
 use crate::memo::{ExprNodeRef, MemoExpr, MemoExprFormatter, StringMemoFormatter};
 use crate::meta::Metadata;
 use crate::operators::{ExprMemo, Operator};
@@ -121,9 +121,9 @@ impl OptimizerTester {
 
         let mut memo = ExprMemo::with_callback(memo_callback);
         let builder =
-            OperatorMetadataBuilder::new(&mut memo, catalog.clone(), columns, self.table_access_costs.clone());
+            TestOperatorTreeBuilder::new(&mut memo, catalog.clone(), columns, self.table_access_costs.clone());
 
-        let (operator, metadata) = builder.build_metadata(operator);
+        let (operator, metadata) = builder.build_initialized(operator);
         let mut metadata_columns = HashMap::new();
         for (id, col) in metadata {
             metadata_columns.insert(id, col.column);

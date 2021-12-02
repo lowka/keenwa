@@ -17,7 +17,15 @@ pub struct ColumnMetadata {
     pub expr: Option<Expr>,
 }
 
-pub struct OperatorMetadataBuilder<'a> {
+/// OperatorTreeBuilder allows to build a fully initialized [operator tree] from another [operator tree] that is not.
+/// (This is a workaround until there is an implementation of an [operator tree] from an SQL syntax tree builder).
+///
+/// * It initialises logical properties of every operator in the given tree
+/// * It build all required metadata (registers columns, tables, etcs)
+/// * In case when an operator has statistics it uses those statistics instead of computed ones.
+///
+/// [operator tree]: crate::operators::Operator
+pub struct TestOperatorTreeBuilder<'a> {
     memo: &'a mut Memo<Operator>,
     catalog: CatalogRef,
     metadata: HashMap<ColumnId, ColumnMetadata>,
@@ -26,7 +34,7 @@ pub struct OperatorMetadataBuilder<'a> {
     data: Vec<(String, Vec<(String, DataType)>)>,
 }
 
-impl<'a> OperatorMetadataBuilder<'a> {
+impl<'a> TestOperatorTreeBuilder<'a> {
     pub fn new(
         memo: &'a mut Memo<Operator>,
         catalog: CatalogRef,
@@ -35,7 +43,7 @@ impl<'a> OperatorMetadataBuilder<'a> {
     ) -> Self {
         let mut metadata = HashMap::new();
 
-        OperatorMetadataBuilder {
+        TestOperatorTreeBuilder {
             memo,
             catalog,
             metadata,
@@ -45,7 +53,10 @@ impl<'a> OperatorMetadataBuilder<'a> {
         }
     }
 
-    pub fn build_metadata(mut self, expr: Operator) -> (Operator, HashMap<ColumnId, ColumnMetadata>) {
+    /// Builds a fully initialized operator tree from the given operator tree.
+    /// * It first locates all tables in an operator tree to create a [catalogue](crate::catalog::Catalog).
+    /// * It the recursively traverses the given [operator tree](crate::operators::Operator) and initializes properties for every operator.
+    pub fn build_initialized(mut self, expr: Operator) -> (Operator, HashMap<ColumnId, ColumnMetadata>) {
         struct CollectTables {
             tables: HashSet<String>,
         }
@@ -668,7 +679,7 @@ fn check_column_exists(column_id: &ColumnId, input_properties: &LogicalPropertie
 mod test {
     use crate::catalog::mutable::MutableCatalog;
     use crate::datatypes::DataType;
-    use crate::dump::OperatorMetadataBuilder;
+    use crate::dump::TestOperatorTreeBuilder;
     use crate::memo::{format_memo, Memo};
     use crate::meta::ColumnId;
     use crate::operators::expr::{AggregateFunction, BinaryOp, Expr};
@@ -1072,14 +1083,14 @@ Metadata:
         ];
         let mut memo = Memo::new();
         let catalog = Arc::new(MutableCatalog::new());
-        let mut builder = OperatorMetadataBuilder::new(
+        let mut builder = TestOperatorTreeBuilder::new(
             &mut memo,
             catalog,
             tables,
             HashMap::from([("A".into(), 10), ("B".into(), 10)]),
         );
 
-        let (expr, metadata) = builder.build_metadata(expr);
+        let (expr, metadata) = builder.build_initialized(expr);
         let mut buf = String::new();
         buf.push('\n');
 
