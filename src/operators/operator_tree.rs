@@ -1,21 +1,14 @@
 use crate::catalog::mutable::MutableCatalog;
 use crate::catalog::{CatalogRef, Column, ColumnRef, TableBuilder};
 use crate::datatypes::DataType;
-use crate::memo::Memo;
-use crate::meta::ColumnId;
+use crate::meta::{ColumnId, ColumnMetadata, Metadata};
 use crate::operators::expr::{AggregateFunction, BinaryOp, Expr, ExprRewriter, ExprVisitor};
 use crate::operators::join::JoinCondition;
 use crate::operators::logical::{LogicalExpr, LogicalExprVisitor};
-use crate::operators::{Operator, OperatorExpr, Properties, RelExpr, RelNode, ScalarNode};
+use crate::operators::{ExprMemo, Operator, OperatorExpr, Properties, RelExpr, RelNode, ScalarNode};
 use crate::properties::logical::LogicalProperties;
 use crate::properties::statistics::Statistics;
 use std::collections::{HashMap, HashSet};
-
-#[derive(Debug)]
-pub struct ColumnMetadata {
-    pub column: ColumnRef,
-    pub expr: Option<Expr>,
-}
 
 /// OperatorTreeBuilder allows to build a fully initialized [operator tree] from another [operator tree] that is not.
 /// (This is a workaround until there is an implementation of an [operator tree] from an SQL syntax tree builder).
@@ -28,7 +21,7 @@ pub struct ColumnMetadata {
 ///
 /// [operator tree]: crate::operators::Operator
 pub struct TestOperatorTreeBuilder<'a> {
-    memo: &'a mut Memo<Operator>,
+    memo: &'a mut ExprMemo,
     catalog: CatalogRef,
     tables: Vec<(String, Vec<(String, DataType)>)>,
     table_column_ids: HashMap<(String, String), ColumnId>,
@@ -38,7 +31,7 @@ pub struct TestOperatorTreeBuilder<'a> {
 
 impl<'a> TestOperatorTreeBuilder<'a> {
     pub fn new(
-        memo: &'a mut Memo<Operator>,
+        memo: &'a mut ExprMemo,
         catalog: CatalogRef,
         tables: Vec<(String, Vec<(String, DataType)>)>,
         table_statistics: HashMap<String, usize>,
@@ -56,7 +49,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
     /// Builds a fully initialized operator tree from the given operator tree.
     /// * It first locates all tables in the given operator tree to register them in [catalogue](crate::catalog::Catalog).
     /// * It the recursively traverses the given [operator tree](crate::operators::Operator) and initializes properties for every operator.
-    pub fn build_initialized(mut self, expr: Operator) -> (Operator, HashMap<ColumnId, ColumnMetadata>) {
+    pub fn build_initialized(mut self, expr: Operator) -> (Operator, Metadata) {
         struct CollectTables {
             tables: HashSet<String>,
         }
@@ -96,7 +89,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
 
             for (id, column) in column_id_column {
                 let column = table.get_column(&column).expect("Column does not exist");
-                let column_meta = ColumnMetadata { column, expr: None };
+                let column_meta = ColumnMetadata::new(column, None);
                 self.metadata.insert(id, column_meta);
             }
 
@@ -110,7 +103,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
 
         let (expr, properties) = self.do_build_metadata(expr);
         let expr = Operator::new(expr, properties);
-        (expr, self.metadata)
+        (expr, Metadata::new(self.metadata))
     }
 
     fn do_build_metadata(&mut self, expr: Operator) -> (OperatorExpr, Properties) {
@@ -162,7 +155,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
     ) -> (OperatorExpr, Properties) {
         for column_id in columns.iter() {
             let column_meta = self.metadata.get(column_id).expect("Unknown column id");
-            let table_name = column_meta.column.table().expect("Get expression contains unexpected column");
+            let table_name = column_meta.column().table().expect("Get expression contains unexpected column");
             assert_eq!(table_name, source.as_str(), "column source");
         }
 
@@ -258,10 +251,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
                     _ => {
                         let expr = self.build_scalar_expr_metadata(expr, input_logical);
                         let column = Column::new("?column?".to_string(), None, DataType::Int32);
-                        let column_meta = ColumnMetadata {
-                            column: ColumnRef::new(column),
-                            expr: Some(expr),
-                        };
+                        let column_meta = ColumnMetadata::new(ColumnRef::new(column), Some(expr));
 
                         let col_id = self.metadata.len() + 1;
                         columns.push(col_id);
@@ -457,10 +447,10 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         let mut output_columns = Vec::with_capacity(left_columns.len());
 
         for (i, (l, r)) in left_columns.iter().zip(right_columns.iter()).enumerate() {
-            let left_column = &self.metadata[l];
-            let right_column = &self.metadata[r];
-            let left_type = left_column.column.data_type().clone();
-            let right_type = right_column.column.data_type().clone();
+            let left_column = self.metadata.get(l).expect("Invalid column on the left side of a join");
+            let right_column = self.metadata.get(r).expect("Invalid column on the right side of a join");
+            let left_type = left_column.column().data_type().clone();
+            let right_type = right_column.column().data_type().clone();
 
             assert_eq!(
                 left_type, right_type,
@@ -507,10 +497,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
             "?column?".to_string()
         };
         let column = Column::new(column_name, None, expr_type);
-        let column_meta = ColumnMetadata {
-            column: ColumnRef::new(column),
-            expr: Some(expr),
-        };
+        let column_meta = ColumnMetadata::new(ColumnRef::new(column), Some(expr));
 
         let col_id = self.metadata.len() + 1;
         self.metadata.insert(col_id, column_meta);
@@ -519,10 +506,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
 
     fn add_column(&mut self, column_name: String, data_type: DataType) -> ColumnId {
         let column = Column::new(column_name, None, data_type);
-        let column_meta = ColumnMetadata {
-            column: ColumnRef::new(column),
-            expr: None,
-        };
+        let column_meta = ColumnMetadata::new(ColumnRef::new(column), None);
 
         let col_id = self.metadata.len() + 1;
         self.metadata.insert(col_id, column_meta);
@@ -594,7 +578,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
 
     fn resolve_expr_type(&self, expr: &Expr) -> DataType {
         match expr {
-            Expr::Column(column_id) => self.metadata[column_id].column.data_type().clone(),
+            Expr::Column(column_id) => self.metadata[column_id].column().data_type().clone(),
             Expr::Scalar(value) => value.data_type(),
             Expr::BinaryExpr { lhs, op, rhs } => {
                 let left_tpe = self.resolve_expr_type(lhs);
@@ -667,7 +651,7 @@ mod test {
     use crate::catalog::mutable::MutableCatalog;
     use crate::datatypes::DataType;
     use crate::memo::{format_memo, Memo};
-    use crate::meta::ColumnId;
+    use crate::meta::{ColumnId, ColumnMetadata};
     use crate::operators::expr::{AggregateFunction, BinaryOp, Expr};
     use crate::operators::join::JoinCondition;
     use crate::operators::logical::LogicalExpr;
@@ -676,8 +660,7 @@ mod test {
     use crate::operators::{Operator, RelNode, ScalarNode};
     use crate::rules::testing::format_expr;
     use itertools::Itertools;
-    use std::collections::{BTreeMap, HashMap};
-    use std::iter::FromIterator;
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     #[test]
@@ -1087,25 +1070,18 @@ Metadata:
         buf.push_str(format!("  output cols: {:?}\n", expr.logical().output_columns()).as_str());
         buf.push_str("Metadata:\n");
 
-        for (id, column) in BTreeMap::from_iter(metadata.into_iter()) {
-            let column_name = if column.expr.is_none() && column.column.table().is_none() {
-                format!("  col:{} {} {:?}", id, column.column.name(), column.column.data_type())
-            } else if column.expr.is_none() {
-                format!(
-                    "  col:{} {}.{} {:?}",
-                    id,
-                    column.column.table().unwrap(),
-                    column.column.name(),
-                    column.column.data_type()
-                )
+        let columns: Vec<(ColumnId, ColumnMetadata)> =
+            metadata.columns().map(|(k, v)| (*k, v.clone())).sorted_by(|a, b| a.0.cmp(&b.0)).collect();
+
+        for (id, column_metadata) in columns {
+            let expr = column_metadata.expr();
+            let column = column_metadata.column();
+            let column_name = if expr.is_none() && column.table().is_none() {
+                format!("  col:{} {} {:?}", id, column.name(), column.data_type())
+            } else if expr.is_none() {
+                format!("  col:{} {}.{} {:?}", id, column.table().unwrap(), column.name(), column.data_type())
             } else {
-                format!(
-                    "  col:{} {} {:?}, expr: {}",
-                    id,
-                    column.column.name(),
-                    column.column.data_type(),
-                    column.expr.as_ref().unwrap(),
-                )
+                format!("  col:{} {} {:?}, expr: {}", id, column.name(), column.data_type(), expr.unwrap(),)
             };
             buf.push_str(column_name.as_str());
             buf.push('\n');

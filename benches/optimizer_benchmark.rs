@@ -9,7 +9,7 @@ use keenwa::catalog::mutable::MutableCatalog;
 use keenwa::catalog::{Catalog, CatalogRef, TableBuilder, DEFAULT_SCHEMA};
 use keenwa::cost::simple::SimpleCostEstimator;
 use keenwa::datatypes::DataType;
-use keenwa::meta::{ColumnId, Metadata};
+use keenwa::meta::{ColumnId, ColumnMetadata, Metadata};
 use keenwa::operators::expr::{BinaryOp, Expr};
 use keenwa::operators::join::JoinCondition;
 use keenwa::operators::logical::*;
@@ -26,22 +26,6 @@ use keenwa::rules::transformation::*;
 use keenwa::rules::StaticRuleSet;
 use keenwa::rules::*;
 use keenwa::util::NoOpResultCallback;
-
-fn metadata_from_catalog(catalog: &dyn Catalog) -> Metadata {
-    let mut metadata = HashMap::new();
-    let mut counter = 1;
-
-    for schema in catalog.get_schemas() {
-        for table in schema.get_tables() {
-            for c in table.columns() {
-                metadata.insert(counter, c.clone());
-                counter += 1;
-            }
-        }
-    }
-
-    Metadata::new(metadata)
-}
 
 fn memo_bench(c: &mut Criterion) {
     fn ordering(cols: Vec<ColumnId>) -> PhysicalProperties {
@@ -120,13 +104,7 @@ fn prepare_query(
     table_access_costs: HashMap<String, usize>,
 ) -> (Operator, Metadata) {
     let mut builder = TestOperatorTreeBuilder::new(memo, catalog, tables, table_access_costs);
-    let (query, metadata) = builder.build_initialized(query);
-    let mut metadata_columns = HashMap::new();
-    for (id, col) in metadata {
-        metadata_columns.insert(id, col.column);
-    }
-    let metadata = Metadata::new(metadata_columns);
-    (query, metadata)
+    builder.build_initialized(query)
 }
 
 fn create_memo(catalog: CatalogRef) -> ExprMemo {
