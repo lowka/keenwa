@@ -139,7 +139,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
                 LogicalExpr::Join { left, right, condition } => {
                     self.build_join_metadata(left, right, condition, properties)
                 }
-                LogicalExpr::Get { source, columns } => self.build_get_metadata(source, columns, vec![], properties),
+                LogicalExpr::Get { source, columns } => self.build_get_metadata(source, columns, properties),
                 LogicalExpr::Union { left, right, all } => {
                     self.build_set_op_metadata(left, right, SetOp::Union, all, properties)
                 }
@@ -158,34 +158,17 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         &mut self,
         source: String,
         columns: Vec<ColumnId>,
-        column_names: Vec<String>,
         properties: Properties,
     ) -> (OperatorExpr, Properties) {
-        let expr = if column_names.is_empty() {
-            for column_id in columns.iter() {
-                let column_meta = self.metadata.get(column_id).expect("Unknown column id");
-                let table_name = column_meta.column.table().expect("Get expression contains unexpected column");
-                assert_eq!(table_name, source.as_str(), "column source");
-            }
+        for column_id in columns.iter() {
+            let column_meta = self.metadata.get(column_id).expect("Unknown column id");
+            let table_name = column_meta.column.table().expect("Get expression contains unexpected column");
+            assert_eq!(table_name, source.as_str(), "column source");
+        }
 
-            LogicalExpr::Get {
-                source,
-                columns: columns.clone(),
-            }
-        } else {
-            let mut columns = Vec::new();
-            for column_name in column_names {
-                let table = self.catalog.get_table(source.as_str()).expect("Unknown table");
-                let _column = table.get_column(column_name.as_str()).expect("Unexpected column");
-                let column_id = self
-                    .table_column_ids
-                    .get(&(table.name().clone(), column_name))
-                    .expect("Column does not exists");
-
-                columns.push(*column_id);
-            }
-            todo!("add column names to LogicalExpr::Get");
-            LogicalExpr::Get { source, columns }
+        let expr = LogicalExpr::Get {
+            source,
+            columns: columns.clone(),
         };
 
         let statistics = properties.logical.statistics().cloned();
