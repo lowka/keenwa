@@ -1,4 +1,4 @@
-use crate::catalog::{Column, ColumnRef};
+use crate::datatypes::DataType;
 use crate::operators::expr::Expr;
 
 /// Uniquely identifies a column within a query.
@@ -10,28 +10,58 @@ pub struct Metadata {
     columns: Vec<ColumnMetadata>,
 }
 
-/// Column metadata stores a reference to a column of a particular database table or a reference to a synthetic
-/// column produced by an operator. In later case the `expr` field stores an expression that used to compute values of the column.
+/// Column metadata stores information about some column. If the table property is set then this is information about
+/// a column in that database table. Otherwise this is a metadata of a synthetic column derived
+/// from a column in a projection list.
 #[derive(Debug, Clone)]
 pub struct ColumnMetadata {
-    /// Stores a reference to a column of some database table or attributes of a synthetic column.
-    column: ColumnRef,
-    /// In case of a synthetic column stores an expression that computes value for that column.
+    /// The name of this column.
+    name: String,
+    /// The type of this column.
+    data_type: DataType,
+    /// If present stores the name of the table this column belongs to.
+    table: Option<String>,
+    /// If present stores an expression this column is derived from.
     expr: Option<Expr>,
 }
 
 impl ColumnMetadata {
-    /// Creates a new instance of column metadata.
-    pub fn new(column: ColumnRef, expr: Option<Expr>) -> Self {
-        ColumnMetadata { column, expr }
+    /// Creates column metadata for a column that belongs to the given table.
+    pub fn new_table_column(name: String, data_type: DataType, table: String) -> Self {
+        ColumnMetadata {
+            name,
+            data_type,
+            table: Some(table),
+            expr: None,
+        }
     }
 
-    /// Returns a column this metadata.
-    pub fn column(&self) -> &Column {
-        self.column.as_ref()
+    /// Creates column metadata for a synthetic column.
+    pub fn new_synthetic_column(name: String, data_type: DataType, expr: Option<Expr>) -> Self {
+        ColumnMetadata {
+            name,
+            data_type,
+            table: None,
+            expr,
+        }
     }
 
-    /// If this a synthetic column metadata return the expression used to compute values for that column.  
+    /// Returns the name of this column.
+    pub fn name(&self) -> &String {
+        &self.name
+    }
+
+    /// Returns the type of this column.
+    pub fn data_type(&self) -> &DataType {
+        &self.data_type
+    }
+
+    /// Returns the table this column belongs to. If the table is absent then this a synthetic column.
+    pub fn table(&self) -> Option<&String> {
+        self.table.as_ref()
+    }
+
+    /// Returns the expression this column is derived from.
     pub fn expr(&self) -> Option<&Expr> {
         self.expr.as_ref()
     }
@@ -49,6 +79,7 @@ impl Metadata {
             .unwrap_or_else(|| panic!("Unknown or unexpected column id: {:?}", column_id))
     }
 
+    /// Returns an iterator over available column metadata.
     pub fn columns(&self) -> impl Iterator<Item = (ColumnId, &ColumnMetadata)> {
         self.columns.iter().enumerate().map(|(i, c)| (i + 1, c))
     }

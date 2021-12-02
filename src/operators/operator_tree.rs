@@ -1,5 +1,5 @@
 use crate::catalog::mutable::MutableCatalog;
-use crate::catalog::{CatalogRef, Column, ColumnRef, TableBuilder};
+use crate::catalog::{CatalogRef, TableBuilder};
 use crate::datatypes::DataType;
 use crate::meta::{ColumnId, ColumnMetadata, Metadata, MutableMetadata};
 use crate::operators::expr::{AggregateFunction, BinaryOp, Expr, ExprRewriter, ExprVisitor};
@@ -98,7 +98,11 @@ impl<'a> TestOperatorTreeBuilder<'a> {
 
             for (id, column) in column_id_column {
                 let column = table.get_column(&column).expect("Column does not exist");
-                let column_meta = ColumnMetadata::new(column, None);
+                let column_meta = ColumnMetadata::new_table_column(
+                    column.name().clone(),
+                    column.data_type().clone(),
+                    table_name.clone(),
+                );
                 initial_metadata.insert(id, column_meta);
             }
 
@@ -106,7 +110,6 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         }
 
         for (_id, column) in initial_metadata {
-            //self.metadata.insert(id, column);
             self.metadata.add_column(column);
         }
 
@@ -165,7 +168,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
     ) -> (OperatorExpr, Properties) {
         for column_id in columns.iter() {
             let column_meta = self.metadata.get_column(column_id);
-            let table_name = column_meta.column().table().expect("Get expression contains unexpected column");
+            let table_name = column_meta.table().expect("Get expression contains unexpected column");
             assert_eq!(table_name, source.as_str(), "column source");
         }
 
@@ -260,8 +263,9 @@ impl<'a> TestOperatorTreeBuilder<'a> {
                     }
                     _ => {
                         let expr = self.build_scalar_expr_metadata(expr, input_logical);
-                        let column = Column::new("?column?".to_string(), None, DataType::Int32);
-                        let column_meta = ColumnMetadata::new(ColumnRef::new(column), Some(expr));
+                        let column_name = "?column?".to_string();
+                        let data_type = self.resolve_expr_type(&expr);
+                        let column_meta = ColumnMetadata::new_synthetic_column(column_name, data_type, Some(expr));
                         let column_id = self.metadata.add_column(column_meta);
                         columns.push(column_id);
                     }
@@ -457,8 +461,8 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         for (i, (l, r)) in left_columns.iter().zip(right_columns.iter()).enumerate() {
             let left_column = self.metadata.get_column(l);
             let right_column = self.metadata.get_column(r);
-            let left_type = left_column.column().data_type().clone();
-            let right_type = right_column.column().data_type().clone();
+            let left_type = left_column.data_type().clone();
+            let right_type = right_column.data_type().clone();
 
             assert_eq!(
                 left_type, right_type,
@@ -466,7 +470,8 @@ impl<'a> TestOperatorTreeBuilder<'a> {
                 i
             );
 
-            let column_id = self.add_column("?column?".into(), left_type);
+            let column_meta = ColumnMetadata::new_synthetic_column("".to_string(), left_type, None);
+            let column_id = self.metadata.add_column(column_meta);
             output_columns.push(column_id);
         }
 
@@ -502,17 +507,9 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         let column_name = if let Expr::Aggregate { func, .. } = &expr {
             func.to_string()
         } else {
-            "?column?".to_string()
+            "".to_string()
         };
-        let column = Column::new(column_name, None, expr_type);
-        let column_meta = ColumnMetadata::new(ColumnRef::new(column), Some(expr));
-
-        self.metadata.add_column(column_meta)
-    }
-
-    fn add_column(&mut self, column_name: String, data_type: DataType) -> ColumnId {
-        let column = Column::new(column_name, None, data_type);
-        let column_meta = ColumnMetadata::new(ColumnRef::new(column), None);
+        let column_meta = ColumnMetadata::new_synthetic_column(column_name, expr_type, Some(expr));
 
         self.metadata.add_column(column_meta)
     }
@@ -582,7 +579,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
 
     fn resolve_expr_type(&self, expr: &Expr) -> DataType {
         match expr {
-            Expr::Column(column_id) => self.metadata.get_column(column_id).column().data_type().clone(),
+            Expr::Column(column_id) => self.metadata.get_column(column_id).data_type().clone(),
             Expr::Scalar(value) => value.data_type(),
             Expr::BinaryExpr { lhs, op, rhs } => {
                 let left_tpe = self.resolve_expr_type(lhs);
@@ -1077,13 +1074,18 @@ Metadata:
         let columns: Vec<(ColumnId, ColumnMetadata)> =
             metadata.columns().map(|(k, v)| (k, v.clone())).sorted_by(|a, b| a.0.cmp(&b.0)).collect();
 
-        for (id, column_metadata) in columns {
-            let expr = column_metadata.expr();
-            let column = column_metadata.column();
-            let column_info = match (expr, column.table()) {
-                (None, None) => format!("  col:{} {} {:?}", id, column.name(), column.data_type()),
-                (None, Some(table)) => format!("  col:{} {}.{} {:?}", id, table, column.name(), column.data_type()),
-                (Some(expr), _) => format!("  col:{} {} {:?}, expr: {}", id, column.name(), column.data_type(), expr),
+        for (id, column) in columns {
+            let expr = column.expr();
+            let table = column.table();
+            let column_name = if !column.name().is_empty() {
+                column.name().as_str()
+            } else {
+                "?column?"
+            };
+            let column_info = match (expr, table) {
+                (None, None) => format!("  col:{} {} {:?}", id, column_name, column.data_type()),
+                (None, Some(table)) => format!("  col:{} {}.{} {:?}", id, table, column_name, column.data_type()),
+                (Some(expr), _) => format!("  col:{} {} {:?}, expr: {}", id, column_name, column.data_type(), expr),
             };
             buf.push_str(column_info.as_str());
             buf.push('\n');

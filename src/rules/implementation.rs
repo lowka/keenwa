@@ -215,7 +215,7 @@ impl IndexOnlyScanRule {
             for (i, idx_column) in index.columns().iter().enumerate() {
                 let column_id = columns[i];
                 let column = ctx.metadata().get_column(&column_id);
-                if idx_column.as_ref() != column.column() {
+                if idx_column.name() != column.name() {
                     continue;
                 }
             }
