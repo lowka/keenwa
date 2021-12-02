@@ -70,13 +70,13 @@ impl<'a> TestOperatorTreeBuilder<'a> {
 
         let mut collector = CollectTables { tables: HashSet::new() };
         expr.expr().as_relational().as_logical().accept(&mut collector);
-        let queried_tables = collector.tables;
+        let referenced_tables = collector.tables;
 
         let mut tables = HashMap::new();
         let mut next_col_id = 1;
 
         for (table_name, columns) in self.tables.clone() {
-            if !queried_tables.contains(&table_name) {
+            if !referenced_tables.contains(&table_name) {
                 continue;
             }
 
