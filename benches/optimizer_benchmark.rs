@@ -103,7 +103,7 @@ fn prepare_query(
     tables: Vec<(String, Vec<(String, DataType)>)>,
     table_access_costs: HashMap<String, usize>,
 ) -> (Operator, Metadata) {
-    let mut builder = TestOperatorTreeBuilder::new(memo, catalog, tables, table_access_costs);
+    let builder = TestOperatorTreeBuilder::new(memo, catalog, tables, table_access_costs);
     builder.build_initialized(query)
 }
 

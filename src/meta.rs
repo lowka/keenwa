@@ -1,6 +1,5 @@
 use crate::catalog::{Column, ColumnRef};
 use crate::operators::expr::Expr;
-use std::collections::HashMap;
 
 /// Uniquely identifies a column within a query.
 pub type ColumnId = usize;
@@ -8,7 +7,7 @@ pub type ColumnId = usize;
 /// Stores a mapping between databases objects and their identifiers that are globally unique within a query.
 #[derive(Debug, Clone)]
 pub struct Metadata {
-    columns: HashMap<ColumnId, ColumnMetadata>,
+    columns: Vec<ColumnMetadata>,
 }
 
 /// Column metadata stores a reference to a column of a particular database table or a reference to a synthetic
@@ -39,43 +38,52 @@ impl ColumnMetadata {
 }
 
 impl Metadata {
-    pub fn new(columns: HashMap<ColumnId, ColumnMetadata>) -> Self {
+    pub fn new(columns: Vec<ColumnMetadata>) -> Self {
         Metadata { columns }
     }
 
     /// Retrieves column metadata by the given column id.
     pub fn get_column(&self, column_id: &ColumnId) -> &ColumnMetadata {
         self.columns
-            .get(column_id)
+            .get(column_id - 1)
             .unwrap_or_else(|| panic!("Unknown or unexpected column id: {:?}", column_id))
     }
 
-    pub fn columns(&self) -> impl Iterator<Item = (&ColumnId, &ColumnMetadata)> {
-        self.columns.iter()
+    pub fn columns(&self) -> impl Iterator<Item = (ColumnId, &ColumnMetadata)> {
+        self.columns.iter().enumerate().map(|(i, c)| (i + 1, c))
     }
 }
 
+/// A mutable variant of a [Metadata](self::Metadata).
 pub struct MutableMetadata {
     columns: Vec<ColumnMetadata>,
 }
 
 impl MutableMetadata {
+    /// Creates a new instance of a MutableMetadata.
     pub fn new() -> Self {
         MutableMetadata { columns: Vec::new() }
     }
 
-    pub fn add_column(&mut self, column: ColumnRef, expr: Option<Expr>) -> ColumnId {
-        self.columns.push(ColumnMetadata::new(column, expr));
+    /// Adds a new column to this metadata.
+    pub fn add_column(&mut self, column: ColumnMetadata) -> ColumnId {
+        self.columns.push(column);
         self.columns.len()
     }
 
+    /// Returns column metadata for the given column id.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if there is no metadata for the given column.
     pub fn get_column(&self, column_id: &ColumnId) -> &ColumnMetadata {
         self.columns
             .get(column_id - 1)
             .unwrap_or_else(|| panic!("Unknown or unexpected column id: {:?}", column_id))
     }
 
-    pub fn get_metadata(self) -> Metadata {
-        todo!()
+    /// Converts this instance to a immutable [metadata](self::Metadata).
+    pub fn to_metadata(self) -> Metadata {
+        Metadata::new(self.columns)
     }
 }

@@ -10,7 +10,6 @@ use crate::properties::statistics::{Statistics, StatisticsBuilder};
 use crate::rules::{Rule, RuleContext, RuleId, RuleIterator, RuleResult, RuleSet};
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
-use std::collections::HashMap;
 use std::fmt::Display;
 use std::rc::Rc;
 
@@ -33,7 +32,7 @@ impl RuleTester {
         RuleTester {
             rule: Box::new(rule),
             memo: ExprMemo::with_callback(Rc::new(props_builder)),
-            metadata: Metadata::new(HashMap::new()),
+            metadata: Metadata::new(Vec::new()),
         }
     }
 
