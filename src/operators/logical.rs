@@ -32,8 +32,8 @@ pub enum LogicalExpr {
     Get {
         source: String,
         columns: Vec<ColumnId>,
-        //METADATA: column_names: Vec<String>.
-        // MetadataBuilder replaces column_names with corresponding column ids from the metadata.
+        //OperatorTreeBuilder: column_names: Vec<String>.
+        //TestOperatorTreeBuilder replaces column_names with corresponding column ids from the metadata.
     },
     Union {
         left: RelNode,

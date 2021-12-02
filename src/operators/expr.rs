@@ -10,9 +10,9 @@ use std::fmt::{Display, Formatter};
 #[derive(Debug, Clone)]
 pub enum Expr {
     Column(ColumnId),
-    // METADATA: AliasColumn(table, column_name)
+    // TestOperatorTreeBuilder: AliasColumn(table, column_name)
     // AliasColumn should be used instead of Column(column_id) to simplify testing.
-    // MetadataBuilder replaces all instances of AliasColumn expressions to corresponding Column(column_id) expressions.
+    // TestOperatorTreeBuilder replaces all instances of AliasColumn expressions to corresponding Column(column_id) expressions.
     Scalar(ScalarValue),
     BinaryExpr {
         lhs: Box<Expr>,

@@ -20,39 +20,41 @@ pub struct ColumnMetadata {
 /// OperatorTreeBuilder allows to build a fully initialized [operator tree] from another [operator tree] that is not.
 /// (This is a workaround until there is an implementation of an [operator tree] from an SQL syntax tree builder).
 ///
-/// * It initialises logical properties of every operator in the given tree
-/// * It build all required metadata (registers columns, tables, etcs)
+/// * It initialises logical properties of every operator in the given tree.
+/// * It builds all required metadata (registers columns, tables, etc.)
 /// * In case when an operator has statistics it uses those statistics instead of computed ones.
+/// * It registers tables referenced in a query in a provided [catalogue](crate::catalog::Catalog).
+/// * It uses a [memo](crate::memo::Memo) to memoize nested sub-queries.
 ///
 /// [operator tree]: crate::operators::Operator
 pub struct TestOperatorTreeBuilder<'a> {
     memo: &'a mut Memo<Operator>,
     catalog: CatalogRef,
-    metadata: HashMap<ColumnId, ColumnMetadata>,
+    tables: Vec<(String, Vec<(String, DataType)>)>,
     table_column_ids: HashMap<(String, String), ColumnId>,
     table_statistics: HashMap<String, usize>,
-    data: Vec<(String, Vec<(String, DataType)>)>,
+    metadata: HashMap<ColumnId, ColumnMetadata>,
 }
 
 impl<'a> TestOperatorTreeBuilder<'a> {
     pub fn new(
         memo: &'a mut Memo<Operator>,
         catalog: CatalogRef,
-        data: Vec<(String, Vec<(String, DataType)>)>,
+        tables: Vec<(String, Vec<(String, DataType)>)>,
         table_statistics: HashMap<String, usize>,
     ) -> Self {
         TestOperatorTreeBuilder {
             memo,
             catalog,
-            metadata: HashMap::new(),
+            tables,
             table_column_ids: HashMap::new(),
             table_statistics,
-            data,
+            metadata: HashMap::new(),
         }
     }
 
     /// Builds a fully initialized operator tree from the given operator tree.
-    /// * It first locates all tables in an operator tree to create a [catalogue](crate::catalog::Catalog).
+    /// * It first locates all tables in the given operator tree to register them in [catalogue](crate::catalog::Catalog).
     /// * It the recursively traverses the given [operator tree](crate::operators::Operator) and initializes properties for every operator.
     pub fn build_initialized(mut self, expr: Operator) -> (Operator, HashMap<ColumnId, ColumnMetadata>) {
         struct CollectTables {
@@ -73,7 +75,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         let mut tables = HashMap::new();
         let mut next_col_id = 1;
 
-        for (table_name, columns) in self.data.clone() {
+        for (table_name, columns) in self.tables.clone() {
             if !queried_tables.contains(&table_name) {
                 continue;
             }
