@@ -1,7 +1,6 @@
 pub mod catalog;
 pub mod cost;
 pub mod datatypes;
-pub mod dump;
 pub mod error;
 pub mod memo;
 pub mod meta;

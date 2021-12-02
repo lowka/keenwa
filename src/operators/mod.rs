@@ -13,6 +13,7 @@ use std::fmt::Debug;
 pub mod expr;
 pub mod join;
 pub mod logical;
+pub mod operator_tree;
 pub mod physical;
 pub mod scalar;
 

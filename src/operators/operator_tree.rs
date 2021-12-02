@@ -41,12 +41,10 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         data: Vec<(String, Vec<(String, DataType)>)>,
         table_statistics: HashMap<String, usize>,
     ) -> Self {
-        let mut metadata = HashMap::new();
-
         TestOperatorTreeBuilder {
             memo,
             catalog,
-            metadata,
+            metadata: HashMap::new(),
             table_column_ids: HashMap::new(),
             table_statistics,
             data,
@@ -679,12 +677,12 @@ fn check_column_exists(column_id: &ColumnId, input_properties: &LogicalPropertie
 mod test {
     use crate::catalog::mutable::MutableCatalog;
     use crate::datatypes::DataType;
-    use crate::dump::TestOperatorTreeBuilder;
     use crate::memo::{format_memo, Memo};
     use crate::meta::ColumnId;
     use crate::operators::expr::{AggregateFunction, BinaryOp, Expr};
     use crate::operators::join::JoinCondition;
     use crate::operators::logical::LogicalExpr;
+    use crate::operators::operator_tree::TestOperatorTreeBuilder;
     use crate::operators::scalar::ScalarValue;
     use crate::operators::{Operator, RelNode, ScalarNode};
     use crate::rules::testing::format_expr;
@@ -1083,7 +1081,7 @@ Metadata:
         ];
         let mut memo = Memo::new();
         let catalog = Arc::new(MutableCatalog::new());
-        let mut builder = TestOperatorTreeBuilder::new(
+        let builder = TestOperatorTreeBuilder::new(
             &mut memo,
             catalog,
             tables,

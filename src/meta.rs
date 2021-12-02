@@ -7,7 +7,7 @@ pub type ColumnId = usize;
 /// Stores a mapping between databases objects and their identifiers that are globally unique within a query.
 #[derive(Debug, Clone)]
 pub struct Metadata {
-    columns: HashMap<ColumnId, ColumnRef>,
+    pub(crate) columns: HashMap<ColumnId, ColumnRef>,
 }
 
 impl Metadata {

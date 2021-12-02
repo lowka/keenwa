@@ -1,10 +1,6 @@
 use crate::error::OptimizerError;
 use crate::meta::ColumnId;
-use crate::operators::expr::Expr;
-use crate::operators::join::JoinCondition;
-use crate::operators::logical::LogicalExpr;
-use crate::operators::physical::PhysicalExpr;
-use crate::operators::{OperatorExpr, Properties, RelExpr, RelNode, ScalarNode};
+use crate::operators::{OperatorExpr, Properties, RelExpr};
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::statistics::{Statistics, StatisticsBuilder};
 use std::fmt::Debug;
