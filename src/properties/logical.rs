@@ -1,10 +1,7 @@
 use crate::error::OptimizerError;
 use crate::meta::ColumnId;
-use crate::operators::expr::Expr;
-use crate::operators::join::JoinCondition;
-use crate::operators::logical::LogicalExpr;
-use crate::operators::physical::PhysicalExpr;
-use crate::operators::{OperatorExpr, RelExpr, RelNode, ScalarNode};
+use crate::operators::{OperatorExpr, Properties, RelExpr};
+use crate::properties::physical::PhysicalProperties;
 use crate::properties::statistics::{Statistics, StatisticsBuilder};
 use std::fmt::Debug;
 
@@ -12,9 +9,9 @@ use std::fmt::Debug;
 #[derive(Debug, Clone)]
 pub struct LogicalProperties {
     // FIXME: use a bit set instead of a vec.
-    output_columns: Vec<ColumnId>,
-    //FIXME: Make non-optional?
-    statistics: Option<Statistics>,
+    pub(crate) output_columns: Vec<ColumnId>,
+    //FIXME: Make this non-optional when logical properties builder API becomes stable.
+    pub(crate) statistics: Option<Statistics>,
 }
 
 impl LogicalProperties {
@@ -56,11 +53,9 @@ impl Default for LogicalProperties {
 
 /// Provides logical properties for memo expressions.
 pub trait PropertiesProvider: Debug {
-    fn build_properties(
-        &self,
-        expr: &OperatorExpr,
-        statistics: Option<&Statistics>,
-    ) -> Result<LogicalProperties, OptimizerError>;
+    /// Builds properties for the given expression `expr`. `manual_props` contains properties that
+    /// has been added by hand to modify statistics or other properties of the given expression to simplify testing.  
+    fn build_properties(&self, expr: &OperatorExpr, manual_props: Properties) -> Result<Properties, OptimizerError>;
 }
 
 #[derive(Debug)]
@@ -68,174 +63,33 @@ pub struct LogicalPropertiesBuilder {
     statistics: Box<dyn StatisticsBuilder>,
 }
 
-impl PropertiesProvider for LogicalPropertiesBuilder {
-    fn build_properties(
-        &self,
-        expr: &OperatorExpr,
-        statistics: Option<&Statistics>,
-    ) -> Result<LogicalProperties, OptimizerError> {
-        match expr {
-            OperatorExpr::Relational(rel_expr) => match rel_expr {
-                RelExpr::Logical(expr) => {
-                    let statistics = self.statistics.build_statistics(expr, statistics)?;
-                    Ok(self.build_for_logical(expr, statistics))
-                }
-                RelExpr::Physical(expr) => {
-                    self.build_for_physical(expr);
-                    // Properties are not used by physical expressions
-                    Ok(LogicalProperties::empty())
-                }
-            },
-            OperatorExpr::Scalar(_) => {
-                let statistics = statistics.cloned().unwrap_or_default();
-                let props = LogicalProperties::new(Vec::new(), Some(statistics));
-                Ok(props)
-            }
-        }
-    }
-}
-
 impl LogicalPropertiesBuilder {
     pub fn new(statistics: Box<dyn StatisticsBuilder>) -> Self {
         LogicalPropertiesBuilder { statistics }
     }
+}
 
-    fn build_for_logical(&self, expr: &LogicalExpr, statistics: Option<Statistics>) -> LogicalProperties {
-        let columns = match expr {
-            LogicalExpr::Projection { input, columns } => collect_columns_from_input(input, columns),
-            LogicalExpr::Select { input, .. } => {
-                let empty = Vec::with_capacity(0);
-                collect_columns_from_input(input, &empty)
-            }
-            LogicalExpr::Aggregate {
-                input,
-                aggr_exprs,
-                group_exprs,
-            } => {
-                let mut required = Vec::new();
-                collect_columns_from_scalar_exprs(aggr_exprs, &mut required);
-                // TODO: validate group exprs
-                collect_columns_from_scalar_exprs(group_exprs, &mut required);
-                collect_columns_from_input(input, &required)
-            }
-            LogicalExpr::Join { left, right, condition } => collect_columns_from_join_condition(left, right, condition),
-            LogicalExpr::Get { columns, .. } => columns.clone(),
-            LogicalExpr::Union { left, right, .. }
-            | LogicalExpr::Intersect { left, right, .. }
-            | LogicalExpr::Except { left, right, .. } => {
-                let left_columns = collect_columns_from_input(left, &[]);
-                let right_columns = collect_columns_from_input(right, &[]);
-
-                assert_eq!(left_columns.len(), right_columns.len(), "each side must have the same number of columns");
-                // FIXME: operators should use output columns from logical properties.
-                left_columns
-            }
-        };
-        LogicalProperties::new(columns, statistics)
-    }
-
-    fn build_for_physical(&self, expr: &PhysicalExpr) -> LogicalProperties {
+impl PropertiesProvider for LogicalPropertiesBuilder {
+    fn build_properties(&self, expr: &OperatorExpr, manual_props: Properties) -> Result<Properties, OptimizerError> {
+        let Properties { logical, required } = manual_props;
+        let output_columns = logical.output_columns;
+        let statistics = logical.statistics;
         match expr {
-            PhysicalExpr::Projection { input, columns } => {
-                collect_columns_from_input(input, columns);
+            OperatorExpr::Relational(RelExpr::Logical(expr)) => {
+                let statistics = self.statistics.build_statistics(expr, statistics.as_ref())?;
+                let logical = LogicalProperties::new(output_columns, statistics);
+                Ok(Properties::new(logical, required))
             }
-            PhysicalExpr::Select { input, .. } => {
-                let empty = Vec::with_capacity(0);
-                collect_columns_from_input(input, &empty);
+            OperatorExpr::Relational(RelExpr::Physical(_)) => {
+                //TODO: compute statistics for physical expressions
+                let logical = LogicalProperties::new(output_columns, statistics);
+                Ok(Properties::new(logical, required))
             }
-            PhysicalExpr::HashAggregate {
-                input,
-                aggr_exprs,
-                group_exprs,
-            } => {
-                let mut required = Vec::new();
-                // TODO: validate group exprs
-                collect_columns_from_scalar_exprs(aggr_exprs, &mut required);
-                collect_columns_from_scalar_exprs(group_exprs, &mut required);
-                collect_columns_from_input(input, &required);
+            OperatorExpr::Scalar(_) => {
+                assert!(required.is_empty(), "Physical properties can not be set for scalar expressions");
+                let logical = LogicalProperties::new(output_columns, statistics);
+                Ok(Properties::new(logical, PhysicalProperties::none()))
             }
-            PhysicalExpr::HashJoin { left, right, condition } => {
-                collect_columns_from_join_condition(left, right, condition);
-            }
-            PhysicalExpr::MergeSortJoin { left, right, condition } => {
-                collect_columns_from_join_condition(left, right, condition);
-            }
-            PhysicalExpr::Scan { .. } => {}
-            PhysicalExpr::IndexScan { .. } => {}
-            PhysicalExpr::Sort { input, ordering } => {
-                let required = ordering.columns();
-                collect_columns_from_input(input, required);
-            }
-            PhysicalExpr::Append { left, right }
-            | PhysicalExpr::Unique { left, right }
-            | PhysicalExpr::HashedSetOp { left, right, .. } => {
-                let left_columns = collect_columns_from_input(left, &[]);
-                let right_columns = collect_columns_from_input(right, &[]);
-
-                assert_eq!(left_columns.len(), right_columns.len(), "the number of columns does not match");
-            }
-        };
-        //FIXME:
-        LogicalProperties::empty()
-    }
-}
-
-fn collect_columns_from_input(input: &RelNode, used: &[ColumnId]) -> Vec<ColumnId> {
-    let logical = input.props().logical();
-    let output_columns = logical.output_columns();
-    let columns: Vec<ColumnId> = output_columns.iter().copied().collect();
-
-    assert!(
-        used.iter().all(|c| columns.contains(c)),
-        "Unexpected columns. Inputs {:?}. required: {:?}",
-        columns,
-        used
-    );
-
-    columns
-}
-
-fn collect_columns_from_join_condition(left: &RelNode, right: &RelNode, condition: &JoinCondition) -> Vec<ColumnId> {
-    match condition {
-        JoinCondition::Using(using) => {
-            let (left_side, right_side): (Vec<ColumnId>, Vec<ColumnId>) = using.get_columns_pair();
-            let mut left_columns = collect_columns_from_input(left, &left_side);
-            let right_columns = collect_columns_from_input(right, &right_side);
-
-            left_columns.extend(right_columns.into_iter());
-            left_columns
-        }
-    }
-}
-
-fn collect_columns_from_exprs(exprs: &[Expr], columns: &mut Vec<ColumnId>) {
-    for expr in exprs {
-        collect_columns_from_expr(expr, columns);
-    }
-}
-
-fn collect_columns_from_scalar_exprs(exprs: &[ScalarNode], columns: &mut Vec<ColumnId>) {
-    for expr in exprs {
-        collect_columns_from_expr(expr.expr(), columns);
-    }
-}
-
-fn collect_columns_from_expr(expr: &Expr, columns: &mut Vec<ColumnId>) {
-    match expr {
-        Expr::Column(id) => columns.push(*id),
-        Expr::Scalar(_) => {}
-        Expr::BinaryExpr { lhs, rhs, .. } => {
-            collect_columns_from_expr(lhs, columns);
-            collect_columns_from_expr(rhs, columns);
-        }
-        Expr::Not(expr) => {
-            collect_columns_from_expr(expr, columns);
-        }
-        Expr::Aggregate { args, .. } => {
-            collect_columns_from_exprs(args, columns);
-        }
-        Expr::SubQuery(expr) => {
-            collect_columns_from_input(expr, columns);
         }
     }
 }

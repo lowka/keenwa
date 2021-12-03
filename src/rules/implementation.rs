@@ -111,7 +111,11 @@ impl Rule for ProjectionRule {
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
-            LogicalExpr::Projection { input, columns } => {
+            LogicalExpr::Projection {
+                input,
+                columns,
+                exprs: _exprs,
+            } => {
                 let expr = PhysicalExpr::Projection {
                     input: input.clone(),
                     columns: columns.clone(),
@@ -211,7 +215,7 @@ impl IndexOnlyScanRule {
             for (i, idx_column) in index.columns().iter().enumerate() {
                 let column_id = columns[i];
                 let column = ctx.metadata().get_column(&column_id);
-                if idx_column != column {
+                if idx_column.name() != column.name() {
                     continue;
                 }
             }

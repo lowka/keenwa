@@ -5,13 +5,13 @@ use std::rc::Rc;
 use std::sync::{Arc, Once};
 
 use crate::catalog::mutable::MutableCatalog;
-use crate::catalog::{CatalogRef, TableBuilder, DEFAULT_SCHEMA};
+use crate::catalog::{Catalog, CatalogRef};
 use crate::cost::simple::SimpleCostEstimator;
 use crate::datatypes::DataType;
 use crate::memo::{ExprNodeRef, MemoExpr, MemoExprFormatter, StringMemoFormatter};
-use crate::meta::Metadata;
-use crate::operators::Operator;
-use crate::optimizer::Optimizer;
+use crate::operators::operator_tree::TestOperatorTreeBuilder;
+use crate::operators::{ExprMemo, Operator};
+use crate::optimizer::{Optimizer, SetPropertiesCallback};
 use crate::properties::logical::LogicalPropertiesBuilder;
 use crate::properties::statistics::CatalogStatisticsBuilder;
 use crate::rules::implementation::{GetToScanRule, ProjectionRule, SelectRule};
@@ -110,8 +110,21 @@ impl OptimizerTester {
     ///
     pub fn optimize(&self, operator: Operator, expected_plan: &str) {
         let tables = TestTables::new();
-        let (catalog, metadata) = tables.build(&self.table_access_costs, &self.update_catalog);
-        let catalog = Arc::new(catalog);
+        let columns = tables.columns;
+
+        let catalog = Arc::new(MutableCatalog::new());
+        let statistics_builder = CatalogStatisticsBuilder::new(catalog.clone());
+        let properties_builder = LogicalPropertiesBuilder::new(Box::new(statistics_builder));
+        let propagate_properties = SetPropertiesCallback::new(Rc::new(properties_builder));
+        let memo_callback = Rc::new(propagate_properties);
+
+        let mut memo = ExprMemo::with_callback(memo_callback);
+        let builder =
+            TestOperatorTreeBuilder::new(&mut memo, catalog.clone(), columns, self.table_access_costs.clone());
+
+        let (operator, metadata) = builder.build_initialized(operator);
+        let mutable_catalog = catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();
+        (self.update_catalog)(mutable_catalog);
 
         let mut default_rules: Vec<Box<dyn Rule>> = vec![
             Box::new(GetToScanRule::new(catalog.clone())),
@@ -125,19 +138,14 @@ impl OptimizerTester {
 
         let rules = TestRuleSet::new(StaticRuleSet::new(rules), self.shuffle_rules, self.explore_with_enforcer);
         let cost_estimator = SimpleCostEstimator::new();
-        let statistics_builder = CatalogStatisticsBuilder::new(catalog);
-        let properties_builder = LogicalPropertiesBuilder::new(Box::new(statistics_builder));
         let test_result = Rc::new(RefCell::new(VecDeque::new()));
         let result_callback = TestResultBuilder::new(test_result.clone());
 
-        let optimizer = Optimizer::new(
-            Rc::new(rules),
-            Rc::new(cost_estimator),
-            Rc::new(properties_builder),
-            Rc::new(result_callback),
-        );
+        let optimizer = Optimizer::new(Rc::new(rules), Rc::new(cost_estimator), Rc::new(result_callback));
 
-        let _opt_expr = optimizer.optimize(operator, metadata).expect("Failed to optimize an operator tree");
+        let _opt_expr = optimizer
+            .optimize(operator, metadata, &mut memo)
+            .expect("Failed to optimize an operator tree");
         let expected_lines: Vec<String> = expected_plan.split('\n').map(|l| l.to_string()).collect();
         let label = if expected_plan.starts_with("query:") {
             expected_lines[0].trim()
@@ -152,58 +160,18 @@ impl OptimizerTester {
 }
 
 pub struct TestTables {
-    columns: HashMap<String, Vec<(String, DataType)>>,
+    columns: Vec<(String, Vec<(String, DataType)>)>,
 }
 
 impl TestTables {
     pub fn new() -> Self {
         TestTables {
-            columns: HashMap::from([
+            columns: vec![
                 ("A".into(), vec![("a1".into(), DataType::Int32), ("a2".into(), DataType::Int32)]),
                 ("B".into(), vec![("b1".into(), DataType::Int32), ("b2".into(), DataType::Int32)]),
                 ("C".into(), vec![("c1".into(), DataType::Int32), ("c2".into(), DataType::Int32)]),
-            ]),
+            ],
         }
-    }
-
-    pub fn build(
-        &self,
-        table_access_costs: &HashMap<String, usize>,
-        update_catalog: &dyn Fn(&MutableCatalog),
-    ) -> (MutableCatalog, Metadata) {
-        let mut tables = HashMap::new();
-        let mut column_id_column = HashMap::new();
-        let mut max_id = 1;
-
-        for (table_name, columns) in self.columns.iter() {
-            let cost = table_access_costs.get(table_name).copied();
-            if cost.is_none() {
-                continue;
-            }
-            let mut table = TableBuilder::new(table_name).add_row_count(cost.unwrap());
-            for (name, tpe) in columns.iter() {
-                table = table.add_column(name, tpe.clone());
-                column_id_column.insert(max_id, (String::from(table_name), String::from(name)));
-                max_id += 1;
-            }
-            let table = table.build();
-            tables.insert(table_name.to_string(), table);
-        }
-
-        let mut metadata = HashMap::new();
-        for (id, (table, column)) in column_id_column {
-            let table = tables.get(&table).expect("Table does not exist");
-            let column = table.get_column(&column).expect("Column does not exist");
-            metadata.insert(id, column);
-        }
-
-        let catalog = MutableCatalog::new();
-        for (_, table) in tables {
-            catalog.add_table(DEFAULT_SCHEMA, table);
-        }
-        (update_catalog)(&catalog);
-
-        (catalog, Metadata::new(metadata))
     }
 }
 

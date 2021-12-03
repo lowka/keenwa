@@ -4,13 +4,12 @@ use crate::meta::Metadata;
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;
 use crate::operators::{ExprMemo, Operator, OperatorExpr, Properties, RelNode};
-use crate::properties::logical::{LogicalPropertiesBuilder, PropertiesProvider};
+use crate::properties::logical::LogicalPropertiesBuilder;
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::statistics::{Statistics, StatisticsBuilder};
 use crate::rules::{Rule, RuleContext, RuleId, RuleIterator, RuleResult, RuleSet};
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
-use std::collections::HashMap;
 use std::fmt::Display;
 use std::rc::Rc;
 
@@ -33,7 +32,7 @@ impl RuleTester {
         RuleTester {
             rule: Box::new(rule),
             memo: ExprMemo::with_callback(Rc::new(props_builder)),
-            metadata: Metadata::new(HashMap::new()),
+            metadata: Metadata::new(Vec::new()),
         }
     }
 
@@ -145,7 +144,7 @@ where
 ///    ...
 ///    Expr_n [expr_n-properties]
 /// ```
-fn format_expr(expr: &Operator) -> String {
+pub fn format_expr(expr: &Operator) -> String {
     let mut buf = String::new();
     let fmt = StringMemoFormatter::new(&mut buf);
     let mut fmt = FormatHeader { fmt };
@@ -279,10 +278,7 @@ impl MemoExprCallback for LogicalPropertiesBuilder {
     type Expr = Operator;
     type Props = Properties;
 
-    fn new_expr(&self, expr: &Self::Expr, props: Self::Props) -> Self::Props {
-        let logical = self
-            .build_properties(expr.expr(), props.logical().statistics())
-            .expect("Failed to build logical properties");
-        Properties::new(logical, props.required)
+    fn new_expr(&self, _expr: &Self::Expr, props: Self::Props) -> Self::Props {
+        props
     }
 }

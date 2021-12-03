@@ -1,3 +1,4 @@
+use crate::datatypes::DataType;
 use crate::memo::MemoExprFormatter;
 use crate::meta::ColumnId;
 use crate::operators::scalar::ScalarValue;
@@ -9,6 +10,9 @@ use std::fmt::{Display, Formatter};
 #[derive(Debug, Clone)]
 pub enum Expr {
     Column(ColumnId),
+    // TestOperatorTreeBuilder: AliasColumn(table, column_name)
+    // AliasColumn should be used instead of Column(column_id) to simplify testing.
+    // TestOperatorTreeBuilder replaces all instances of AliasColumn expressions to corresponding Column(column_id) expressions.
     Scalar(ScalarValue),
     BinaryExpr {
         lhs: Box<Expr>,
@@ -45,7 +49,9 @@ impl Expr {
                 for arg in args {
                     arg.accept(visitor);
                 }
-                filter.as_ref().map(|f| f.accept(visitor));
+                if let Some(f) = filter.as_ref() {
+                    f.accept(visitor)
+                }
             }
             Expr::SubQuery(_) => {}
         }
@@ -163,6 +169,12 @@ pub enum BinaryOp {
     LtEq,
     Gt,
     GtEq,
+}
+
+impl BinaryOp {
+    pub fn return_type(&self) -> DataType {
+        DataType::Bool
+    }
 }
 
 impl Display for Expr {
