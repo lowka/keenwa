@@ -1,10 +1,11 @@
 use crate::catalog::*;
 use crate::meta::*;
-use crate::operators::expr::*;
-use crate::operators::join::*;
-use crate::operators::logical::*;
-use crate::operators::scalar::ScalarValue;
-use crate::operators::{Operator, OperatorExpr, ScalarNode};
+use crate::operators::relational::join::*;
+use crate::operators::relational::logical::*;
+use crate::operators::scalar::expr::*;
+use crate::operators::scalar::value::ScalarValue;
+use crate::operators::scalar::{ScalarExpr, ScalarNode};
+use crate::operators::{Operator, OperatorExpr};
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::statistics::Statistics;
 use crate::properties::OrderingChoice;
@@ -21,10 +22,10 @@ fn filter(left: ColumnId, value: ScalarValue) -> Option<ScalarNode> {
 }
 
 fn filter_with_selectivity(left: ColumnId, value: ScalarValue, selectivity: f64) -> Option<ScalarNode> {
-    let expr = Expr::BinaryExpr {
-        lhs: Box::new(Expr::Column(left)),
+    let expr = ScalarExpr::BinaryExpr {
+        lhs: Box::new(ScalarExpr::Column(left)),
         op: BinaryOp::Gt,
-        rhs: Box::new(Expr::Scalar(value)),
+        rhs: Box::new(ScalarExpr::Scalar(value)),
     };
     let operator = Operator::from(OperatorExpr::Scalar(expr));
     let statistics = Statistics::from_selectivity(selectivity);
@@ -130,10 +131,10 @@ fn test_select_with_a_nested_query() {
         columns: vec![3],
     }
     .to_operator();
-    let filter = Expr::BinaryExpr {
-        lhs: Box::new(Expr::SubQuery(sub_query.into())),
+    let filter = ScalarExpr::BinaryExpr {
+        lhs: Box::new(ScalarExpr::SubQuery(sub_query.into())),
         op: BinaryOp::Gt,
-        rhs: Box::new(Expr::Scalar(ScalarValue::Int32(1))),
+        rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Int32(1))),
     };
 
     let query = LogicalExpr::Select {
@@ -804,12 +805,12 @@ fn test_enforce_grouping() {
             columns: vec![1, 2],
         }
         .into(),
-        aggr_exprs: vec![ScalarNode::from(Expr::Aggregate {
+        aggr_exprs: vec![ScalarNode::from(ScalarExpr::Aggregate {
             func: AggregateFunction::Count,
-            args: vec![Expr::Column(1)],
+            args: vec![ScalarExpr::Column(1)],
             filter: None,
         })],
-        group_exprs: vec![ScalarNode::from(Expr::Column(2))],
+        group_exprs: vec![ScalarNode::from(ScalarExpr::Column(2))],
     }
     .to_operator();
 
@@ -894,10 +895,10 @@ fn test_nested_loop_join() {
             }
             .into(),
             condition: JoinCondition::On(JoinOn::new(
-                Expr::BinaryExpr {
-                    lhs: Box::new(Expr::Column(1)),
+                ScalarExpr::BinaryExpr {
+                    lhs: Box::new(ScalarExpr::Column(1)),
                     op: BinaryOp::Gt,
-                    rhs: Box::new(Expr::Scalar(ScalarValue::Int32(100))),
+                    rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Int32(100))),
                 }
                 .into(),
             )),

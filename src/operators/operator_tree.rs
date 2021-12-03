@@ -2,10 +2,12 @@ use crate::catalog::mutable::MutableCatalog;
 use crate::catalog::{CatalogRef, TableBuilder};
 use crate::datatypes::DataType;
 use crate::meta::{ColumnId, ColumnMetadata, Metadata, MutableMetadata};
-use crate::operators::expr::{AggregateFunction, BinaryOp, Expr, ExprRewriter, ExprVisitor};
-use crate::operators::join::{JoinCondition, JoinOn};
-use crate::operators::logical::{LogicalExpr, LogicalExprVisitor};
-use crate::operators::{ExprMemo, GroupRef, Operator, OperatorExpr, Properties, RelExpr, RelNode, ScalarNode};
+use crate::operators::relational::join::{JoinCondition, JoinOn};
+use crate::operators::relational::logical::{LogicalExpr, LogicalExprVisitor};
+use crate::operators::relational::{RelExpr, RelNode};
+use crate::operators::scalar::expr::{AggregateFunction, BinaryOp, ExprRewriter, ExprVisitor};
+use crate::operators::scalar::{ScalarExpr, ScalarNode};
+use crate::operators::{ExprMemo, GroupRef, Operator, OperatorExpr, Properties};
 use crate::properties::logical::LogicalProperties;
 use crate::properties::statistics::Statistics;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -228,7 +230,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
     fn build_projection(
         &mut self,
         input: RelNode,
-        exprs: Vec<Expr>,
+        exprs: Vec<ScalarExpr>,
         columns: Vec<ColumnId>,
         properties: Properties,
     ) -> (OperatorExpr, Properties) {
@@ -260,7 +262,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
             let mut columns = Vec::with_capacity(exprs.len());
             for expr in exprs {
                 match expr {
-                    Expr::Column(column_id) => {
+                    ScalarExpr::Column(column_id) => {
                         check_column_exists(
                             &column_id,
                             input_properties.logical(),
@@ -370,9 +372,9 @@ impl<'a> TestOperatorTreeBuilder<'a> {
             columns: &'a mut Vec<ColumnId>,
             input_properties: &'a LogicalProperties,
         }
-        impl ExprVisitor for CollectGroupByColumns<'_> {
-            fn post_visit(&mut self, expr: &Expr) {
-                if let Expr::Column(column_id) = expr {
+        impl ExprVisitor<RelNode> for CollectGroupByColumns<'_> {
+            fn post_visit(&mut self, expr: &ScalarExpr) {
+                if let ScalarExpr::Column(column_id) = expr {
                     self.columns.push(*column_id);
                     check_column_exists(column_id, self.input_properties, "Invalid column in a group by expression")
                 }
@@ -385,31 +387,31 @@ impl<'a> TestOperatorTreeBuilder<'a> {
             in_aggregate: bool,
         }
 
-        impl ExprVisitor for ValidateAggregateExpr<'_> {
-            fn pre_visit(&mut self, expr: &Expr) {
-                if let Expr::Aggregate { .. } = expr {
+        impl ExprVisitor<RelNode> for ValidateAggregateExpr<'_> {
+            fn pre_visit(&mut self, expr: &ScalarExpr) {
+                if let ScalarExpr::Aggregate { .. } = expr {
                     assert!(!self.in_aggregate, "Nested aggregate expressions are not allowed");
                     self.in_aggregate = true;
                 }
             }
 
-            fn post_visit(&mut self, expr: &Expr) {
+            fn post_visit(&mut self, expr: &ScalarExpr) {
                 match expr {
-                    Expr::Column(column_id) if !self.in_aggregate => {
+                    ScalarExpr::Column(column_id) if !self.in_aggregate => {
                         assert!(
                             self.group_by_columns.contains(column_id),
                             "Column {} must appear in the GROUP BY clause",
                             column_id
                         )
                     }
-                    Expr::Column(column_id) if self.in_aggregate => {
+                    ScalarExpr::Column(column_id) if self.in_aggregate => {
                         check_column_exists(
                             column_id,
                             self.input_properties,
                             "Invalid column in an aggregate expression",
                         );
                     }
-                    Expr::Aggregate { .. } => {
+                    ScalarExpr::Aggregate { .. } => {
                         self.in_aggregate = false;
                     }
                     _ => {}
@@ -519,9 +521,9 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         (OperatorExpr::from(expr), properties)
     }
 
-    fn add_aggregate_column(&mut self, expr: Expr, _input_properties: &LogicalProperties) -> ColumnId {
+    fn add_aggregate_column(&mut self, expr: ScalarExpr, _input_properties: &LogicalProperties) -> ColumnId {
         let expr_type = self.resolve_expr_type(&expr);
-        let column_name = if let Expr::Aggregate { func, .. } = &expr {
+        let column_name = if let ScalarExpr::Aggregate { func, .. } = &expr {
             func.to_string()
         } else {
             "".to_string()
@@ -556,18 +558,18 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         }
     }
 
-    fn build_scalar_operator(&mut self, expr: Expr, _input_properties: &LogicalProperties) -> Expr {
+    fn build_scalar_operator(&mut self, expr: ScalarExpr, _input_properties: &LogicalProperties) -> ScalarExpr {
         struct InternNestedRelExprs<F> {
             build_metadata: F,
         }
-        impl<F> ExprRewriter for InternNestedRelExprs<F>
+        impl<F> ExprRewriter<RelNode> for InternNestedRelExprs<F>
         where
             F: FnMut(RelNode) -> RelNode,
         {
-            fn rewrite(&mut self, expr: Expr) -> Expr {
-                if let Expr::SubQuery(rel_node) = expr {
+            fn rewrite(&mut self, expr: ScalarExpr) -> ScalarExpr {
+                if let ScalarExpr::SubQuery(rel_node) = expr {
                     let rel_node = (self.build_metadata)(rel_node);
-                    Expr::SubQuery(rel_node)
+                    ScalarExpr::SubQuery(rel_node)
                 } else {
                     expr
                 }
@@ -583,7 +585,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         RelNode::Group(group)
     }
 
-    fn intern_scalar_expr(&mut self, expr: Expr) -> ScalarNode {
+    fn intern_scalar_expr(&mut self, expr: ScalarExpr) -> ScalarNode {
         let expr = Operator::from(OperatorExpr::from(expr));
         let (group, _) = self.memo.insert(expr);
         ScalarNode::Group(group)
@@ -606,21 +608,21 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         Properties::new(LogicalProperties::new(output_columns, statistics), required)
     }
 
-    fn resolve_expr_type(&self, expr: &Expr) -> DataType {
+    fn resolve_expr_type(&self, expr: &ScalarExpr) -> DataType {
         match expr {
-            Expr::Column(column_id) => self.metadata.get_column(column_id).data_type().clone(),
-            Expr::Scalar(value) => value.data_type(),
-            Expr::BinaryExpr { lhs, op, rhs } => {
+            ScalarExpr::Column(column_id) => self.metadata.get_column(column_id).data_type().clone(),
+            ScalarExpr::Scalar(value) => value.data_type(),
+            ScalarExpr::BinaryExpr { lhs, op, rhs } => {
                 let left_tpe = self.resolve_expr_type(lhs);
                 let right_tpe = self.resolve_expr_type(rhs);
                 self.resolve_binary_expr_type(left_tpe, op, right_tpe)
             }
-            Expr::Not(expr) => {
+            ScalarExpr::Not(expr) => {
                 let tpe = self.resolve_expr_type(expr);
                 assert_eq!(tpe, DataType::Bool, "Invalid argument type for NOT operator");
                 tpe
             }
-            Expr::Aggregate { func, args, .. } => {
+            ScalarExpr::Aggregate { func, args, .. } => {
                 for (i, arg) in args.iter().enumerate() {
                     let arg_tpe = self.resolve_expr_type(arg);
                     let expected_tpe = match func {
@@ -638,7 +640,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
                 }
                 DataType::Int32
             }
-            Expr::SubQuery(_) => DataType::Int32,
+            ScalarExpr::SubQuery(_) => DataType::Int32,
         }
     }
 
@@ -655,7 +657,7 @@ enum SetOp {
     Expect,
 }
 
-fn extract_expr(scalar_node: ScalarNode) -> Expr {
+fn extract_expr(scalar_node: ScalarNode) -> ScalarExpr {
     match scalar_node {
         ScalarNode::Expr(expr) => match expr.expr {
             OperatorExpr::Relational(_) => panic!("ScalarNode contains a relational expression"),
@@ -682,12 +684,14 @@ mod test {
     use crate::datatypes::DataType;
     use crate::memo::{format_memo, Memo};
     use crate::meta::{ColumnId, ColumnMetadata};
-    use crate::operators::expr::{AggregateFunction, BinaryOp, Expr};
-    use crate::operators::join::JoinCondition;
-    use crate::operators::logical::LogicalExpr;
     use crate::operators::operator_tree::TestOperatorTreeBuilder;
-    use crate::operators::scalar::ScalarValue;
-    use crate::operators::{Operator, RelNode, ScalarNode};
+    use crate::operators::relational::join::JoinCondition;
+    use crate::operators::relational::logical::LogicalExpr;
+    use crate::operators::relational::RelNode;
+    use crate::operators::scalar::expr::{AggregateFunction, BinaryOp};
+    use crate::operators::scalar::value::ScalarValue;
+    use crate::operators::scalar::{ScalarExpr, ScalarNode};
+    use crate::operators::Operator;
     use crate::rules::testing::format_expr;
     use itertools::Itertools;
     use std::collections::HashMap;
@@ -755,10 +759,10 @@ Memo:
     #[test]
     fn test_select_simple_filter() {
         let filter = Some(
-            Expr::BinaryExpr {
-                lhs: Box::new(Expr::Column(1)),
+            ScalarExpr::BinaryExpr {
+                lhs: Box::new(ScalarExpr::Column(1)),
                 op: BinaryOp::Gt,
-                rhs: Box::new(Expr::Scalar(ScalarValue::Int32(37))),
+                rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Int32(37))),
             }
             .into(),
         );
@@ -784,10 +788,10 @@ Memo:
         let sub_query = new_sub_query();
 
         let filter = Some(
-            Expr::BinaryExpr {
-                lhs: Box::new(Expr::SubQuery(RelNode::from(sub_query))),
+            ScalarExpr::BinaryExpr {
+                lhs: Box::new(ScalarExpr::SubQuery(RelNode::from(sub_query))),
                 op: BinaryOp::Gt,
-                rhs: Box::new(Expr::Scalar(ScalarValue::Int32(37))),
+                rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Int32(37))),
             }
             .into(),
         );
@@ -831,7 +835,7 @@ Memo:
     fn test_project_exprs() {
         projection_test(
             vec![],
-            vec![Expr::Column(1), Expr::Scalar(ScalarValue::Int32(10))],
+            vec![ScalarExpr::Column(1), ScalarExpr::Scalar(ScalarValue::Int32(10))],
             r#"
 LogicalProjection cols=[1, 3]
   input: LogicalGet A cols=[1, 2]
@@ -853,7 +857,7 @@ Memo:
 
         projection_test(
             vec![],
-            vec![Expr::Column(1), Expr::SubQuery(rel_node)],
+            vec![ScalarExpr::Column(1), ScalarExpr::SubQuery(rel_node)],
             r#"
 LogicalProjection cols=[1, 6]
   input: LogicalGet A cols=[1, 2]
@@ -873,7 +877,7 @@ Memo:
         )
     }
 
-    fn projection_test(columns: Vec<ColumnId>, exprs: Vec<Expr>, expected: &str) {
+    fn projection_test(columns: Vec<ColumnId>, exprs: Vec<ScalarExpr>, expected: &str) {
         let expr = LogicalExpr::Projection {
             input: LogicalExpr::Get {
                 source: "A".into(),
@@ -897,15 +901,15 @@ Memo:
             }
             .into(),
             aggr_exprs: vec![
-                Expr::Aggregate {
+                ScalarExpr::Aggregate {
                     func: AggregateFunction::Count,
-                    args: vec![Expr::Column(1)],
+                    args: vec![ScalarExpr::Column(1)],
                     filter: None,
                 }
                 .into(),
-                Expr::Aggregate {
+                ScalarExpr::Aggregate {
                     func: AggregateFunction::Max,
-                    args: vec![Expr::Column(1)],
+                    args: vec![ScalarExpr::Column(1)],
                     filter: None,
                 }
                 .into(),
@@ -943,13 +947,13 @@ Memo:
                 columns: vec![1, 2],
             }
             .into(),
-            aggr_exprs: vec![Expr::Aggregate {
+            aggr_exprs: vec![ScalarExpr::Aggregate {
                 func: AggregateFunction::Count,
-                args: vec![Expr::Column(1)],
+                args: vec![ScalarExpr::Column(1)],
                 filter: None,
             }
             .into()],
-            group_exprs: vec![Expr::Column(1).into()],
+            group_exprs: vec![ScalarExpr::Column(1).into()],
         }
         .to_operator();
 
@@ -1094,9 +1098,9 @@ Memo:
                 columns: vec![3],
             }
             .into(),
-            exprs: vec![Expr::Aggregate {
+            exprs: vec![ScalarExpr::Aggregate {
                 func: AggregateFunction::Count,
-                args: vec![Expr::Column(3)],
+                args: vec![ScalarExpr::Column(3)],
                 filter: None,
             }],
             columns: vec![],

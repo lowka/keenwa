@@ -1,38 +1,49 @@
 use crate::datatypes::DataType;
 use crate::memo::MemoExprFormatter;
 use crate::meta::ColumnId;
-use crate::operators::scalar::ScalarValue;
-use crate::operators::{Operator, OperatorInputs, RelNode};
+use crate::operators::scalar::value::ScalarValue;
 use itertools::Itertools;
-use std::fmt::{Display, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 
 /// Expressions supported by the optimizer.
 #[derive(Debug, Clone)]
-pub enum Expr {
+pub enum Expr<T>
+where
+    T: NestedExpr,
+{
     Column(ColumnId),
     // TestOperatorTreeBuilder: AliasColumn(table, column_name)
     // AliasColumn should be used instead of Column(column_id) to simplify testing.
     // TestOperatorTreeBuilder replaces all instances of AliasColumn expressions to corresponding Column(column_id) expressions.
     Scalar(ScalarValue),
     BinaryExpr {
-        lhs: Box<Expr>,
+        lhs: Box<Expr<T>>,
         op: BinaryOp,
-        rhs: Box<Expr>,
+        rhs: Box<Expr<T>>,
     },
-    Not(Box<Expr>),
+    Not(Box<Expr<T>>),
     Aggregate {
         func: AggregateFunction,
-        args: Vec<Expr>,
-        filter: Option<Box<Expr>>,
+        args: Vec<Expr<T>>,
+        filter: Option<Box<Expr<T>>>,
     },
-    SubQuery(RelNode),
+    SubQuery(T),
 }
 
-impl Expr {
+/// Trait that must be implemented by other expressions that can be nested inside [Expr](self::Expr).  
+pub trait NestedExpr: Debug + Clone {
+    /// Writes this nested expression to the given formatter.
+    fn write_to_fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result;
+}
+
+impl<T> Expr<T>
+where
+    T: NestedExpr,
+{
     /// Performs a depth-first traversal of this expression tree calling methods of the given `visitor`.
-    pub fn accept<T>(&self, visitor: &mut T)
+    pub fn accept<V>(&self, visitor: &mut V)
     where
-        T: ExprVisitor,
+        V: ExprVisitor<T>,
     {
         visitor.pre_visit(self);
         match self {
@@ -61,9 +72,9 @@ impl Expr {
     /// Recursively rewrites this expression using the given `rewriter`.
     /// It first calls [`Expr::rewrite`](Self::rewrite) for every child expressions and
     /// then calls [`ExprRewriter::rewrite`] on this expression.
-    pub fn rewrite<T>(self, rewriter: &mut T) -> Self
+    pub fn rewrite<V>(self, rewriter: &mut V) -> Self
     where
-        T: ExprRewriter,
+        V: ExprRewriter<T>,
     {
         match self {
             Expr::Column(_) => rewriter.rewrite(self),
@@ -83,28 +94,6 @@ impl Expr {
         }
     }
 
-    /// Replaces all relational expressions in of this expression tree with
-    /// relational expressions provided by `inputs` object. if this expression tree does not
-    /// contain nested sub-queries this method returns a copy of this `Expr`.
-    pub fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
-        struct RelInputsRewriter<'a> {
-            inputs: &'a mut OperatorInputs,
-        }
-        impl ExprRewriter for RelInputsRewriter<'_> {
-            fn rewrite(&mut self, expr: Expr) -> Expr {
-                if let Expr::SubQuery(_) = expr {
-                    let rel_node = self.inputs.rel_node();
-                    Expr::SubQuery(rel_node)
-                } else {
-                    expr
-                }
-            }
-        }
-        let expr = self.clone();
-        let mut rewriter = RelInputsRewriter { inputs };
-        expr.rewrite(&mut rewriter)
-    }
-
     pub fn format_expr<F>(&self, f: &mut F)
     where
         F: MemoExprFormatter,
@@ -114,46 +103,48 @@ impl Expr {
     }
 }
 
-/// Called by [`Expr::accept`](crate::operators::expr::Expr::accept) during a traversal of an expression tree.
-pub trait ExprVisitor {
+/// Called by [`Expr::accept`](self::Expr::accept) during a traversal of an expression tree.
+pub trait ExprVisitor<T>
+where
+    T: NestedExpr,
+{
     /// Called before all child expressions of `expr` are visited.  
-    fn pre_visit(&mut self, _expr: &Expr) {}
+    fn pre_visit(&mut self, _expr: &Expr<T>) {}
 
     /// Called after all child expressions of `expr` are visited.
-    fn post_visit(&mut self, expr: &Expr);
+    fn post_visit(&mut self, expr: &Expr<T>);
 }
 
 /// Provides methods to rewrite an expression tree.
-pub trait ExprRewriter {
+pub trait ExprRewriter<T>
+where
+    T: NestedExpr,
+{
     /// Rewrites the given expression. Called after all children of the given expression are visited.
-    fn rewrite(&mut self, expr: Expr) -> Expr;
+    fn rewrite(&mut self, expr: Expr<T>) -> Expr<T>;
 }
 
-fn rewrite_boxed<T>(expr: Box<Expr>, rewriter: &mut T) -> Box<Expr>
+fn rewrite_boxed<T, V>(expr: Box<Expr<T>>, rewriter: &mut V) -> Box<Expr<T>>
 where
-    T: ExprRewriter,
+    V: ExprRewriter<T>,
+    T: NestedExpr,
 {
     let new_expr = (*expr).rewrite(rewriter);
     Box::new(new_expr)
 }
 
-fn rewrite_option<T>(expr: Option<Expr>, rewriter: &mut T) -> Option<Expr>
+fn rewrite_vec<T, V>(exprs: Vec<Expr<T>>, rewriter: &mut V) -> Vec<Expr<T>>
 where
-    T: ExprRewriter,
-{
-    expr.map(|expr| expr.rewrite(rewriter))
-}
-
-fn rewrite_vec<T>(exprs: Vec<Expr>, rewriter: &mut T) -> Vec<Expr>
-where
-    T: ExprRewriter,
+    V: ExprRewriter<T>,
+    T: NestedExpr,
 {
     exprs.into_iter().map(|e| e.rewrite(rewriter)).collect()
 }
 
-fn rewrite_boxed_option<T>(expr: Option<Box<Expr>>, rewriter: &mut T) -> Option<Box<Expr>>
+fn rewrite_boxed_option<T, V>(expr: Option<Box<Expr<T>>>, rewriter: &mut V) -> Option<Box<Expr<T>>>
 where
-    T: ExprRewriter,
+    V: ExprRewriter<T>,
+    T: NestedExpr,
 {
     expr.map(|expr| rewrite_boxed(expr, rewriter))
 }
@@ -177,7 +168,10 @@ impl BinaryOp {
     }
 }
 
-impl Display for Expr {
+impl<T> Display for Expr<T>
+where
+    T: NestedExpr,
+{
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Expr::Column(column_id) => write!(f, "col:{:}", column_id),
@@ -191,13 +185,10 @@ impl Display for Expr {
                 Ok(())
             }
             Expr::Not(expr) => write!(f, "NOT {}", &*expr),
-            Expr::SubQuery(expr) => match expr {
-                RelNode::Expr(expr) => {
-                    let ptr: *const Operator = &**expr;
-                    write!(f, "SubQuery ptr {:?}", ptr)
-                }
-                RelNode::Group(group) => write!(f, "SubQuery {}", group.id()),
-            },
+            Expr::SubQuery(expr) => {
+                write!(f, "SubQuery ")?;
+                expr.write_to_fmt(f)
+            }
         }
     }
 }
@@ -239,9 +230,14 @@ impl Display for AggregateFunction {
     }
 }
 
-struct DisplayArgs<'b>(&'b Vec<Expr>);
+struct DisplayArgs<'b, T>(&'b Vec<Expr<T>>)
+where
+    T: NestedExpr;
 
-impl Display for DisplayArgs<'_> {
+impl<T> Display for DisplayArgs<'_, T>
+where
+    T: NestedExpr,
+{
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         if self.0.len() == 1 {
             write!(f, "{}", self.0[0])
@@ -254,8 +250,17 @@ impl Display for DisplayArgs<'_> {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::operators::logical::LogicalExpr;
-    use crate::operators::{OperatorExpr, RelExpr};
+
+    #[derive(Debug, Clone)]
+    struct DummyRelExpr;
+
+    impl NestedExpr for DummyRelExpr {
+        fn write_to_fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{:?}", self)
+        }
+    }
+
+    type Expr = super::Expr<DummyRelExpr>;
 
     #[test]
     fn column_traversal() {
@@ -317,19 +322,14 @@ mod test {
 
     #[test]
     fn sub_query_traversal() {
-        let expr = RelExpr::Logical(Box::new(LogicalExpr::Get {
-            source: "A".to_string(),
-            columns: vec![],
-        }));
-        let expr = Operator::from(OperatorExpr::Relational(expr));
-        let expr = Expr::SubQuery(RelNode::from(expr));
-        expect_traversal_order(&expr, vec!["pre:SubQuery", "post:SubQuery"]);
+        let expr = Expr::SubQuery(DummyRelExpr);
+        expect_traversal_order(&expr, vec!["pre:SubQuery DummyRelExpr", "post:SubQuery DummyRelExpr"]);
     }
 
     #[test]
     fn rewriter() {
         struct ColumnRewriter;
-        impl ExprRewriter for ColumnRewriter {
+        impl ExprRewriter<DummyRelExpr> for ColumnRewriter {
             fn rewrite(&mut self, expr: Expr) -> Expr {
                 if let Expr::Column(1) = expr {
                     Expr::Column(2)
@@ -355,7 +355,7 @@ mod test {
         struct TraversalTester {
             exprs: Vec<String>,
         }
-        impl ExprVisitor for TraversalTester {
+        impl ExprVisitor<DummyRelExpr> for TraversalTester {
             fn pre_visit(&mut self, expr: &Expr) {
                 self.exprs.push(format!("pre:{}", expr));
             }
@@ -368,19 +368,19 @@ mod test {
         let mut visitor = TraversalTester { exprs: Vec::new() };
         expr.accept(&mut visitor);
 
-        let actual: Vec<String> = visitor
-            .exprs
-            .into_iter()
-            .map(|s| s.split(" ptr 0x").take(1).collect::<String>())
-            .collect();
+        // let actual: Vec<String> = visitor
+        //     .exprs
+        //     .into_iter()
+        //     .map(|s| s.split(" ptr 0x").take(1).collect::<String>())
+        //     .collect();
 
         let expected: Vec<String> = expected.into_iter().map(|s| s.to_string()).collect();
-        assert_eq!(actual, expected, "traversal order does not match");
+        assert_eq!(visitor.exprs, expected, "traversal order does not match");
     }
 
-    fn expect_rewritten<T>(expr: Expr, mut rewriter: T, result: &str)
+    fn expect_rewritten<V>(expr: Expr, mut rewriter: V, result: &str)
     where
-        T: ExprRewriter,
+        V: ExprRewriter<DummyRelExpr>,
     {
         let rewritten_expr = expr.rewrite(&mut rewriter);
         assert_eq!(format!("{}", rewritten_expr), result.to_string(), "rewritten expression does not match");

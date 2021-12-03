@@ -1,21 +1,21 @@
 use crate::memo::{
     CopyInExprs, CopyInNestedExprs, ExprContext, ExprNode, ExprNodeRef, MemoExpr, MemoExprCallback, MemoExprFormatter,
-    MemoGroupRef, NewChildExprs,
+    NewChildExprs,
 };
-use crate::operators::expr::{Expr, ExprVisitor};
-use crate::operators::join::JoinCondition;
-use crate::operators::logical::LogicalExpr;
-use crate::operators::physical::PhysicalExpr;
+use crate::operators::scalar::expr_with_new_inputs;
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::statistics::Statistics;
+use relational::join::JoinCondition;
+use relational::logical::LogicalExpr;
+use relational::physical::PhysicalExpr;
+use relational::{RelExpr, RelNode};
+use scalar::expr::ExprVisitor;
+use scalar::{ScalarExpr, ScalarNode};
 use std::fmt::Debug;
 
-pub mod expr;
-pub mod join;
-pub mod logical;
 pub mod operator_tree;
-pub mod physical;
+pub mod relational;
 pub mod scalar;
 
 pub type ExprMemo = crate::memo::Memo<Operator>;
@@ -90,15 +90,15 @@ impl Operator {
 
 /// Expression can be either a [relational] or [scalar] expression.
 ///
-/// [relational]: crate::operators::RelExpr
-/// [scalar]: crate::operators::expr::Expr
+/// [relational]: crate::operators::relational::RelExpr
+/// [scalar]: crate::operators::scalar::expr::Expr
 // TODO: Docs
 #[derive(Debug, Clone)]
 pub enum OperatorExpr {
     /// A relational expression.
     Relational(RelExpr),
     /// A scalar expression.
-    Scalar(Expr),
+    Scalar(ScalarExpr),
 }
 
 impl OperatorExpr {
@@ -119,7 +119,7 @@ impl OperatorExpr {
     /// # Panics
     ///
     /// This method panics if this is not a scalar expression.
-    pub fn as_scalar(&self) -> &Expr {
+    pub fn as_scalar(&self) -> &ScalarExpr {
         match self {
             OperatorExpr::Relational(expr) => panic!("Expected a scalar expression but got {:?}", expr),
             OperatorExpr::Scalar(expr) => expr,
@@ -137,147 +137,6 @@ impl OperatorExpr {
     /// Returns `true` if this is a scalar expression.
     pub fn is_scalar(&self) -> bool {
         !self.is_relational()
-    }
-}
-
-/// A relational expression. Relational expressions can be either [logical] or [physical].
-#[derive(Debug, Clone)]
-pub enum RelExpr {
-    Logical(Box<LogicalExpr>),
-    Physical(Box<PhysicalExpr>),
-}
-
-impl RelExpr {
-    /// Returns a reference to the underlying logical expression.
-    ///
-    /// # Panics
-    ///
-    /// If this expression is not a logical expression this methods panics.
-    pub fn as_logical(&self) -> &LogicalExpr {
-        match self {
-            RelExpr::Logical(expr) => expr.as_ref(),
-            RelExpr::Physical(_) => {
-                panic!("Expected a logical expression but got: {:?}", self)
-            }
-        }
-    }
-
-    /// Returns a reference to the underlying physical expression.
-    ///
-    /// # Panics
-    ///
-    /// If this expression is not a physical expression this methods panics.
-    pub fn as_physical(&self) -> &PhysicalExpr {
-        match self {
-            RelExpr::Logical(_) => {
-                panic!("Expected a physical expression but got: {:?}", self)
-            }
-            RelExpr::Physical(expr) => expr.as_ref(),
-        }
-    }
-}
-
-/// A relational node of an operator tree.
-///
-/// Should not be created directly and it is responsibility of the caller to provide a instance of `Operator`
-/// which is a valid relational expression.
-#[derive(Debug, Clone)]
-pub enum RelNode {
-    /// A node is an expression.
-    Expr(Box<Operator>),
-    /// A node is a memo-group.
-    Group(MemoGroupRef<Operator>),
-}
-
-impl RelNode {
-    /// Returns a reference to a relational expression stored inside this node:
-    /// * if this node is an expression returns a reference to the underlying expression.
-    /// * If this node is a memo group returns a reference to the first expression of this memo group.
-    pub fn expr(&self) -> &RelExpr {
-        match self {
-            RelNode::Expr(expr) => expr.expr().as_relational(),
-            RelNode::Group(group) => group.expr().as_relational(),
-        }
-    }
-
-    /// Returns a reference to properties associated with this node:
-    /// * if this node is an expression returns properties of the expression.
-    /// * If this node is a memo group returns a reference to the properties of this memo group.
-    pub fn props(&self) -> &Properties {
-        match self {
-            RelNode::Expr(expr) => expr.props(),
-            RelNode::Group(group) => group.props(),
-        }
-    }
-}
-
-impl<'a> From<&'a RelNode> for ExprNodeRef<'a, Operator> {
-    fn from(expr: &'a RelNode) -> Self {
-        match expr {
-            RelNode::Expr(expr) => ExprNodeRef::Expr(expr),
-            RelNode::Group(group) => ExprNodeRef::Group(group),
-        }
-    }
-}
-
-impl From<ExprNode<Operator>> for RelNode {
-    fn from(expr: ExprNode<Operator>) -> Self {
-        match expr {
-            ExprNode::Expr(expr) => RelNode::Expr(expr),
-            ExprNode::Group(group) => RelNode::Group(group),
-        }
-    }
-}
-
-/// A scalar node of an operator tree.
-///
-/// Should not be created directly and it is responsibility of the caller to provide a instance of `Operator`
-/// which is a valid scalar expression.
-#[derive(Debug, Clone)]
-pub enum ScalarNode {
-    /// A node is an expression.
-    Expr(Box<Operator>),
-    /// A node is a memo-group.
-    Group(MemoGroupRef<Operator>),
-}
-
-impl ScalarNode {
-    /// Returns a reference to a scalar expression stored inside this node:
-    /// * if this node is an expression returns a reference to the underlying expression.
-    /// * If this node is a memo group returns a reference to the first expression of this memo group.
-    pub fn expr(&self) -> &Expr {
-        match self {
-            ScalarNode::Expr(expr) => expr.expr().as_scalar(),
-            ScalarNode::Group(group) => group.expr().as_scalar(),
-        }
-    }
-
-    /// Returns a reference to properties of the underlying expression.
-    /// * If this is an expression returns a references to the properties of that expression.
-    /// * If this is a memo-group returns a reference to the properties of the first expression in that group.
-    pub fn props(&self) -> &Properties {
-        match self {
-            ScalarNode::Expr(expr) => expr.props(),
-            ScalarNode::Group(group) => group.props(),
-        }
-    }
-}
-
-impl<'a> From<&'a ScalarNode> for ExprNodeRef<'a, Operator> {
-    fn from(expr: &'a ScalarNode) -> Self {
-        match expr {
-            ScalarNode::Expr(expr) => ExprNodeRef::Expr(expr),
-            ScalarNode::Group(group) => ExprNodeRef::Group(group),
-        }
-    }
-}
-
-impl From<ExprNode<Operator>> for ScalarNode {
-    fn from(expr: ExprNode<Operator>) -> Self {
-        match expr {
-            ExprNode::Expr(expr) => ScalarNode::Expr(expr),
-            ExprNode::Group(group) => ScalarNode::Group(group),
-        }
     }
 }
 
@@ -342,7 +201,7 @@ impl MemoExpr for Operator {
                 RelExpr::Logical(expr) => OperatorExpr::from(expr.with_new_inputs(&mut inputs)),
                 RelExpr::Physical(expr) => OperatorExpr::from(expr.with_new_inputs(&mut inputs)),
             },
-            OperatorExpr::Scalar(expr) => OperatorExpr::from(expr.with_new_inputs(&mut inputs)),
+            OperatorExpr::Scalar(expr) => OperatorExpr::from(expr_with_new_inputs(expr, &mut inputs)),
         };
         let properties = self.properties.clone();
         Operator::new(expr, properties)
@@ -413,13 +272,13 @@ impl OperatorCopyIn<'_, '_> {
 
     /// Traverses the given scalar expression and all of its nested relational expressions into a memo.
     /// See [`memo`][crate::memo::CopyInExprs::visit_expr_node] for details.
-    pub fn copy_in_nested(&mut self, expr_ctx: &mut ExprContext<Operator>, expr: &Expr) {
+    pub fn copy_in_nested(&mut self, expr_ctx: &mut ExprContext<Operator>, expr: &ScalarExpr) {
         struct CopyNestedRelExprs<'b, 'a, 'c> {
             collector: &'b mut CopyInNestedExprs<'a, 'c, Operator>,
         }
-        impl ExprVisitor for CopyNestedRelExprs<'_, '_, '_> {
-            fn post_visit(&mut self, expr: &Expr) {
-                if let Expr::SubQuery(rel_node) = expr {
+        impl ExprVisitor<RelNode> for CopyNestedRelExprs<'_, '_, '_> {
+            fn post_visit(&mut self, expr: &ScalarExpr) {
+                if let ScalarExpr::SubQuery(rel_node) = expr {
                     self.collector.visit_expr(rel_node.into())
                 }
             }
@@ -548,18 +407,30 @@ impl From<PhysicalExpr> for OperatorExpr {
     }
 }
 
-impl From<Expr> for OperatorExpr {
-    fn from(expr: Expr) -> Self {
-        OperatorExpr::Scalar(expr)
-    }
-}
-
 // For testing
 impl From<LogicalExpr> for RelNode {
     fn from(expr: LogicalExpr) -> Self {
         let expr = RelExpr::Logical(Box::new(expr));
         let expr = OperatorExpr::Relational(expr);
         RelNode::Expr(Box::new(Operator::from(expr)))
+    }
+}
+
+impl<'a> From<&'a RelNode> for ExprNodeRef<'a, Operator> {
+    fn from(expr: &'a RelNode) -> Self {
+        match expr {
+            RelNode::Expr(expr) => ExprNodeRef::Expr(expr),
+            RelNode::Group(group) => ExprNodeRef::Group(group),
+        }
+    }
+}
+
+impl From<ExprNode<Operator>> for RelNode {
+    fn from(expr: ExprNode<Operator>) -> Self {
+        match expr {
+            ExprNode::Expr(expr) => RelNode::Expr(expr),
+            ExprNode::Group(group) => RelNode::Group(group),
+        }
     }
 }
 
@@ -570,10 +441,34 @@ impl From<Operator> for RelNode {
     }
 }
 
+impl<'a> From<&'a ScalarNode> for ExprNodeRef<'a, Operator> {
+    fn from(expr: &'a ScalarNode) -> Self {
+        match expr {
+            ScalarNode::Expr(expr) => ExprNodeRef::Expr(expr),
+            ScalarNode::Group(group) => ExprNodeRef::Group(group),
+        }
+    }
+}
+
+impl From<ExprNode<Operator>> for ScalarNode {
+    fn from(expr: ExprNode<Operator>) -> Self {
+        match expr {
+            ExprNode::Expr(expr) => ScalarNode::Expr(expr),
+            ExprNode::Group(group) => ScalarNode::Group(group),
+        }
+    }
+}
+
 // For testing
-impl From<Expr> for ScalarNode {
-    fn from(expr: Expr) -> Self {
+impl From<ScalarExpr> for ScalarNode {
+    fn from(expr: ScalarExpr) -> Self {
         let expr = OperatorExpr::Scalar(expr);
         ScalarNode::Expr(Box::new(Operator::from(expr)))
+    }
+}
+
+impl From<ScalarExpr> for OperatorExpr {
+    fn from(expr: ScalarExpr) -> Self {
+        OperatorExpr::Scalar(expr)
     }
 }

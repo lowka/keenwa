@@ -1,9 +1,11 @@
 use crate::memo::{ExprContext, MemoExprFormatter};
 use crate::meta::ColumnId;
-use crate::operators::expr::{Expr, ExprVisitor};
-use crate::operators::join::{JoinCondition, JoinOn};
+use crate::operators::relational::join::{JoinCondition, JoinOn};
+use crate::operators::relational::{RelExpr, RelNode};
+use crate::operators::scalar::expr::ExprVisitor;
+use crate::operators::scalar::{ScalarExpr, ScalarNode};
 use crate::operators::{Operator, OperatorExpr};
-use crate::operators::{OperatorCopyIn, OperatorInputs, RelExpr, RelNode, ScalarNode};
+use crate::operators::{OperatorCopyIn, OperatorInputs};
 
 // TODO: Docs
 /// A logical expression describes a high-level operator without specifying an implementation algorithm to be used.
@@ -12,7 +14,7 @@ pub enum LogicalExpr {
     Projection {
         input: RelNode,
         // This list of expressions is converted into a list of columns.
-        exprs: Vec<Expr>,
+        exprs: Vec<ScalarExpr>,
         columns: Vec<ColumnId>,
     },
     Select {
@@ -257,12 +259,12 @@ impl LogicalExpr {
         struct VisitNestedLogicalExprs<'a, T> {
             visitor: &'a mut T,
         }
-        impl<T> ExprVisitor for VisitNestedLogicalExprs<'_, T>
+        impl<T> ExprVisitor<RelNode> for VisitNestedLogicalExprs<'_, T>
         where
             T: LogicalExprVisitor,
         {
-            fn post_visit(&mut self, expr: &Expr) {
-                if let Expr::SubQuery(rel_node) = expr {
+            fn post_visit(&mut self, expr: &ScalarExpr) {
+                if let ScalarExpr::SubQuery(rel_node) = expr {
                     rel_node.expr().as_logical().accept(self.visitor);
                 }
             }

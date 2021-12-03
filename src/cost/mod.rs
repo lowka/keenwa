@@ -1,6 +1,6 @@
 use std::fmt::Debug;
 
-use crate::operators::physical::PhysicalExpr;
+use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::GroupRef;
 use crate::properties::statistics::Statistics;
 

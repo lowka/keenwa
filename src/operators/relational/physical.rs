@@ -1,7 +1,9 @@
 use crate::memo::{ExprContext, MemoExprFormatter};
 use crate::meta::ColumnId;
-use crate::operators::join::{get_join_columns_pair, JoinCondition, JoinOn};
-use crate::operators::{Operator, OperatorCopyIn, OperatorInputs, RelNode, ScalarNode};
+use crate::operators::relational::join::{get_join_columns_pair, JoinCondition, JoinOn};
+use crate::operators::relational::RelNode;
+use crate::operators::scalar::ScalarNode;
+use crate::operators::{Operator, OperatorCopyIn, OperatorInputs};
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::OrderingChoice;
 

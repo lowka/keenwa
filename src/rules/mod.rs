@@ -4,9 +4,9 @@ use std::fmt::{Debug, Formatter};
 use std::iter::FromIterator;
 
 use crate::meta::Metadata;
-use crate::operators::logical::LogicalExpr;
-use crate::operators::physical::PhysicalExpr;
-use crate::operators::RelNode;
+use crate::operators::relational::logical::LogicalExpr;
+use crate::operators::relational::physical::PhysicalExpr;
+use crate::operators::relational::RelNode;
 use crate::properties::physical::PhysicalProperties;
 use crate::rules::enforcers::{DefaultEnforcers, EnforcerRules};
 

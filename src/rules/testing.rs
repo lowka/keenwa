@@ -1,9 +1,10 @@
 use crate::error::OptimizerError;
 use crate::memo::{ExprNodeRef, MemoExpr, MemoExprCallback, MemoExprFormatter, StringMemoFormatter};
 use crate::meta::Metadata;
-use crate::operators::logical::LogicalExpr;
-use crate::operators::physical::PhysicalExpr;
-use crate::operators::{ExprMemo, Operator, OperatorExpr, Properties, RelNode};
+use crate::operators::relational::logical::LogicalExpr;
+use crate::operators::relational::physical::PhysicalExpr;
+use crate::operators::relational::RelNode;
+use crate::operators::{ExprMemo, Operator, OperatorExpr, Properties};
 use crate::properties::logical::LogicalPropertiesBuilder;
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::statistics::{Statistics, StatisticsBuilder};

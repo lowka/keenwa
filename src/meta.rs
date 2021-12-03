@@ -1,5 +1,5 @@
 use crate::datatypes::DataType;
-use crate::operators::expr::Expr;
+use crate::operators::scalar::ScalarExpr;
 
 /// Uniquely identifies a column within a query.
 pub type ColumnId = usize;
@@ -23,7 +23,7 @@ pub struct ColumnMetadata {
     table: Option<String>,
     /// If present stores a copy of the expression this column is derived from.
     //FIXME: Currently it is only used in tests.
-    expr: Option<Expr>,
+    expr: Option<ScalarExpr>,
 }
 
 impl ColumnMetadata {
@@ -38,7 +38,7 @@ impl ColumnMetadata {
     }
 
     /// Creates column metadata for a synthetic column.
-    pub fn new_synthetic_column(name: String, data_type: DataType, expr: Option<Expr>) -> Self {
+    pub fn new_synthetic_column(name: String, data_type: DataType, expr: Option<ScalarExpr>) -> Self {
         ColumnMetadata {
             name,
             data_type,
@@ -63,7 +63,7 @@ impl ColumnMetadata {
     }
 
     /// Returns a copy of the expression this column is derived from.
-    pub fn expr(&self) -> Option<&Expr> {
+    pub fn expr(&self) -> Option<&ScalarExpr> {
         self.expr.as_ref()
     }
 }

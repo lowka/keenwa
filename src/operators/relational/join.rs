@@ -1,6 +1,7 @@
 use crate::meta::ColumnId;
-use crate::operators::expr::{BinaryOp, Expr, ExprVisitor};
-use crate::operators::{RelNode, ScalarNode};
+use crate::operators::relational::RelNode;
+use crate::operators::scalar::expr::{BinaryOp, ExprVisitor};
+use crate::operators::scalar::{ScalarExpr, ScalarNode};
 use std::fmt::{Display, Formatter};
 
 //TODO:
@@ -50,17 +51,17 @@ impl JoinUsing {
 
     /// Returns this condition in the form of an expression (eg. col:1 = col2:2 AND col:3=col:4).
     pub fn get_expr(&self) -> ScalarNode {
-        let mut result_expr: Option<Expr> = None;
+        let mut result_expr: Option<ScalarExpr> = None;
         for (l, r) in self.columns.iter() {
-            let col_eq = Expr::BinaryExpr {
-                lhs: Box::new(Expr::Column(*l)),
+            let col_eq = ScalarExpr::BinaryExpr {
+                lhs: Box::new(ScalarExpr::Column(*l)),
                 op: BinaryOp::Eq,
-                rhs: Box::new(Expr::Column(*r)),
+                rhs: Box::new(ScalarExpr::Column(*r)),
             };
             match result_expr.as_mut() {
                 None => result_expr = Some(col_eq),
                 Some(e) => {
-                    *e = Expr::BinaryExpr {
+                    *e = ScalarExpr::BinaryExpr {
                         lhs: Box::new(e.clone()),
                         op: BinaryOp::And,
                         rhs: Box::new(col_eq),
@@ -102,9 +103,9 @@ impl JoinOn {
         struct CollectColumns<'a> {
             columns: &'a mut Vec<ColumnId>,
         }
-        impl ExprVisitor for CollectColumns<'_> {
-            fn post_visit(&mut self, expr: &Expr) {
-                if let Expr::Column(id) = expr {
+        impl ExprVisitor<RelNode> for CollectColumns<'_> {
+            fn post_visit(&mut self, expr: &ScalarExpr) {
+                if let ScalarExpr::Column(id) = expr {
                     self.columns.push(*id);
                 }
             }
