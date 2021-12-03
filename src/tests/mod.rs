@@ -154,10 +154,10 @@ fn test_select_with_a_nested_query() {
     tester.optimize(
         query,
         r#"
-03 Select [01 02]
-02 Expr SubQuery 00 > 1
-00 Scan B cols=[3]
-01 Scan A cols=[1, 2]
+03 Select [00 02]
+02 Expr SubQuery 01 > 1
+01 Scan B cols=[3]
+00 Scan A cols=[1, 2]
 "#,
     );
 }
@@ -821,9 +821,9 @@ fn test_enforce_grouping() {
     tester.optimize(
         query,
         r#"
-03 HashAggregate [00 01 02]
-02 Expr col:2
-01 Expr count(col:1)
+03 HashAggregate [00 02 01]
+01 Expr col:2
+02 Expr count(col:1)
 00 Scan A cols=[1, 2]
 "#,
     );

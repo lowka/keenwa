@@ -22,6 +22,7 @@ pub struct ColumnMetadata {
     /// If present stores the name of the table this column belongs to.
     table: Option<String>,
     /// If present stores an expression this column is derived from.
+    //FIXME: Currently it is only used in tests.
     expr: Option<Expr>,
 }
 

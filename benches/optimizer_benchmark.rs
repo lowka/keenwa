@@ -54,7 +54,7 @@ fn memo_bench(c: &mut Criterion) {
 
                     let start = Instant::now();
                     let optimized_expr = optimizer
-                        .optimize(query.clone(), metadata.clone(), &mut memo)
+                        .optimize(query, metadata.clone(), &mut memo)
                         .expect("Failed to optimize a query");
 
                     black_box(optimized_expr);

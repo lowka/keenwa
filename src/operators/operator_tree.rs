@@ -5,19 +5,19 @@ use crate::meta::{ColumnId, ColumnMetadata, Metadata, MutableMetadata};
 use crate::operators::expr::{AggregateFunction, BinaryOp, Expr, ExprRewriter, ExprVisitor};
 use crate::operators::join::JoinCondition;
 use crate::operators::logical::{LogicalExpr, LogicalExprVisitor};
-use crate::operators::{ExprMemo, Operator, OperatorExpr, Properties, RelExpr, RelNode, ScalarNode};
+use crate::operators::{ExprMemo, GroupRef, Operator, OperatorExpr, Properties, RelExpr, RelNode, ScalarNode};
 use crate::properties::logical::LogicalProperties;
 use crate::properties::statistics::Statistics;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-/// OperatorTreeBuilder allows to build a fully initialized [operator tree] from another [operator tree] that is not.
-/// (This is a workaround until there is an implementation of an [operator tree] from an SQL syntax tree builder).
+/// TestOperatorTreeBuilder allows to build a fully initialized [operator tree] from another [operator tree] that is not.
+/// This is a workaround until there is an implementation of a builder that can create an [operator tree] an SQL syntax tree.
 ///
 /// * It initialises logical properties of every operator in the given tree.
 /// * It builds all required metadata (registers columns, tables, etc.)
 /// * In case when an operator has statistics it uses those statistics instead of computed ones.
 /// * It registers tables referenced in a query in a provided [catalogue](crate::catalog::Catalog).
-/// * It uses a [memo](crate::memo::Memo) to memoize nested sub-queries.
+/// * It uses a [memo](crate::memo::Memo) to recursively memoize operators.
 ///
 /// [operator tree]: crate::operators::Operator
 pub struct TestOperatorTreeBuilder<'a> {
@@ -48,12 +48,21 @@ impl<'a> TestOperatorTreeBuilder<'a> {
 
     /// Builds a fully initialized operator tree from the given operator tree.
     /// * It first locates all tables in the given operator tree to register them in [catalogue](crate::catalog::Catalog).
-    /// * It the recursively traverses the given [operator tree](crate::operators::Operator) and initializes properties for every operator.
+    /// * It the recursively traverses the given [operator tree](crate::operators::Operator)
+    /// initializes their properties operator and copies them into a memo with exception of the root operator.
+    /// Its properties are initialized but it is not copied into a memo because the later is done by the optimizer.
     pub fn build_initialized(mut self, expr: Operator) -> (Operator, Metadata) {
         self.init_metadata_and_catalog(&expr);
 
-        let (expr, properties) = self.do_build_operator(expr);
-        let expr = Operator::new(expr, properties);
+        let Operator { expr, properties } = expr;
+        let expr = match expr {
+            OperatorExpr::Relational(rel_expr) => {
+                let (expr, properties) = self.build_rel_operator(rel_expr, properties);
+                Operator::new(expr, properties)
+            }
+            OperatorExpr::Scalar(_) => panic!("top level scalar expressions are not supported"),
+        };
+
         (expr, self.metadata.to_metadata())
     }
 
@@ -119,48 +128,46 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         }
     }
 
-    fn do_build_operator(&mut self, expr: Operator) -> (OperatorExpr, Properties) {
+    fn do_build_operator(&mut self, expr: Operator) -> RelNode {
         let Operator { expr, properties } = expr;
         match expr {
             OperatorExpr::Relational(rel_expr) => {
-                let (expr, properties) = self.build_rel_expr_metadata(rel_expr, properties);
-                (expr, properties)
+                let (expr, properties) = self.build_rel_operator(rel_expr, properties);
+                self.intern_rel_expr(expr, properties)
             }
             OperatorExpr::Scalar(_) => panic!("top level scalar expressions are not supported"),
         }
     }
 
-    fn build_rel_expr_metadata(&mut self, rel_expr: RelExpr, properties: Properties) -> (OperatorExpr, Properties) {
+    fn build_rel_operator(&mut self, rel_expr: RelExpr, properties: Properties) -> (OperatorExpr, Properties) {
         match rel_expr {
             RelExpr::Logical(expr) => match *expr {
                 LogicalExpr::Projection { input, exprs, columns } => {
-                    self.build_projection_metadata(input, exprs, columns, properties)
+                    self.build_projection(input, exprs, columns, properties)
                 }
-                LogicalExpr::Select { input, filter } => self.build_select_metadata(input, filter, properties),
+                LogicalExpr::Select { input, filter } => self.build_select(input, filter, properties),
                 LogicalExpr::Aggregate {
                     input,
                     aggr_exprs,
                     group_exprs,
-                } => self.build_aggregate_metadata(input, aggr_exprs, group_exprs, properties),
-                LogicalExpr::Join { left, right, condition } => {
-                    self.build_join_metadata(left, right, condition, properties)
-                }
-                LogicalExpr::Get { source, columns } => self.build_get_metadata(source, columns, properties),
+                } => self.build_aggregate(input, aggr_exprs, group_exprs, properties),
+                LogicalExpr::Join { left, right, condition } => self.build_join(left, right, condition, properties),
+                LogicalExpr::Get { source, columns } => self.build_get(source, columns, properties),
                 LogicalExpr::Union { left, right, all } => {
-                    self.build_set_op_metadata(left, right, SetOp::Union, all, properties)
+                    self.build_set_operator(left, right, SetOp::Union, all, properties)
                 }
                 LogicalExpr::Intersect { left, right, all } => {
-                    self.build_set_op_metadata(left, right, SetOp::Intersect, all, properties)
+                    self.build_set_operator(left, right, SetOp::Intersect, all, properties)
                 }
                 LogicalExpr::Except { left, right, all } => {
-                    self.build_set_op_metadata(left, right, SetOp::Expect, all, properties)
+                    self.build_set_operator(left, right, SetOp::Expect, all, properties)
                 }
             },
             RelExpr::Physical(_) => panic!("Physical exprs are not supported"),
         }
     }
 
-    fn build_get_metadata(
+    fn build_get(
         &mut self,
         source: String,
         columns: Vec<ColumnId>,
@@ -187,19 +194,21 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         (OperatorExpr::from(expr), properties)
     }
 
-    fn build_select_metadata(
+    fn build_select(
         &mut self,
         input: RelNode,
         filter: Option<ScalarNode>,
         properties: Properties,
     ) -> (OperatorExpr, Properties) {
-        let (input, input_properties) = self.build_rel_node_metadata(input);
+        let input = self.build_rel_node(input);
+        let input_properties = input.props();
         let input_logical = input_properties.logical();
 
         let filter = match filter {
             Some(filter) => {
-                let (expr, properties) = self.build_scalar_node_metadata(filter);
-                Some(ScalarNode::Expr(Box::new(Operator::new(expr, properties))))
+                let (expr, properties) = self.build_scalar_node(filter);
+                let group = self.intern_expr(expr, properties);
+                Some(ScalarNode::Group(group))
             }
             None => None,
         };
@@ -211,22 +220,20 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         let logical = LogicalProperties::new(output_columns, statistics);
         let properties = Properties::new(logical, required);
 
-        let expr = LogicalExpr::Select {
-            input: RelNode::from(Operator::new(input, input_properties)),
-            filter,
-        };
+        let expr = LogicalExpr::Select { input, filter };
 
         (OperatorExpr::from(expr), properties)
     }
 
-    fn build_projection_metadata(
+    fn build_projection(
         &mut self,
         input: RelNode,
         exprs: Vec<Expr>,
         columns: Vec<ColumnId>,
         properties: Properties,
     ) -> (OperatorExpr, Properties) {
-        let (input, input_properties) = self.build_rel_node_metadata(input);
+        let input = self.build_rel_node(input);
+        let input_properties = input.props();
         let input_logical = input_properties.logical();
 
         let (expr, properties) = if !columns.is_empty() {
@@ -237,7 +244,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
             }
 
             let expr = LogicalExpr::Projection {
-                input: RelNode::from(Operator::new(input, input_properties)),
+                input,
                 exprs: vec![],
                 columns: columns.clone(),
             };
@@ -262,7 +269,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
                         columns.push(column_id);
                     }
                     _ => {
-                        let expr = self.build_scalar_expr_metadata(expr, input_logical);
+                        let expr = self.build_scalar_operator(expr, input_logical);
                         let column_name = "?column?".to_string();
                         let data_type = self.resolve_expr_type(&expr);
                         let column_meta = ColumnMetadata::new_synthetic_column(column_name, data_type, Some(expr));
@@ -273,7 +280,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
             }
 
             let expr = LogicalExpr::Projection {
-                input: RelNode::from(Operator::new(input, input_properties)),
+                input,
                 exprs: vec![],
                 columns: columns.clone(),
             };
@@ -290,15 +297,17 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         (OperatorExpr::from(expr), properties)
     }
 
-    fn build_join_metadata(
+    fn build_join(
         &mut self,
         left: RelNode,
         right: RelNode,
         condition: JoinCondition,
         properties: Properties,
     ) -> (OperatorExpr, Properties) {
-        let (left, left_properties) = self.build_rel_node_metadata(left);
-        let (right, right_properties) = self.build_rel_node_metadata(right);
+        let left = self.build_rel_node(left);
+        let right = self.build_rel_node(right);
+        let left_properties = left.props();
+        let right_properties = right.props();
 
         match &condition {
             JoinCondition::Using(using) => {
@@ -322,23 +331,20 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         let logical = LogicalProperties::new(output_columns, statistics);
         let properties = Properties::new(logical, required);
 
-        let expr = LogicalExpr::Join {
-            left: RelNode::from(Operator::new(left, left_properties)),
-            right: RelNode::from(Operator::new(right, right_properties)),
-            condition,
-        };
+        let expr = LogicalExpr::Join { left, right, condition };
 
         (OperatorExpr::from(expr), properties)
     }
 
-    fn build_aggregate_metadata(
+    fn build_aggregate(
         &mut self,
         input: RelNode,
         aggr_exprs: Vec<ScalarNode>,
         group_exprs: Vec<ScalarNode>,
         properties: Properties,
     ) -> (OperatorExpr, Properties) {
-        let (input, input_properties) = self.build_rel_node_metadata(input);
+        let input = self.build_rel_node(input);
+        let input_properties = input.props();
         let input_logical = input_properties.logical();
 
         struct CollectGroupByColumns<'a> {
@@ -402,15 +408,16 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         };
 
         for group_expr in group_exprs.into_iter().map(extract_expr) {
-            let group_expr = self.build_scalar_expr_metadata(group_expr, input_logical);
+            let group_expr = self.build_scalar_operator(group_expr, input_logical);
             group_expr.accept(&mut collector);
-            new_group_exprs.push(ScalarNode::from(group_expr));
+            let scalar_expr = self.intern_scalar_expr(group_expr);
+            new_group_exprs.push(scalar_expr);
         }
 
         let mut new_aggr_exprs = Vec::with_capacity(aggr_exprs.len());
 
         for aggr_expr in aggr_exprs.into_iter().map(extract_expr) {
-            let aggr_expr = self.build_scalar_expr_metadata(aggr_expr, input_logical);
+            let aggr_expr = self.build_scalar_operator(aggr_expr, input_logical);
 
             let mut aggr_validator = ValidateAggregateExpr {
                 group_by_columns: &group_by_columns,
@@ -422,7 +429,8 @@ impl<'a> TestOperatorTreeBuilder<'a> {
             let column_id = self.add_aggregate_column(aggr_expr.clone(), input_logical);
             output_columns.push(column_id);
 
-            new_aggr_exprs.push(ScalarNode::from(aggr_expr));
+            let scalar_expr = self.intern_scalar_expr(aggr_expr);
+            new_aggr_exprs.push(scalar_expr);
         }
 
         let statistics = properties.logical.statistics().cloned();
@@ -432,7 +440,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         let properties = Properties::new(logical, required);
 
         let expr = LogicalExpr::Aggregate {
-            input: RelNode::from(Operator::new(input, input_properties)),
+            input,
             aggr_exprs: new_aggr_exprs,
             group_exprs: new_group_exprs,
         };
@@ -440,7 +448,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         (OperatorExpr::from(expr), properties)
     }
 
-    fn build_set_op_metadata(
+    fn build_set_operator(
         &mut self,
         left: RelNode,
         right: RelNode,
@@ -448,8 +456,10 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         all: bool,
         properties: Properties,
     ) -> (OperatorExpr, Properties) {
-        let (left_expr, left_properties) = self.build_rel_node_metadata(left);
-        let (right_expr, right_properties) = self.build_rel_node_metadata(right);
+        let left = self.build_rel_node(left);
+        let right = self.build_rel_node(right);
+        let left_properties = left.props();
+        let right_properties = right.props();
 
         let left_columns = left_properties.logical().output_columns();
         let right_columns = right_properties.logical().output_columns();
@@ -482,21 +492,9 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         let properties = Properties::new(logical, required);
 
         let expr = match set_op {
-            SetOp::Union => LogicalExpr::Union {
-                left: RelNode::from(Operator::new(left_expr, left_properties)),
-                right: RelNode::from(Operator::new(right_expr, right_properties)),
-                all,
-            },
-            SetOp::Intersect => LogicalExpr::Intersect {
-                left: RelNode::from(Operator::new(left_expr, left_properties)),
-                right: RelNode::from(Operator::new(right_expr, right_properties)),
-                all,
-            },
-            SetOp::Expect => LogicalExpr::Except {
-                left: RelNode::from(Operator::new(left_expr, left_properties)),
-                right: RelNode::from(Operator::new(right_expr, right_properties)),
-                all,
-            },
+            SetOp::Union => LogicalExpr::Union { left, right, all },
+            SetOp::Intersect => LogicalExpr::Intersect { left, right, all },
+            SetOp::Expect => LogicalExpr::Except { left, right, all },
         };
 
         (OperatorExpr::from(expr), properties)
@@ -514,14 +512,14 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         self.metadata.add_column(column_meta)
     }
 
-    fn build_rel_node_metadata(&mut self, node: RelNode) -> (OperatorExpr, Properties) {
+    fn build_rel_node(&mut self, node: RelNode) -> RelNode {
         match node {
             RelNode::Expr(expr) => self.do_build_operator(*expr),
             RelNode::Group(_) => panic!("Expected an expression"),
         }
     }
 
-    fn build_scalar_node_metadata(&mut self, scalar: ScalarNode) -> (OperatorExpr, Properties) {
+    fn build_scalar_node(&mut self, scalar: ScalarNode) -> (OperatorExpr, Properties) {
         match scalar {
             ScalarNode::Expr(expr) => {
                 let expr = *expr;
@@ -529,8 +527,8 @@ impl<'a> TestOperatorTreeBuilder<'a> {
                 match expr.expr {
                     OperatorExpr::Relational(expr) => panic!("ScalarNode contains a relational expr: {:?}", expr),
                     OperatorExpr::Scalar(scalar_expr) => {
-                        let new_scalar_expr = self.build_scalar_expr_metadata(scalar_expr, properties.logical());
-                        let properties = self.scalar_expr_properties(properties);
+                        let new_scalar_expr = self.build_scalar_operator(scalar_expr, properties.logical());
+                        let properties = self.build_scalar_expr_properties(properties);
                         (OperatorExpr::from(new_scalar_expr), properties)
                     }
                 }
@@ -539,7 +537,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         }
     }
 
-    fn build_scalar_expr_metadata(&mut self, expr: Expr, _input_properties: &LogicalProperties) -> Expr {
+    fn build_scalar_operator(&mut self, expr: Expr, _input_properties: &LogicalProperties) -> Expr {
         struct InternNestedRelExprs<F> {
             build_metadata: F,
         }
@@ -556,17 +554,29 @@ impl<'a> TestOperatorTreeBuilder<'a> {
                 }
             }
         }
-        let f = |rel_node: RelNode| {
-            let (expr, properties) = self.build_rel_node_metadata(rel_node);
-            let expr = Operator::new(expr, properties);
-            let (group, _) = self.memo.insert(expr);
-            RelNode::Group(group)
-        };
+        let f = |rel_node: RelNode| self.build_rel_node(rel_node);
         let mut rewriter = InternNestedRelExprs { build_metadata: f };
         expr.rewrite(&mut rewriter)
     }
 
-    fn scalar_expr_properties(&self, properties: Properties) -> Properties {
+    fn intern_rel_expr(&mut self, expr: OperatorExpr, properties: Properties) -> RelNode {
+        let group = self.intern_expr(expr, properties);
+        RelNode::Group(group)
+    }
+
+    fn intern_scalar_expr(&mut self, expr: Expr) -> ScalarNode {
+        let expr = Operator::from(OperatorExpr::from(expr));
+        let (group, _) = self.memo.insert(expr);
+        ScalarNode::Group(group)
+    }
+
+    fn intern_expr(&mut self, expr: OperatorExpr, properties: Properties) -> GroupRef {
+        let expr = Operator::new(OperatorExpr::from(expr), properties);
+        let (group, _) = self.memo.insert(expr);
+        group
+    }
+
+    fn build_scalar_expr_properties(&self, properties: Properties) -> Properties {
         let Properties { logical, required } = properties;
         let LogicalProperties {
             output_columns,
@@ -716,6 +726,9 @@ Metadata:
   col:2 A.a2 Int32
   col:3 B.b1 Int32
   col:4 B.b2 Int32
+Memo:
+  01 LogicalGet B cols=[3, 4]
+  00 LogicalGet A cols=[1, 2]
 "#,
         )
     }
@@ -740,6 +753,9 @@ LogicalSelect
 Metadata:
   col:1 A.a1 Int32
   col:2 A.a2 Int32
+Memo:
+  01 Expr col:1 > 37
+  00 LogicalGet A cols=[1, 2]
 "#,
         )
     }
@@ -762,7 +778,7 @@ Metadata:
             r#"
 LogicalSelect
   input: LogicalGet A cols=[1, 2]
-  filter: Expr SubQuery 01 > 37
+  filter: Expr SubQuery 02 > 37
   output cols: [1, 2]
 Metadata:
   col:1 A.a1 Int32
@@ -771,8 +787,10 @@ Metadata:
   col:4 B.b2 Int32
   col:5 ?column? Int32, expr: count(col:3)
 Memo:
-  01 LogicalProjection input=00 cols=[5]
-  00 LogicalGet B cols=[3]
+  03 Expr SubQuery 02 > 37
+  02 LogicalProjection input=01 cols=[5]
+  01 LogicalGet B cols=[3]
+  00 LogicalGet A cols=[1, 2]
 "#,
         )
     }
@@ -803,6 +821,8 @@ Metadata:
   col:1 A.a1 Int32
   col:2 A.a2 Int32
   col:3 ?column? Int32, expr: 10
+Memo:
+  00 LogicalGet A cols=[1, 2]
 "#,
         )
     }
@@ -825,10 +845,11 @@ Metadata:
   col:3 B.b1 Int32
   col:4 B.b2 Int32
   col:5 ?column? Int32, expr: count(col:3)
-  col:6 ?column? Int32, expr: SubQuery 01
+  col:6 ?column? Int32, expr: SubQuery 02
 Memo:
-  01 LogicalProjection input=00 cols=[5]
-  00 LogicalGet B cols=[3]
+  02 LogicalProjection input=01 cols=[5]
+  01 LogicalGet B cols=[3]
+  00 LogicalGet A cols=[1, 2]
 "#,
         )
     }
@@ -887,6 +908,10 @@ Metadata:
   col:2 A.a2 Int32
   col:3 count Int32, expr: count(col:1)
   col:4 max Int32, expr: max(col:1)
+Memo:
+  02 Expr max(col:1)
+  01 Expr count(col:1)
+  00 LogicalGet A cols=[1, 2]
 "#,
         )
     }
@@ -921,6 +946,10 @@ Metadata:
   col:1 A.a1 Int32
   col:2 A.a2 Int32
   col:3 count Int32, expr: count(col:1)
+Memo:
+  02 Expr count(col:1)
+  01 Expr col:1
+  00 LogicalGet A cols=[1, 2]
 "#,
         )
     }
@@ -956,6 +985,9 @@ Metadata:
   col:4 B.b2 Int32
   col:5 ?column? Int32
   col:6 ?column? Int32
+Memo:
+  01 LogicalGet B cols=[3, 4]
+  00 LogicalGet A cols=[1, 2]
 "#,
         )
     }
@@ -991,6 +1023,9 @@ Metadata:
   col:4 B.b2 Int32
   col:5 ?column? Int32
   col:6 ?column? Int32
+Memo:
+  01 LogicalGet B cols=[3, 4]
+  00 LogicalGet A cols=[1, 2]
 "#,
         )
     }
@@ -1026,6 +1061,9 @@ Metadata:
   col:4 B.b2 Int32
   col:5 ?column? Int32
   col:6 ?column? Int32
+Memo:
+  01 LogicalGet B cols=[3, 4]
+  00 LogicalGet A cols=[1, 2]
 "#,
         )
     }
