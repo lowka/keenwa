@@ -1,5 +1,5 @@
 use crate::error::OptimizerError;
-use crate::operators::join::JoinCondition;
+use crate::operators::join::{get_join_columns_pair, JoinCondition};
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;
 use crate::operators::RelNode;
@@ -77,15 +77,12 @@ pub fn expr_retains_property(expr: &PhysicalExpr, required: &PhysicalProperties)
     let retains = match (expr, required.as_option()) {
         (_, None) => true,
         (PhysicalExpr::Select { .. }, Some(_)) => true,
-        (PhysicalExpr::MergeSortJoin { condition, .. }, Some(ordering)) => {
-            let (left, right) = match condition {
-                JoinCondition::Using(using) => using.get_columns_pair(),
-            };
-            let left_ordering = OrderingChoice::new(left);
-            let right_ordering = OrderingChoice::new(right);
-
-            ordering_is_preserved(&left_ordering, ordering) || ordering_is_preserved(&right_ordering, ordering)
-        }
+        (
+            PhysicalExpr::MergeSortJoin {
+                left, right, condition, ..
+            },
+            Some(ordering),
+        ) => join_provides_ordering(left, right, condition, ordering),
         (PhysicalExpr::IndexScan { columns, .. }, Some(ordering)) => {
             let idx_ordering = OrderingChoice::new(columns.clone());
             ordering_is_preserved(&idx_ordering, ordering)
@@ -106,15 +103,12 @@ pub fn expr_retains_property(expr: &PhysicalExpr, required: &PhysicalProperties)
 pub fn expr_provides_property(expr: &PhysicalExpr, required: &PhysicalProperties) -> Result<bool, OptimizerError> {
     let preserved = match (expr, required.as_option()) {
         (_, None) => true,
-        (PhysicalExpr::MergeSortJoin { condition, .. }, Some(ordering)) => {
-            let (left, right) = match condition {
-                JoinCondition::Using(using) => using.get_columns_pair(),
-            };
-            let left_ordering = OrderingChoice::new(left);
-            let right_ordering = OrderingChoice::new(right);
-
-            ordering_is_preserved(&left_ordering, ordering) || ordering_is_preserved(&right_ordering, ordering)
-        }
+        (
+            PhysicalExpr::MergeSortJoin {
+                left, right, condition, ..
+            },
+            Some(ordering),
+        ) => join_provides_ordering(left, right, condition, ordering),
         (PhysicalExpr::IndexScan { columns, .. }, Some(ordering)) => {
             let idx_ordering = OrderingChoice::new(columns.clone());
             ordering_is_preserved(&idx_ordering, ordering)
@@ -129,6 +123,34 @@ pub fn expr_provides_property(expr: &PhysicalExpr, required: &PhysicalProperties
         (_, Some(_)) => false,
     };
     Ok(preserved)
+}
+
+fn join_provides_ordering(
+    left: &RelNode,
+    right: &RelNode,
+    condition: &JoinCondition,
+    ordering: Option<&OrderingChoice>,
+) -> bool {
+    assert!(ordering.is_some(), "ordering must be present");
+
+    if let Some((left, right)) = get_join_columns_pair(left, right, condition) {
+        let left_side_ordered = if !left.is_empty() {
+            let left_ordering = OrderingChoice::new(left);
+            ordering_is_preserved(&left_ordering, ordering)
+        } else {
+            false
+        };
+        let right_side_ordered = if !right.is_empty() {
+            let right_ordering = OrderingChoice::new(right);
+            ordering_is_preserved(&right_ordering, ordering)
+        } else {
+            false
+        };
+
+        left_side_ordered || right_side_ordered
+    } else {
+        false
+    }
 }
 
 fn ordering_is_preserved(ord: &OrderingChoice, other: Option<&OrderingChoice>) -> bool {

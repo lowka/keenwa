@@ -56,6 +56,15 @@ impl CostEstimator for SimpleCostEstimator {
 
                 left_rows + right_rows
             }
+            PhysicalExpr::NestedLoop { .. } => {
+                let left_stats = ctx.child_statistics(0).unwrap();
+                let right_stats = ctx.child_statistics(1).unwrap();
+
+                let left_rows = left_stats.row_count() as usize;
+                let right_rows = right_stats.row_count() as usize;
+
+                left_rows * right_rows
+            }
             PhysicalExpr::Scan { .. } => {
                 let row_count = statistics.unwrap().row_count();
                 row_count as usize

@@ -1,5 +1,5 @@
 use crate::error::OptimizerError;
-use crate::operators::join::JoinCondition;
+use crate::operators::join::{get_non_empty_join_columns_pair, JoinCondition};
 use crate::operators::logical::LogicalExpr;
 use crate::rules::{Rule, RuleContext, RuleMatch, RuleResult, RuleType};
 
@@ -26,16 +26,19 @@ impl Rule for JoinCommutativityRule {
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
             LogicalExpr::Join { left, right, condition } => {
-                let (left_columns, right_columns) = match condition {
-                    JoinCondition::Using(using) => using.get_columns_pair(),
-                };
+                if let Some((left_columns, right_columns)) = get_non_empty_join_columns_pair(left, right, condition) {
+                    let expr = LogicalExpr::Join {
+                        left: right.clone(),
+                        right: left.clone(),
+                        condition: JoinCondition::using(
+                            right_columns.into_iter().zip(left_columns.into_iter()).collect(),
+                        ),
+                    };
 
-                let expr = LogicalExpr::Join {
-                    left: right.clone(),
-                    right: left.clone(),
-                    condition: JoinCondition::using(right_columns.into_iter().zip(left_columns.into_iter()).collect()),
-                };
-                Ok(Some(RuleResult::Substitute(expr)))
+                    Ok(Some(RuleResult::Substitute(expr)))
+                } else {
+                    Ok(None)
+                }
             }
             _ => Ok(None),
         }
@@ -44,6 +47,53 @@ impl Rule for JoinCommutativityRule {
 
 #[derive(Debug)]
 pub struct JoinAssociativityRule;
+
+impl JoinAssociativityRule {
+    // [AxB]xC -> Ax[BxC]
+    fn left_side_condition(
+        top_condition: &JoinCondition,
+        inner_condition: &JoinCondition,
+    ) -> Option<(JoinCondition, JoinCondition)> {
+        let (_, top_right_columns) = match top_condition {
+            JoinCondition::Using(using) => using.get_columns_pair(),
+            _ => return None,
+        };
+
+        let (inner_left_columns, inner_right_columns) = match inner_condition {
+            JoinCondition::Using(using) => using.get_columns_pair(),
+            JoinCondition::On(_) => return None,
+        };
+
+        let inner =
+            JoinCondition::using(inner_right_columns.clone().into_iter().zip(top_right_columns.into_iter()).collect());
+
+        let top = JoinCondition::using(inner_left_columns.into_iter().zip(inner_right_columns.into_iter()).collect());
+
+        Some((top, inner))
+    }
+
+    fn right_side_condition(
+        top_condition: &JoinCondition,
+        inner_condition: &JoinCondition,
+    ) -> Option<(JoinCondition, JoinCondition)> {
+        let (top_left_columns, _) = match top_condition {
+            JoinCondition::Using(using) => using.get_columns_pair(),
+            _ => return None,
+        };
+
+        let (inner_left_columns, inner_right_columns) = match inner_condition {
+            JoinCondition::Using(using) => using.get_columns_pair(),
+            JoinCondition::On(_) => return None,
+        };
+
+        let inner =
+            JoinCondition::using(top_left_columns.clone().into_iter().zip(inner_left_columns.into_iter()).collect());
+
+        let top = JoinCondition::using(top_left_columns.into_iter().zip(inner_right_columns.into_iter()).collect());
+
+        Some((top, inner))
+    }
+}
 
 impl Rule for JoinAssociativityRule {
     fn name(&self) -> String {
@@ -59,7 +109,13 @@ impl Rule for JoinAssociativityRule {
     }
 
     fn matches(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Option<RuleMatch> {
-        if matches!(expr, LogicalExpr::Join { .. }) {
+        if matches!(
+            expr,
+            LogicalExpr::Join {
+                condition: JoinCondition::Using(..),
+                ..
+            }
+        ) {
             Some(RuleMatch::Group)
         } else {
             None
@@ -73,10 +129,6 @@ impl Rule for JoinAssociativityRule {
                 right: top_right,
                 condition: top_condition,
             } => {
-                let (top_left_columns, top_right_columns) = match top_condition {
-                    JoinCondition::Using(using) => using.get_columns_pair(),
-                };
-
                 match (top_left.expr().as_logical(), top_right.expr().as_logical()) {
                     // [AxB]xC -> Ax[BxC]
                     (
@@ -87,29 +139,21 @@ impl Rule for JoinAssociativityRule {
                         },
                         _,
                     ) => {
-                        let (inner_left_columns, inner_right_columns) = match inner_condition {
-                            JoinCondition::Using(using) => using.get_columns_pair(),
-                        };
-
-                        let expr = LogicalExpr::Join {
-                            left: inner_left.clone(),
-                            right: LogicalExpr::Join {
-                                left: inner_right.clone(),
-                                right: top_right.clone(),
-                                condition: JoinCondition::using(
-                                    inner_right_columns
-                                        .clone()
-                                        .into_iter()
-                                        .zip(top_right_columns.into_iter())
-                                        .collect(),
-                                ),
-                            }
-                            .into(),
-                            condition: JoinCondition::using(
-                                inner_left_columns.into_iter().zip(inner_right_columns.into_iter()).collect(),
-                            ),
-                        };
-                        return Ok(Some(RuleResult::Substitute(expr)));
+                        if let Some((new_top_condition, new_inner_condition)) =
+                            Self::left_side_condition(top_condition, inner_condition)
+                        {
+                            let expr = LogicalExpr::Join {
+                                left: inner_left.clone(),
+                                right: LogicalExpr::Join {
+                                    left: inner_right.clone(),
+                                    right: top_right.clone(),
+                                    condition: new_inner_condition,
+                                }
+                                .into(),
+                                condition: new_top_condition,
+                            };
+                            return Ok(Some(RuleResult::Substitute(expr)));
+                        }
                     }
                     // Ax[BxC] -> [AxB]xC
                     (
@@ -120,24 +164,22 @@ impl Rule for JoinAssociativityRule {
                             condition: inner_condition,
                         },
                     ) => {
-                        let (inner_left_columns, inner_right_columns) = match inner_condition {
-                            JoinCondition::Using(using) => using.get_columns_pair(),
-                        };
-                        let expr = LogicalExpr::Join {
-                            left: LogicalExpr::Join {
-                                left: top_left.clone(),
-                                right: inner_left.clone(),
-                                condition: JoinCondition::using(
-                                    top_left_columns.clone().into_iter().zip(inner_left_columns.into_iter()).collect(),
-                                ),
-                            }
-                            .into(),
-                            right: inner_right.clone(),
-                            condition: JoinCondition::using(
-                                top_left_columns.into_iter().zip(inner_right_columns.into_iter()).collect(),
-                            ),
-                        };
-                        return Ok(Some(RuleResult::Substitute(expr)));
+                        if let Some((new_top_condition, new_inner_condition)) =
+                            Self::right_side_condition(top_condition, inner_condition)
+                        {
+                            let expr = LogicalExpr::Join {
+                                left: LogicalExpr::Join {
+                                    left: top_left.clone(),
+                                    right: inner_left.clone(),
+                                    condition: new_inner_condition,
+                                }
+                                .into(),
+                                right: inner_right.clone(),
+                                condition: new_top_condition,
+                            };
+
+                            return Ok(Some(RuleResult::Substitute(expr)));
+                        }
                     }
                     _ => {}
                 }

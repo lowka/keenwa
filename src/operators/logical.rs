@@ -1,7 +1,7 @@
 use crate::memo::{ExprContext, MemoExprFormatter};
 use crate::meta::ColumnId;
 use crate::operators::expr::{Expr, ExprVisitor};
-use crate::operators::join::JoinCondition;
+use crate::operators::join::{JoinCondition, JoinOn};
 use crate::operators::{Operator, OperatorExpr};
 use crate::operators::{OperatorCopyIn, OperatorInputs, RelExpr, RelNode, ScalarNode};
 
@@ -60,9 +60,12 @@ impl LogicalExpr {
                 visitor.visit_rel(expr_ctx, input);
                 visitor.visit_opt_scalar(expr_ctx, filter.as_ref());
             }
-            LogicalExpr::Join { left, right, .. } => {
+            LogicalExpr::Join {
+                left, right, condition, ..
+            } => {
                 visitor.visit_rel(expr_ctx, left);
                 visitor.visit_rel(expr_ctx, right);
+                visitor.visit_join_condition(expr_ctx, condition);
             }
             LogicalExpr::Get { .. } => {}
             LogicalExpr::Aggregate {
@@ -112,11 +115,14 @@ impl LogicalExpr {
                 }
             }
             LogicalExpr::Join { condition, .. } => {
-                inputs.expect_len(2, "LogicalJoin");
+                //inputs.expect_len(2, "LogicalJoin");
                 LogicalExpr::Join {
                     left: inputs.rel_node(),
                     right: inputs.rel_node(),
-                    condition: condition.clone(),
+                    condition: match condition {
+                        JoinCondition::Using(_) => condition.clone(),
+                        JoinCondition::On(_) => JoinCondition::On(JoinOn::new(inputs.scalar_node())),
+                    },
                 }
             }
             LogicalExpr::Get { source, columns } => {
@@ -189,6 +195,7 @@ impl LogicalExpr {
                 f.write_expr("right", right);
                 match condition {
                     JoinCondition::Using(using) => f.write_value("using", using),
+                    JoinCondition::On(on) => f.write_value("on", on),
                 }
             }
             LogicalExpr::Get { source, columns } => {
