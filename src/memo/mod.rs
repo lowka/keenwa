@@ -308,12 +308,6 @@ where
         &group.props
     }
 
-    /// Returns the number of expressions in this memo group.
-    pub fn len(&self) -> usize {
-        let group = self.get_memo_group();
-        group.exprs.len()
-    }
-
     fn get_memo_group(&self) -> &MemoGroupData<T> {
         let memo = unsafe {
             // Safety: This pointer is always valid. Because:

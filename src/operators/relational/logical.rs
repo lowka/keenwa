@@ -279,9 +279,9 @@ impl LogicalExpr {
                 input.expr().as_logical().accept(visitor);
             }
             LogicalExpr::Select { input, filter } => {
-                filter.as_ref().map(|expr| {
+                if let Some(expr) = filter.as_ref() {
                     expr.expr().accept(&mut expr_visitor);
-                });
+                }
                 input.expr().as_logical().accept(visitor);
             }
             LogicalExpr::Aggregate {
@@ -309,7 +309,7 @@ impl LogicalExpr {
                 right.expr().as_logical().accept(visitor);
             }
         }
-        visitor.post_visit(&self);
+        visitor.post_visit(self);
     }
 }
 

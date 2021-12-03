@@ -70,11 +70,8 @@ impl Clone for PhysicalProperties {
 impl Display for PhysicalProperties {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{{ ")?;
-        match self.as_option() {
-            Some(Some(ordering)) => {
-                write!(f, "ordering: {}", ordering)?;
-            }
-            _ => {}
+        if let Some(Some(ordering)) = self.as_option() {
+            write!(f, "ordering: {}", ordering)?;
         }
         write!(f, " }}")
     }
