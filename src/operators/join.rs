@@ -5,14 +5,13 @@ use std::fmt::{Display, Formatter};
 
 //TODO:
 // - Add join types
-// - Add On condition (Expr)
 
 /// Join condition.
 #[derive(Debug, Clone)]
 pub enum JoinCondition {
     /// USING (column_list) condition.
     Using(JoinUsing),
-    /// ON expr condition.
+    /// ON <expr> condition.
     On(JoinOn),
 }
 
@@ -79,10 +78,10 @@ impl Display for JoinUsing {
     }
 }
 
-/// ON (EXPR) condition.
+/// ON <expr> condition.
 #[derive(Debug, Clone)]
 pub struct JoinOn {
-    /// The join condition.
+    /// The expression.
     pub(crate) expr: ScalarNode,
 }
 
@@ -92,11 +91,12 @@ impl JoinOn {
         JoinOn { expr }
     }
 
-    /// Returns join condition.
+    /// Returns the expression.
     pub fn expr(&self) -> &ScalarNode {
         &self.expr
     }
 
+    /// Returns columns used by the expression.
     pub fn get_columns(&self) -> Vec<ColumnId> {
         let mut columns = Vec::new();
         struct CollectColumns<'a> {
