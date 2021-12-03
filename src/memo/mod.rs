@@ -45,7 +45,7 @@ where
     }
 
     /// Creates a new memo with the given callback.
-    pub(crate) fn with_callback(callback: Rc<dyn MemoExprCallback<Expr = T, Props = T::Props>>) -> Self {
+    pub fn with_callback(callback: Rc<dyn MemoExprCallback<Expr = T, Props = T::Props>>) -> Self {
         //TODO: Unit test for a Memo with a callback.
         Memo {
             groups: Vec::new(),
@@ -54,6 +54,10 @@ where
             expr_to_group: HashMap::new(),
             callback: Some(callback),
         }
+    }
+
+    pub fn set_callback(&mut self, callback: Option<Rc<dyn MemoExprCallback<Expr = T, Props = T::Props>>>) {
+        self.callback = callback;
     }
 
     /// Copies the expression `expr` into this memo.
@@ -74,6 +78,11 @@ where
             depth: 0,
         };
         copy_in.execute(&expr)
+    }
+
+    /// Returns `true` if this memo contains no expressions.
+    pub fn is_empty(&self) -> bool {
+        self.groups.is_empty()
     }
 
     fn get_expr_ref(&self, expr_id: &ExprId) -> MemoExprRef<T> {
@@ -1054,6 +1063,7 @@ impl<'f, 'a> MemoExprFormatter for DisplayMemoExprFormatter<'f, 'a> {
         T: MemoExpr + 'e,
     {
         let s = format_node_ref(input.into());
+        self.fmt.write_char(' ').unwrap();
         self.fmt.write_str(s.as_str()).unwrap();
     }
 

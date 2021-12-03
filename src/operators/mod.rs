@@ -13,6 +13,7 @@ use std::fmt::Debug;
 pub mod expr;
 pub mod join;
 pub mod logical;
+pub mod operator_tree;
 pub mod physical;
 pub mod scalar;
 
@@ -26,8 +27,8 @@ pub type ExprCallback = dyn MemoExprCallback<Expr = Operator, Props = Properties
 // TODO: Docs
 #[derive(Debug, Clone)]
 pub struct Operator {
-    expr: OperatorExpr,
-    properties: Properties,
+    pub(crate) expr: OperatorExpr,
+    pub(crate) properties: Properties,
 }
 
 impl Operator {
