@@ -320,6 +320,9 @@ impl<'a> TestOperatorTreeBuilder<'a> {
                     check_column_exists(r, right_properties.logical(), "Invalid column on the right of join condition")
                 }
             }
+            JoinCondition::On(expr) => {
+                todo!()
+            }
         }
 
         let mut output_columns = left_properties.logical.output_columns().to_vec();

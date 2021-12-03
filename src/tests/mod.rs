@@ -900,7 +900,8 @@ fn test_nested_loop_join() {
             })),
         }
         .into(),
-        columns: vec![1, 2, 3],
+        columns: vec![], //vec![1, 2, 3],
+        exprs: vec![Expr::Column(1), Expr::Column(2), Expr::Column(3)],
     }
     .to_operator();
 
