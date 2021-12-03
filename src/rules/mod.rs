@@ -51,8 +51,8 @@ impl Debug for dyn Rule {
 /// A transformation rule produce [logical expressions].
 /// An implementation rule produce [physical expressions].
 ///
-/// [logical expressions]: crate::operators::logical::LogicalExpr
-/// [physical expressions]: crate::operators::physical::PhysicalExpr
+/// [logical expressions]: crate::operators::relational::logical::LogicalExpr
+/// [physical expressions]: crate::operators::relational::physical::PhysicalExpr
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum RuleType {
     /// Transformation rules produce equivalent logical expressions.

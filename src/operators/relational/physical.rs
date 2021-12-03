@@ -10,7 +10,7 @@ use crate::properties::OrderingChoice;
 // TODO: Docs
 /// A physical expression represents an algorithm that can be used to implement a [logical expression].
 ///
-/// [logical expression]: crate::operators::logical::LogicalExpr
+/// [logical expression]: crate::operators::relational::logical::LogicalExpr
 #[derive(Debug, Clone)]
 pub enum PhysicalExpr {
     Projection {
