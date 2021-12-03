@@ -21,7 +21,7 @@ pub struct ColumnMetadata {
     data_type: DataType,
     /// If present stores the name of the table this column belongs to.
     table: Option<String>,
-    /// If present stores a copy of expression this column is derived from.
+    /// If present stores a copy of the expression this column is derived from.
     //FIXME: Currently it is only used in tests.
     expr: Option<Expr>,
 }
@@ -62,7 +62,7 @@ impl ColumnMetadata {
         self.table.as_ref()
     }
 
-    /// Returns a copy the expression this column is derived from.
+    /// Returns a copy of the expression this column is derived from.
     pub fn expr(&self) -> Option<&Expr> {
         self.expr.as_ref()
     }
