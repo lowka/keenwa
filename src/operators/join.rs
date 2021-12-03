@@ -1,6 +1,6 @@
 use crate::meta::ColumnId;
-use crate::operators::expr::{Expr, ExprVisitor};
-use crate::operators::RelNode;
+use crate::operators::expr::{BinaryOp, Expr, ExprVisitor};
+use crate::operators::{RelNode, ScalarNode};
 use std::fmt::{Display, Formatter};
 
 //TODO:
@@ -48,6 +48,29 @@ impl JoinUsing {
 
         (left, right)
     }
+
+    /// Returns this condition in the form of an expression (eg. col:1 = col2:2 AND col:3=col:4).
+    pub fn get_expr(&self) -> ScalarNode {
+        let mut result_expr: Option<Expr> = None;
+        for (l, r) in self.columns.iter() {
+            let col_eq = Expr::BinaryExpr {
+                lhs: Box::new(Expr::Column(*l)),
+                op: BinaryOp::Eq,
+                rhs: Box::new(Expr::Column(*r)),
+            };
+            match result_expr.as_mut() {
+                None => result_expr = Some(col_eq),
+                Some(e) => {
+                    *e = Expr::BinaryExpr {
+                        lhs: Box::new(e.clone()),
+                        op: BinaryOp::And,
+                        rhs: Box::new(col_eq),
+                    };
+                }
+            }
+        }
+        ScalarNode::from(result_expr.unwrap())
+    }
 }
 
 impl Display for JoinUsing {
@@ -56,17 +79,21 @@ impl Display for JoinUsing {
     }
 }
 
+/// ON (EXPR) condition.
 #[derive(Debug, Clone)]
 pub struct JoinOn {
-    expr: Expr,
+    /// The join condition.
+    pub(crate) expr: ScalarNode,
 }
 
 impl JoinOn {
-    pub fn new(expr: Expr) -> Self {
+    /// Creates a new condition from the given expression.
+    pub fn new(expr: ScalarNode) -> Self {
         JoinOn { expr }
     }
 
-    pub fn expr(&self) -> &Expr {
+    /// Returns join condition.
+    pub fn expr(&self) -> &ScalarNode {
         &self.expr
     }
 
@@ -83,14 +110,14 @@ impl JoinOn {
             }
         }
         let mut visitor = CollectColumns { columns: &mut columns };
-        self.expr.accept(&mut visitor);
+        self.expr.expr().accept(&mut visitor);
         columns
     }
 }
 
 impl Display for JoinOn {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.expr)
+        write!(f, "{}", self.expr.expr())
     }
 }
 

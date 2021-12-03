@@ -1,7 +1,7 @@
 use crate::catalog::{CatalogRef, IndexRef};
 use crate::error::OptimizerError;
 use crate::meta::ColumnId;
-use crate::operators::join::get_non_empty_join_columns_pair;
+use crate::operators::join::{get_non_empty_join_columns_pair, JoinCondition};
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;
 use crate::rules::{Rule, RuleContext, RuleMatch, RuleResult, RuleType};
@@ -196,7 +196,6 @@ impl Rule for MergeSortJoinRule {
                         right: right.clone(),
                         condition: condition.clone(),
                     };
-                    println!("MERGE SORT JOIN");
                     Ok(Some(RuleResult::Implementation(expr)))
                 } else {
                     Ok(None)
@@ -228,10 +227,15 @@ impl Rule for NestedLoopJoin {
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         if let LogicalExpr::Join { left, right, condition } = expr {
-            let expr = PhysicalExpr::NestedLoopJoin {
+            let condition = match condition {
+                JoinCondition::Using(using) => using.get_expr(),
+                JoinCondition::On(on) => on.expr().clone(),
+            };
+
+            let expr = PhysicalExpr::NestedLoop {
                 left: left.clone(),
                 right: right.clone(),
-                condition: condition.clone(),
+                condition: Some(condition),
             };
             Ok(Some(RuleResult::Implementation(expr)))
         } else {

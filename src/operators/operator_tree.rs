@@ -3,7 +3,7 @@ use crate::catalog::{CatalogRef, TableBuilder};
 use crate::datatypes::DataType;
 use crate::meta::{ColumnId, ColumnMetadata, Metadata, MutableMetadata};
 use crate::operators::expr::{AggregateFunction, BinaryOp, Expr, ExprRewriter, ExprVisitor};
-use crate::operators::join::JoinCondition;
+use crate::operators::join::{JoinCondition, JoinOn};
 use crate::operators::logical::{LogicalExpr, LogicalExprVisitor};
 use crate::operators::{ExprMemo, GroupRef, Operator, OperatorExpr, Properties, RelExpr, RelNode, ScalarNode};
 use crate::properties::logical::LogicalProperties;
@@ -309,7 +309,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         let left_properties = left.props();
         let right_properties = right.props();
 
-        match &condition {
+        let condition = match condition {
             JoinCondition::Using(using) => {
                 for (l, r) in using.columns() {
                     check_column_exists(
@@ -319,11 +319,27 @@ impl<'a> TestOperatorTreeBuilder<'a> {
                     );
                     check_column_exists(r, right_properties.logical(), "Invalid column on the right of join condition")
                 }
+                JoinCondition::Using(using)
             }
-            JoinCondition::On(expr) => {
-                todo!()
+            JoinCondition::On(on_expr) => {
+                let columns = on_expr.get_columns();
+                let JoinOn { expr } = on_expr;
+
+                for col_id in columns {
+                    let left_columns = left_properties.logical().output_columns();
+                    let right_columns = right_properties.logical().output_columns();
+                    assert!(
+                        left_columns.contains(&col_id) || right_columns.contains(&col_id),
+                        "Invalid column in ON expression. Expr: {}",
+                        expr.expr()
+                    );
+                }
+
+                let (expr, properties) = self.build_scalar_node(expr);
+                let group = self.intern_expr(expr, properties);
+                JoinCondition::On(JoinOn::new(ScalarNode::Group(group)))
             }
-        }
+        };
 
         let mut output_columns = left_properties.logical.output_columns().to_vec();
         output_columns.extend_from_slice(right_properties.logical.output_columns());

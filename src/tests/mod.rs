@@ -893,15 +893,18 @@ fn test_nested_loop_join() {
                 columns: vec![3, 4],
             }
             .into(),
-            condition: JoinCondition::On(JoinOn::new(Expr::BinaryExpr {
-                lhs: Box::new(Expr::Column(1)),
-                op: BinaryOp::Gt,
-                rhs: Box::new(Expr::Scalar(ScalarValue::Int32(100))),
-            })),
+            condition: JoinCondition::On(JoinOn::new(
+                Expr::BinaryExpr {
+                    lhs: Box::new(Expr::Column(1)),
+                    op: BinaryOp::Gt,
+                    rhs: Box::new(Expr::Scalar(ScalarValue::Int32(100))),
+                }
+                .into(),
+            )),
         }
         .into(),
-        columns: vec![], //vec![1, 2, 3],
-        exprs: vec![Expr::Column(1), Expr::Column(2), Expr::Column(3)],
+        columns: vec![1, 2, 3],
+        exprs: vec![],
     }
     .to_operator();
 
@@ -915,8 +918,9 @@ fn test_nested_loop_join() {
     tester.optimize(
         query,
         r#"
-03 Projection [02] cols=[1, 2, 3]
-02 NestedLoopJoin [00 01] on=col:1 > 100
+04 Projection [03] cols=[1, 2, 3]
+03 NestedLoopJoin [00 01 02]
+02 Expr col:1 > 100
 01 Scan B cols=[3, 4]
 00 Scan A cols=[1, 2]
 "#,

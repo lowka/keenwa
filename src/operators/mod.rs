@@ -3,6 +3,7 @@ use crate::memo::{
     MemoGroupRef, NewChildExprs,
 };
 use crate::operators::expr::{Expr, ExprVisitor};
+use crate::operators::join::JoinCondition;
 use crate::operators::logical::LogicalExpr;
 use crate::operators::physical::PhysicalExpr;
 use crate::properties::logical::LogicalProperties;
@@ -401,6 +402,13 @@ impl OperatorCopyIn<'_, '_> {
     /// See [`memo::CopyInExprs`][crate::memo::CopyInExprs::visit_opt_expr_node] for details.
     pub fn visit_opt_scalar(&mut self, expr_ctx: &mut ExprContext<Operator>, expr: Option<&ScalarNode>) {
         self.visitor.visit_opt_expr_node(expr_ctx, expr);
+    }
+
+    /// Visits expressions in the given join condition and copies them into a memo.
+    pub fn visit_join_condition(&mut self, expr_ctx: &mut ExprContext<Operator>, condition: &JoinCondition) {
+        if let JoinCondition::On(on) = condition {
+            self.visitor.visit_expr_node(expr_ctx, on.expr())
+        };
     }
 
     /// Traverses the given scalar expression and all of its nested relational expressions into a memo.
