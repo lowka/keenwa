@@ -80,8 +80,8 @@ where
             Expr::Column(_) => rewriter.rewrite(self),
             Expr::Scalar(_) => rewriter.rewrite(self),
             Expr::BinaryExpr { lhs, rhs, op } => {
-                let lhs = rewrite_boxed(lhs, rewriter);
-                let rhs = rewrite_boxed(rhs, rewriter);
+                let lhs = rewrite_boxed(*lhs, rewriter);
+                let rhs = rewrite_boxed(*rhs, rewriter);
                 Expr::BinaryExpr { lhs, op, rhs }
             }
             Expr::Not(expr) => expr.rewrite(rewriter),
@@ -124,12 +124,12 @@ where
     fn rewrite(&mut self, expr: Expr<T>) -> Expr<T>;
 }
 
-fn rewrite_boxed<T, V>(expr: Box<Expr<T>>, rewriter: &mut V) -> Box<Expr<T>>
+fn rewrite_boxed<T, V>(expr: Expr<T>, rewriter: &mut V) -> Box<Expr<T>>
 where
     V: ExprRewriter<T>,
     T: NestedExpr,
 {
-    let new_expr = (*expr).rewrite(rewriter);
+    let new_expr = expr.rewrite(rewriter);
     Box::new(new_expr)
 }
 
@@ -146,7 +146,7 @@ where
     V: ExprRewriter<T>,
     T: NestedExpr,
 {
-    expr.map(|expr| rewrite_boxed(expr, rewriter))
+    expr.map(|expr| rewrite_boxed(*expr, rewriter))
 }
 
 /// Binary operators.

@@ -53,7 +53,7 @@ where
             required_properties: required_property,
         };
 
-        log::debug!("Initial ctx: {}, initial memo:\n{}", ctx, format_memo(&memo));
+        log::debug!("Initial ctx: {}, initial memo:\n{}", ctx, format_memo(memo));
 
         runtime_state.tasks.schedule(Task::OptimizeGroup { ctx: ctx.clone() });
 

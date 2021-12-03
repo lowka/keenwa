@@ -592,7 +592,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
     }
 
     fn intern_expr(&mut self, expr: OperatorExpr, properties: Properties) -> GroupRef {
-        let expr = Operator::new(OperatorExpr::from(expr), properties);
+        let expr = Operator::new(expr, properties);
         let (group, _) = self.memo.insert(expr);
         group
     }

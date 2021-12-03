@@ -129,18 +129,14 @@ impl StatisticsBuilder for CatalogStatisticsBuilder {
                 };
                 Statistics::new(row_count as f64, 1.0)
             }
-            LogicalExpr::Union { left, right, all, .. }
-            | LogicalExpr::Intersect { left, right, all, .. }
-            | LogicalExpr::Except { left, right, all, .. } => {
+            LogicalExpr::Union { left, right, .. }
+            | LogicalExpr::Intersect { left, right, .. }
+            | LogicalExpr::Except { left, right, .. } => {
                 let left_statistics = left.props().logical().statistics().unwrap();
                 let right_statistics = right.props().logical().statistics().unwrap();
                 let row_count = left_statistics.row_count() + right_statistics.row_count();
-                if *all {
-                    Statistics::from_row_count(row_count)
-                } else {
-                    //FIXME: The result of union operation includes only non-duplicate rows.
-                    Statistics::from_row_count(row_count)
-                }
+                //FIXME: The result of a set operation with all=false should include only non-duplicate rows.
+                Statistics::from_row_count(row_count)
             }
         };
         Ok(Some(statistics))

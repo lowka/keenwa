@@ -150,7 +150,7 @@ pub fn get_join_columns_pair(
                 let right: Vec<ColumnId> = columns.iter().filter(|c| right_columns.contains(*c)).copied().collect();
 
                 if left.is_empty() && right.is_empty() {
-                    return None;
+                    None
                 } else {
                     Some((left, right))
                 }
