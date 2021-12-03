@@ -1,7 +1,7 @@
 use crate::cost::Cost;
 use crate::memo::GroupId;
-use crate::operators::expr::Expr;
-use crate::operators::physical::PhysicalExpr;
+use crate::operators::relational::physical::PhysicalExpr;
+use crate::operators::scalar::ScalarExpr;
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
 use std::fmt::Debug;
@@ -12,7 +12,7 @@ pub enum BestExprRef<'a> {
     /// A relational expression.
     Relational(&'a PhysicalExpr),
     /// A scalar expression.
-    Scalar(&'a Expr),
+    Scalar(&'a ScalarExpr),
 }
 
 /// A callback called by the optimizer when an optimized plan is being built.

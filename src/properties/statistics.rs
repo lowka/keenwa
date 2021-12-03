@@ -2,7 +2,7 @@ use crate::catalog::CatalogRef;
 use crate::error::OptimizerError;
 use std::fmt::Debug;
 
-use crate::operators::logical::LogicalExpr;
+use crate::operators::relational::logical::LogicalExpr;
 
 /// The number of rows returned by an operator in case when no statistics is available.
 pub const UNKNOWN_ROW_COUNT: f64 = 1000f64;
@@ -152,24 +152,25 @@ mod test {
     use crate::catalog::mutable::MutableCatalog;
     use crate::catalog::TableBuilder;
     use crate::datatypes::DataType;
-    use crate::operators::expr::{AggregateFunction, Expr};
-    use crate::operators::logical::LogicalExpr;
-    use crate::operators::{Operator, OperatorExpr, Properties, ScalarNode};
+    use crate::operators::relational::logical::LogicalExpr;
+    use crate::operators::scalar::expr::AggregateFunction;
+    use crate::operators::scalar::{ScalarExpr, ScalarNode};
+    use crate::operators::{Operator, OperatorExpr, Properties};
     use crate::properties::logical::LogicalProperties;
     use crate::properties::physical::PhysicalProperties;
     use crate::properties::statistics::{CatalogStatisticsBuilder, Statistics, StatisticsBuilder};
     use std::sync::Arc;
 
-    fn new_aggregate(groups: Vec<Expr>) -> LogicalExpr {
+    fn new_aggregate(groups: Vec<ScalarExpr>) -> LogicalExpr {
         LogicalExpr::Aggregate {
             input: LogicalExpr::Get {
                 source: "A".to_string(),
                 columns: vec![1],
             }
             .into(),
-            aggr_exprs: vec![ScalarNode::from(Expr::Aggregate {
+            aggr_exprs: vec![ScalarNode::from(ScalarExpr::Aggregate {
                 func: AggregateFunction::Avg,
-                args: vec![Expr::Column(1)],
+                args: vec![ScalarExpr::Column(1)],
                 filter: None,
             })],
             group_exprs: groups.into_iter().map(ScalarNode::from).collect(),
@@ -188,7 +189,7 @@ mod test {
     #[test]
     fn test_aggregate_statistics_multiple_groups() {
         let tester = StatisticsTester::new(Vec::<(String, usize)>::new());
-        let aggr = new_aggregate(vec![Expr::Column(1), Expr::Column(2)]);
+        let aggr = new_aggregate(vec![ScalarExpr::Column(1), ScalarExpr::Column(2)]);
 
         tester.expect_statistics(&aggr, None, Some(Statistics::new(2.0, 1.0)));
     }

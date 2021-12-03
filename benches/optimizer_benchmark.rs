@@ -6,15 +6,16 @@ use std::time::{Duration, Instant};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 use keenwa::catalog::mutable::MutableCatalog;
-use keenwa::catalog::{Catalog, CatalogRef, TableBuilder, DEFAULT_SCHEMA};
+use keenwa::catalog::CatalogRef;
 use keenwa::cost::simple::SimpleCostEstimator;
 use keenwa::datatypes::DataType;
-use keenwa::meta::{ColumnId, ColumnMetadata, Metadata};
-use keenwa::operators::expr::{BinaryOp, Expr};
-use keenwa::operators::join::JoinCondition;
-use keenwa::operators::logical::*;
+use keenwa::meta::{ColumnId, Metadata};
 use keenwa::operators::operator_tree::TestOperatorTreeBuilder;
-use keenwa::operators::scalar::ScalarValue;
+use keenwa::operators::relational::join::JoinCondition;
+use keenwa::operators::relational::logical::*;
+use keenwa::operators::scalar::expr::BinaryOp;
+use keenwa::operators::scalar::value::ScalarValue;
+use keenwa::operators::scalar::{ScalarExpr, ScalarNode};
 use keenwa::operators::*;
 use keenwa::optimizer::{Optimizer, SetPropertiesCallback};
 use keenwa::properties::logical::LogicalPropertiesBuilder;
@@ -67,10 +68,10 @@ fn memo_bench(c: &mut Criterion) {
         });
     }
 
-    let filter = Expr::BinaryExpr {
-        lhs: Box::new(Expr::Column(1)),
+    let filter = ScalarExpr::BinaryExpr {
+        lhs: Box::new(ScalarExpr::Column(1)),
         op: BinaryOp::Gt,
-        rhs: Box::new(Expr::Scalar(ScalarValue::Int32(100))),
+        rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Int32(100))),
     };
     let query = LogicalExpr::Select {
         input: LogicalExpr::Join {

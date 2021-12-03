@@ -1,8 +1,8 @@
 use crate::error::OptimizerError;
-use crate::operators::join::{get_join_columns_pair, JoinCondition};
-use crate::operators::logical::LogicalExpr;
-use crate::operators::physical::PhysicalExpr;
-use crate::operators::RelNode;
+use crate::operators::relational::join::{get_join_columns_pair, JoinCondition};
+use crate::operators::relational::logical::LogicalExpr;
+use crate::operators::relational::physical::PhysicalExpr;
+use crate::operators::relational::RelNode;
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::OrderingChoice;
 use std::fmt::Debug;

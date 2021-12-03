@@ -4,9 +4,9 @@ use std::fmt::{Debug, Formatter};
 use std::iter::FromIterator;
 
 use crate::meta::Metadata;
-use crate::operators::logical::LogicalExpr;
-use crate::operators::physical::PhysicalExpr;
-use crate::operators::RelNode;
+use crate::operators::relational::logical::LogicalExpr;
+use crate::operators::relational::physical::PhysicalExpr;
+use crate::operators::relational::RelNode;
 use crate::properties::physical::PhysicalProperties;
 use crate::rules::enforcers::{DefaultEnforcers, EnforcerRules};
 
@@ -51,8 +51,8 @@ impl Debug for dyn Rule {
 /// A transformation rule produce [logical expressions].
 /// An implementation rule produce [physical expressions].
 ///
-/// [logical expressions]: crate::operators::logical::LogicalExpr
-/// [physical expressions]: crate::operators::physical::PhysicalExpr
+/// [logical expressions]: crate::operators::relational::logical::LogicalExpr
+/// [physical expressions]: crate::operators::relational::physical::PhysicalExpr
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum RuleType {
     /// Transformation rules produce equivalent logical expressions.

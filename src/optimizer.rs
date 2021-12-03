@@ -8,9 +8,9 @@ use std::time::{Duration, Instant};
 use crate::cost::{Cost, CostEstimationContext, CostEstimator};
 use crate::memo::{format_memo, ExprId, ExprNode, GroupId, MemoExprCallback, NewChildExprs};
 use crate::meta::Metadata;
-use crate::operators::{
-    ExprMemo, ExprRef, GroupRef, Operator, OperatorExpr, OperatorInputs, Properties, RelExpr, RelNode,
-};
+use crate::operators::relational::{RelExpr, RelNode};
+use crate::operators::scalar::expr_with_new_inputs;
+use crate::operators::{ExprMemo, ExprRef, GroupRef, Operator, OperatorExpr, OperatorInputs, Properties};
 use crate::properties::logical::LogicalProperties;
 use crate::properties::logical::PropertiesProvider;
 use crate::properties::physical::PhysicalProperties;
@@ -1055,8 +1055,8 @@ where
             let new_inputs = NewChildExprs::new(new_inputs);
             let mut new_inputs = OperatorInputs::from(new_inputs);
             let new_expr = match best_expr_ref {
-                BestExprRef::Relational(exr) => OperatorExpr::from(exr.with_new_inputs(&mut new_inputs)),
-                BestExprRef::Scalar(exr) => OperatorExpr::from(exr.with_new_inputs(&mut new_inputs)),
+                BestExprRef::Relational(expr) => OperatorExpr::from(expr.with_new_inputs(&mut new_inputs)),
+                BestExprRef::Scalar(expr) => OperatorExpr::from(expr_with_new_inputs(expr, &mut new_inputs)),
             };
             let result = Operator::from(new_expr);
             Ok(result)

@@ -1,7 +1,7 @@
 use std::fmt::{Debug, Formatter};
 
 use crate::cost::{Cost, CostEstimationContext, CostEstimator};
-use crate::operators::physical::PhysicalExpr;
+use crate::operators::relational::physical::PhysicalExpr;
 use crate::properties::statistics::Statistics;
 
 /// A very simple implementation of a [CostEstimator].

@@ -1,6 +1,6 @@
 use crate::error::OptimizerError;
-use crate::operators::join::{get_non_empty_join_columns_pair, JoinCondition};
-use crate::operators::logical::LogicalExpr;
+use crate::operators::relational::join::{get_non_empty_join_columns_pair, JoinCondition};
+use crate::operators::relational::logical::LogicalExpr;
 use crate::rules::{Rule, RuleContext, RuleMatch, RuleResult, RuleType};
 
 #[derive(Debug)]
