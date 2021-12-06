@@ -273,7 +273,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
                     _ => {
                         let expr = self.build_scalar_operator(expr, input_logical);
                         let column_name = "?column?".to_string();
-                        let data_type = self.resolve_expr_type(&expr);
+                        let data_type = resolve_expr_type(&expr, &self.metadata);
                         let column_meta = ColumnMetadata::new_synthetic_column(column_name, data_type, Some(expr));
                         let column_id = self.metadata.add_column(column_meta);
                         columns.push(column_id);
@@ -490,18 +490,21 @@ impl<'a> TestOperatorTreeBuilder<'a> {
         let mut output_columns = Vec::with_capacity(left_columns.len());
 
         for (i, (l, r)) in left_columns.iter().zip(right_columns.iter()).enumerate() {
-            let left_column = self.metadata.get_column(l);
-            let right_column = self.metadata.get_column(r);
-            let left_type = left_column.data_type().clone();
-            let right_type = right_column.data_type().clone();
+            // Use additional scope in order to avoid "already borrowed" error.
+            let column_meta = {
+                let left_column = self.metadata.get_column(l);
+                let right_column = self.metadata.get_column(r);
+                let left_type = left_column.data_type().clone();
+                let right_type = right_column.data_type().clone();
 
-            assert_eq!(
-                left_type, right_type,
-                "Data type of {}-th column does not match. Type casting is not implemented",
-                i
-            );
+                assert_eq!(
+                    left_type, right_type,
+                    "Data type of {}-th column does not match. Type casting is not implemented",
+                    i
+                );
 
-            let column_meta = ColumnMetadata::new_synthetic_column("".to_string(), left_type, None);
+                ColumnMetadata::new_synthetic_column("".to_string(), left_type, None)
+            };
             let column_id = self.metadata.add_column(column_meta);
             output_columns.push(column_id);
         }
@@ -522,7 +525,7 @@ impl<'a> TestOperatorTreeBuilder<'a> {
     }
 
     fn add_aggregate_column(&mut self, expr: ScalarExpr, _input_properties: &LogicalProperties) -> ColumnId {
-        let expr_type = self.resolve_expr_type(&expr);
+        let expr_type = resolve_expr_type(&expr, &self.metadata);
         let column_name = if let ScalarExpr::Aggregate { func, .. } = &expr {
             func.to_string()
         } else {
@@ -607,47 +610,48 @@ impl<'a> TestOperatorTreeBuilder<'a> {
 
         Properties::new(LogicalProperties::new(output_columns, statistics), required)
     }
+}
 
-    fn resolve_expr_type(&self, expr: &ScalarExpr) -> DataType {
-        match expr {
-            ScalarExpr::Column(column_id) => self.metadata.get_column(column_id).data_type().clone(),
-            ScalarExpr::Scalar(value) => value.data_type(),
-            ScalarExpr::BinaryExpr { lhs, op, rhs } => {
-                let left_tpe = self.resolve_expr_type(lhs);
-                let right_tpe = self.resolve_expr_type(rhs);
-                self.resolve_binary_expr_type(left_tpe, op, right_tpe)
-            }
-            ScalarExpr::Not(expr) => {
-                let tpe = self.resolve_expr_type(expr);
-                assert_eq!(tpe, DataType::Bool, "Invalid argument type for NOT operator");
-                tpe
-            }
-            ScalarExpr::Aggregate { func, args, .. } => {
-                for (i, arg) in args.iter().enumerate() {
-                    let arg_tpe = self.resolve_expr_type(arg);
-                    let expected_tpe = match func {
-                        AggregateFunction::Avg
-                        | AggregateFunction::Max
-                        | AggregateFunction::Min
-                        | AggregateFunction::Sum => DataType::Int32,
-                        AggregateFunction::Count => arg_tpe.clone(),
-                    };
-                    assert_eq!(
-                        &arg_tpe, &expected_tpe,
-                        "Invalid argument type for aggregate function {}. Argument#{} {}",
-                        func, i, arg
-                    );
-                }
-                DataType::Int32
-            }
-            ScalarExpr::SubQuery(_) => DataType::Int32,
+pub fn resolve_expr_type(expr: &ScalarExpr, metadata: &MutableMetadata) -> DataType {
+    match expr {
+        ScalarExpr::Column(column_id) => metadata.get_column(column_id).data_type().clone(),
+        ScalarExpr::ColumnName(_) => panic!("Expr Column(name) should have been replaced with Column(id)"),
+        ScalarExpr::Scalar(value) => value.data_type(),
+        ScalarExpr::BinaryExpr { lhs, op, rhs } => {
+            let left_tpe = resolve_expr_type(lhs, metadata);
+            let right_tpe = resolve_expr_type(rhs, metadata);
+            resolve_binary_expr_type(left_tpe, op, right_tpe)
         }
+        ScalarExpr::Not(expr) => {
+            let tpe = resolve_expr_type(expr, metadata);
+            assert_eq!(tpe, DataType::Bool, "Invalid argument type for NOT operator");
+            tpe
+        }
+        ScalarExpr::Aggregate { func, args, .. } => {
+            for (i, arg) in args.iter().enumerate() {
+                let arg_tpe = resolve_expr_type(arg, metadata);
+                let expected_tpe = match func {
+                    AggregateFunction::Avg
+                    | AggregateFunction::Max
+                    | AggregateFunction::Min
+                    | AggregateFunction::Sum => DataType::Int32,
+                    AggregateFunction::Count => arg_tpe.clone(),
+                };
+                assert_eq!(
+                    &arg_tpe, &expected_tpe,
+                    "Invalid argument type for aggregate function {}. Argument#{} {}",
+                    func, i, arg
+                );
+            }
+            DataType::Int32
+        }
+        ScalarExpr::SubQuery(_) => DataType::Int32,
     }
+}
 
-    fn resolve_binary_expr_type(&self, lhs: DataType, _op: &BinaryOp, rhs: DataType) -> DataType {
-        assert_eq!(lhs, rhs, "Types does not match");
-        DataType::Bool
-    }
+fn resolve_binary_expr_type(lhs: DataType, _op: &BinaryOp, rhs: DataType) -> DataType {
+    assert_eq!(lhs, rhs, "Types does not match");
+    DataType::Bool
 }
 
 #[derive(Debug)]
@@ -692,7 +696,7 @@ mod test {
     use crate::operators::scalar::value::ScalarValue;
     use crate::operators::scalar::{ScalarExpr, ScalarNode};
     use crate::operators::Operator;
-    use crate::rules::testing::format_expr;
+    use crate::rules::testing::format_operator_tree;
     use itertools::Itertools;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -1126,7 +1130,7 @@ Memo:
         let mut buf = String::new();
         buf.push('\n');
 
-        buf.push_str(format_expr(&expr).as_str());
+        buf.push_str(format_operator_tree(&expr).as_str());
         buf.push('\n');
 
         buf.push_str(format!("  output cols: {:?}\n", expr.logical().output_columns()).as_str());

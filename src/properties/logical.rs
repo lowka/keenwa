@@ -1,6 +1,9 @@
 use crate::error::OptimizerError;
 use crate::meta::ColumnId;
-use crate::operators::relational::RelExpr;
+use crate::operators::relational::join::JoinCondition;
+use crate::operators::relational::{RelExpr, RelNode};
+use crate::operators::scalar::expr::ExprVisitor;
+use crate::operators::scalar::{ScalarExpr, ScalarNode};
 use crate::operators::{OperatorExpr, Properties};
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::statistics::{Statistics, StatisticsBuilder};
@@ -68,6 +71,105 @@ impl LogicalPropertiesBuilder {
     pub fn new(statistics: Box<dyn StatisticsBuilder>) -> Self {
         LogicalPropertiesBuilder { statistics }
     }
+}
+
+impl LogicalPropertiesBuilder {
+    /// Builds logical properties for a get operator.
+    pub fn build_get(&self, _source: &str, columns: &[ColumnId]) -> Result<LogicalProperties, OptimizerError> {
+        let output_columns = columns.iter().copied().collect();
+        Ok(LogicalProperties::new(output_columns, None))
+    }
+
+    /// Builds logical properties for the given select operator.
+    pub fn build_select(
+        &self,
+        input: &RelNode,
+        filter: Option<&ScalarNode>,
+    ) -> Result<LogicalProperties, OptimizerError> {
+        // FIXME: Is this validation really necessary?
+        if let Some(filter) = filter {
+            expect_columns("Select", filter, input)?;
+        };
+        Ok(LogicalProperties::new(input.props().logical().output_columns.to_vec(), None))
+    }
+
+    /// Builds logical properties for a projection operator.
+    pub fn build_projection(&self, _input: &RelNode, columns: &[ColumnId]) -> Result<LogicalProperties, OptimizerError> {
+        // FIXME: Is this validation really necessary?
+        //let input_columns = input.props().logical().output_columns();
+        // for column_id in columns {
+        //     if !input_columns.contains(column_id) {
+        //         return Err(OptimizerError::Argument(format!(
+        //             "Output column {} does not exist. Input: {:?}",
+        //             column_id, input_columns
+        //         )));
+        //     }
+        // }
+        let output_columns = columns.to_vec();
+        Ok(LogicalProperties::new(output_columns, None))
+    }
+
+    /// Builds logical properties for a join operator.
+    pub fn build_join(
+        &self,
+        left: &RelNode,
+        right: &RelNode,
+        _condition: &JoinCondition,
+    ) -> Result<LogicalProperties, OptimizerError> {
+        let mut output_columns = left.props().logical().output_columns().to_vec();
+        output_columns.extend_from_slice(right.props().logical().output_columns());
+
+        Ok(LogicalProperties::new(output_columns, None))
+    }
+
+    pub fn build_union(
+        &self,
+        _left: &RelNode,
+        _right: &RelNode,
+        columns: &[ColumnId],
+    ) -> Result<LogicalProperties, OptimizerError> {
+        let output_columns = columns.to_vec();
+
+        Ok(LogicalProperties::new(output_columns, None))
+    }
+
+    pub fn build_aggregate(&self, _input: &RelNode, columns: &[ColumnId]) -> Result<LogicalProperties, OptimizerError> {
+        let output_columns = columns.to_vec();
+
+        Ok(LogicalProperties::new(output_columns, None))
+    }
+}
+
+// Move to OperatorBuilder
+fn expect_columns(operator: &str, expr: &ScalarNode, input: &RelNode) -> Result<(), OptimizerError> {
+    struct ExpectColumns<'a> {
+        operator: &'a str,
+        input_columns: &'a [ColumnId],
+        result: Result<(), OptimizerError>,
+    }
+
+    impl ExprVisitor<RelNode> for ExpectColumns<'_> {
+        fn post_visit(&mut self, expr: &ScalarExpr) {
+            if self.result.is_err() {
+                return;
+            }
+            if let ScalarExpr::Column(id) = expr {
+                if !self.input_columns.contains(id) {
+                    self.result = Err(OptimizerError::Internal(format!(
+                        "{}: Unexpected column {}. Input columns: {:?}",
+                        self.operator, id, self.input_columns
+                    )))
+                }
+            }
+        }
+    }
+    let mut visitor = ExpectColumns {
+        operator,
+        input_columns: input.props().logical().output_columns(),
+        result: Ok(()),
+    };
+    expr.expr().accept(&mut visitor);
+    visitor.result
 }
 
 impl PropertiesProvider for LogicalPropertiesBuilder {

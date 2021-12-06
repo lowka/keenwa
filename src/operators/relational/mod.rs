@@ -83,9 +83,10 @@ impl RelNode {
 impl NestedExpr for RelNode {
     fn write_to_fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            RelNode::Expr(expr) => {
-                let ptr: *const Operator = &**expr;
-                write!(f, "ptr {:?}", ptr)
+            RelNode::Expr(_) => {
+                // let ptr: *const Operator = &**expr;
+                // write!(f, "ptr {:?}", ptr)
+                write!(f, "*ptr")
             }
             RelNode::Group(group) => write!(f, "{}", group.id()),
         }

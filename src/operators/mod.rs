@@ -14,6 +14,7 @@ use scalar::expr::ExprVisitor;
 use scalar::{ScalarExpr, ScalarNode};
 use std::fmt::Debug;
 
+pub mod builder;
 pub mod operator_tree;
 pub mod relational;
 pub mod scalar;

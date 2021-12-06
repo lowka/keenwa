@@ -5,11 +5,14 @@ use std::rc::Rc;
 use std::sync::{Arc, Once};
 
 use crate::catalog::mutable::MutableCatalog;
-use crate::catalog::{Catalog, CatalogRef};
+use crate::catalog::{Catalog, CatalogRef, TableBuilder, DEFAULT_SCHEMA};
 use crate::cost::simple::SimpleCostEstimator;
 use crate::datatypes::DataType;
+use crate::error::OptimizerError;
 use crate::memo::{ExprNodeRef, MemoExpr, MemoExprFormatter, StringMemoFormatter};
-use crate::operators::operator_tree::TestOperatorTreeBuilder;
+use crate::meta::{Metadata, MutableMetadata};
+use crate::operators::builder::OperatorBuilder;
+
 use crate::operators::{ExprMemo, Operator};
 use crate::optimizer::{Optimizer, SetPropertiesCallback};
 use crate::properties::logical::LogicalPropertiesBuilder;
@@ -26,26 +29,48 @@ static INIT_LOG: Once = Once::new();
 ///
 /// [optimizer]: crate::optimizer::Optimizer
 pub struct OptimizerTester {
+    catalog: CatalogRef,
+    properties_builder: Rc<LogicalPropertiesBuilder>,
+    mutable_metadata: Rc<MutableMetadata>,
     rules: Box<dyn Fn(CatalogRef) -> Vec<Box<dyn Rule>>>,
     rules_filter: Box<dyn Fn(&Box<dyn Rule>) -> bool>,
     table_access_costs: HashMap<String, usize>,
     shuffle_rules: bool,
     explore_with_enforcer: bool,
     update_catalog: Box<dyn Fn(&MutableCatalog)>,
+    use_metadata: Option<Metadata>,
 }
 
 impl OptimizerTester {
     pub fn new() -> Self {
         INIT_LOG.call_once(pretty_env_logger::init);
 
+        let catalog = Arc::new(MutableCatalog::new());
+        let statistics_builder = CatalogStatisticsBuilder::new(catalog.clone());
+        let properties_builder = Rc::new(LogicalPropertiesBuilder::new(Box::new(statistics_builder)));
+        let mutable_metadata = Rc::new(MutableMetadata::new());
+
         OptimizerTester {
+            catalog,
+            properties_builder,
+            mutable_metadata,
             rules: Box::new(|_| Vec::new()),
             rules_filter: Box::new(|_r| true),
             table_access_costs: HashMap::new(),
             shuffle_rules: true,
             explore_with_enforcer: true,
             update_catalog: Box::new(|_| {}),
+            use_metadata: None,
         }
+    }
+
+    /// Creates a new [operator builder](crate::operators::builder::OperatorBuilder).
+    pub fn builder(&self) -> OperatorBuilder {
+        let tables = TestTables::new();
+
+        tables.register(self.catalog.as_ref());
+
+        OperatorBuilder::new(self.catalog.clone(), self.mutable_metadata.clone(), self.properties_builder.clone())
     }
 
     /// A toggle to enable/disable rule shuffling.
@@ -94,6 +119,12 @@ impl OptimizerTester {
         self.update_catalog = Box::new(f);
     }
 
+    pub fn build_query(&mut self, builder: OperatorBuilder) -> Operator {
+        let (operator, metadata) = builder.build();
+        self.use_metadata = Some(metadata);
+        operator
+    }
+
     /// Optimizes the given operator tree and compares the result with expected plan.
     /// `expected_plan` can be written in two forms with description (1) or without description (2):
     ///
@@ -108,30 +139,37 @@ impl OptimizerTester {
     ///     expr 1
     ///     expr 2
     ///
-    pub fn optimize(&self, operator: Operator, expected_plan: &str) {
+    pub fn optimize(&mut self, operator: Operator, expected_plan: &str) -> Result<(), OptimizerError> {
         let tables = TestTables::new();
-        let columns = tables.columns;
+        let _columns = tables.columns.clone();
 
-        let catalog = Arc::new(MutableCatalog::new());
-        let statistics_builder = CatalogStatisticsBuilder::new(catalog.clone());
-        let properties_builder = LogicalPropertiesBuilder::new(Box::new(statistics_builder));
-        let propagate_properties = SetPropertiesCallback::new(Rc::new(properties_builder));
+        let propagate_properties = SetPropertiesCallback::new(self.properties_builder.clone());
         let memo_callback = Rc::new(propagate_properties);
 
         let mut memo = ExprMemo::with_callback(memo_callback);
-        let builder =
-            TestOperatorTreeBuilder::new(&mut memo, catalog.clone(), columns, self.table_access_costs.clone());
 
-        let (operator, metadata) = builder.build_initialized(operator);
-        let mutable_catalog = catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();
+        let (operator, metadata) = if let Some(metadata) = self.use_metadata.take() {
+            let mutable_catalog = self.catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();
+
+            tables.register_statistics(mutable_catalog, self.table_access_costs.clone());
+
+            (operator, metadata)
+        } else {
+            // let builder =
+            //     TestOperatorTreeBuilder::new(&mut memo, self.catalog.clone(), columns, self.table_access_costs.clone());
+            // builder.build_initialized(operator)
+            panic!("Use OperatorBuilder to create an operator")
+        };
+
+        let mutable_catalog = self.catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();
         (self.update_catalog)(mutable_catalog);
 
         let mut default_rules: Vec<Box<dyn Rule>> = vec![
-            Box::new(GetToScanRule::new(catalog.clone())),
+            Box::new(GetToScanRule::new(self.catalog.clone())),
             Box::new(SelectRule),
             Box::new(ProjectionRule),
         ];
-        default_rules.extend((self.rules)(catalog.clone()));
+        default_rules.extend((self.rules)(self.catalog.clone()));
 
         let rules: Vec<Box<dyn Rule>> = default_rules.into_iter().filter(|r| (self.rules_filter)(r)).collect();
         assert!(!rules.is_empty(), "No rules have been specified");
@@ -156,6 +194,7 @@ impl OptimizerTester {
         let test_result = TestResultBuilder::result_as_string(test_result);
         let expected_plan = expected_lines.iter().skip(1).map(|s| s.as_ref()).collect::<Vec<&str>>().join("\n");
         assert_eq!(test_result, expected_plan, "{} does not match", label);
+        Ok(())
     }
 }
 
@@ -171,6 +210,38 @@ impl TestTables {
                 ("B".into(), vec![("b1".into(), DataType::Int32), ("b2".into(), DataType::Int32)]),
                 ("C".into(), vec![("c1".into(), DataType::Int32), ("c2".into(), DataType::Int32)]),
             ],
+        }
+    }
+
+    pub fn register(&self, catalog: &dyn Catalog) {
+        let mutable_catalog = catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();
+
+        for table in self.columns.clone() {
+            let table_name = table.0;
+            let columns = table.1;
+            let mut table_builder = TableBuilder::new(table_name.as_str());
+            for (name, tpe) in columns {
+                table_builder = table_builder.add_column(name.as_str(), tpe);
+            }
+            let table = table_builder.build();
+            mutable_catalog.add_table(DEFAULT_SCHEMA, table);
+        }
+    }
+
+    fn register_statistics(&self, catalog: &dyn Catalog, statistics: HashMap<String, usize>) {
+        let mutable_catalog = catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();
+
+        for (name, cost) in statistics {
+            if name.starts_with("Index:") {
+                continue;
+            }
+            let table = mutable_catalog
+                .get_table(name.as_str())
+                .unwrap_or_else(|| panic!("Unexpected table {}", name));
+            let table_builder = TableBuilder::from_table(table.as_ref());
+            let table = table_builder.add_row_count(cost).build();
+
+            mutable_catalog.add_table(DEFAULT_SCHEMA, table);
         }
     }
 }

@@ -1,5 +1,6 @@
 use crate::datatypes::DataType;
 use crate::operators::scalar::ScalarExpr;
+use std::cell::{Ref, RefCell};
 
 /// Uniquely identifies a column within a query.
 pub type ColumnId = usize;
@@ -15,6 +16,7 @@ pub struct Metadata {
 /// from a column in a projection list.
 #[derive(Debug, Clone)]
 pub struct ColumnMetadata {
+    id: ColumnId,
     /// The name of this column.
     name: String,
     /// The type of this column.
@@ -30,6 +32,7 @@ impl ColumnMetadata {
     /// Creates column metadata for a column that belongs to the given table.
     pub fn new_table_column(name: String, data_type: DataType, table: String) -> Self {
         ColumnMetadata {
+            id: 0,
             name,
             data_type,
             table: Some(table),
@@ -40,6 +43,7 @@ impl ColumnMetadata {
     /// Creates column metadata for a synthetic column.
     pub fn new_synthetic_column(name: String, data_type: DataType, expr: Option<ScalarExpr>) -> Self {
         ColumnMetadata {
+            id: 0,
             name,
             data_type,
             table: None,
@@ -87,20 +91,34 @@ impl Metadata {
 }
 
 /// A mutable variant of a [Metadata](self::Metadata).
+#[derive(Debug, Clone)]
 pub struct MutableMetadata {
-    columns: Vec<ColumnMetadata>,
+    inner: RefCell<MutableMetadataInner>,
 }
 
 impl MutableMetadata {
     /// Creates a new instance of a MutableMetadata.
     pub fn new() -> Self {
-        MutableMetadata { columns: Vec::new() }
+        MutableMetadata {
+            inner: RefCell::new(MutableMetadataInner::default()),
+        }
     }
 
     /// Adds a new column to this metadata.
-    pub fn add_column(&mut self, column: ColumnMetadata) -> ColumnId {
-        self.columns.push(column);
-        self.columns.len()
+    // FIXME: Update docs.
+    pub fn add_column(&self, mut column: ColumnMetadata) -> ColumnId {
+        let mut inner = self.inner.borrow_mut();
+        if let Some(column) = inner
+            .columns
+            .iter()
+            .find(|c| c.name == column.name && c.table.as_ref() == column.table.as_ref())
+        {
+            return column.id;
+        };
+        let id = inner.columns.len() + 1;
+        column.id = id;
+        inner.columns.push(column);
+        id
     }
 
     /// Returns column metadata for the given column id.
@@ -108,14 +126,30 @@ impl MutableMetadata {
     /// # Panics
     ///
     /// This method panics if there is no metadata for the given column.
-    pub fn get_column(&self, column_id: &ColumnId) -> &ColumnMetadata {
-        self.columns
-            .get(column_id - 1)
-            .unwrap_or_else(|| panic!("Unknown or unexpected column id: {:?}", column_id))
+    pub fn get_column(&self, column_id: &ColumnId) -> Ref<'_, ColumnMetadata> {
+        let inner = self.inner.borrow();
+        Ref::map(inner, |inner| {
+            inner
+                .columns
+                .get(column_id - 1)
+                .unwrap_or_else(|| panic!("Unknown or unexpected column id: {:?}", column_id))
+        })
     }
 
     /// Converts this instance to a immutable [metadata](self::Metadata).
     pub fn to_metadata(self) -> Metadata {
-        Metadata::new(self.columns)
+        let inner = self.inner.borrow();
+        Metadata::new(inner.columns.clone())
     }
+
+    /// Creates an instances of a immutable [metadata](self::Metadata) from this metadata.
+    pub fn build_metadata(&self) -> Metadata {
+        let inner = self.inner.borrow();
+        Metadata::new(inner.columns.clone())
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct MutableMetadataInner {
+    columns: Vec<ColumnMetadata>,
 }
