@@ -5,9 +5,10 @@ use crate::operators::scalar::value::ScalarValue;
 use itertools::Itertools;
 use std::convert::{Infallible, TryFrom};
 use std::fmt::{Debug, Display, Formatter};
+use std::hash::Hash;
 
 /// Expressions supported by the optimizer.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum Expr<T>
 where
     T: NestedExpr,
@@ -31,7 +32,7 @@ where
 }
 
 /// Trait that must be implemented by other expressions that can be nested inside [Expr](self::Expr).
-pub trait NestedExpr: Debug + Clone {
+pub trait NestedExpr: Debug + Clone + Eq + Hash {
     /// Writes this nested expression to the given formatter.
     fn write_to_fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result;
 }
@@ -187,7 +188,7 @@ where
 }
 
 /// Binary operators.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum BinaryOp {
     And,
     Or,
@@ -197,6 +198,7 @@ pub enum BinaryOp {
     LtEq,
     Gt,
     GtEq,
+    Add,
 }
 
 impl BinaryOp {
@@ -242,12 +244,13 @@ impl Display for BinaryOp {
             BinaryOp::LtEq => write!(f, "<="),
             BinaryOp::Gt => write!(f, ">"),
             BinaryOp::GtEq => write!(f, ">="),
+            BinaryOp::Add => write!(f, "+"),
         }
     }
 }
 
 /// Supported aggregate functions.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum AggregateFunction {
     Avg,
     Count,
@@ -303,9 +306,24 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::hash::Hasher;
 
     #[derive(Debug, Clone)]
     struct DummyRelExpr;
+
+    impl Eq for DummyRelExpr {}
+
+    impl PartialEq<Self> for DummyRelExpr {
+        fn eq(&self, _: &Self) -> bool {
+            true
+        }
+    }
+
+    impl Hash for DummyRelExpr {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            state.write_usize(0)
+        }
+    }
 
     impl NestedExpr for DummyRelExpr {
         fn write_to_fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {

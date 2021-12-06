@@ -509,6 +509,42 @@ where
             ExprPtr::Memo(expr) => expr,
         }
     }
+
+    fn equal(&self, other: &ExprPtr<E>) -> bool {
+        let this = self.get_eq_state();
+        let that = other.get_eq_state();
+        // Expressions are equal if their expr pointers point to the same expression.
+        match (this, that) {
+            // Raw pointer equality for owned expressions is used here because we should not check non-memoized
+            // expressions for equality.
+            ((Some(x), _), (Some(y), _)) => std::ptr::eq(x, y),
+            ((_, Some(x)), (_, Some(y))) => x == y,
+            _ => false,
+        }
+    }
+
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            ExprPtr::Owned(expr) => {
+                let ptr: *const E::Expr = &**expr;
+                ptr.hash(state)
+            }
+            ExprPtr::Memo(expr) => expr.id().hash(state),
+        }
+    }
+
+    fn get_eq_state(&self) -> (Option<*const E::Expr>, Option<ExprId>)
+    where
+        E: MemoExpr,
+    {
+        match self {
+            ExprPtr::Owned(expr) => {
+                let ptr: *const E::Expr = &**expr;
+                (Some(ptr), None)
+            }
+            ExprPtr::Memo(expr) => (None, Some(expr.id())),
+        }
+    }
 }
 
 impl<E, T> Debug for ExprPtr<E>
@@ -723,6 +759,11 @@ where
     pub fn mexpr(&self) -> &E {
         &self.0
     }
+
+    /// Consumes this relational expression and returns the underlying memo expression.
+    pub fn into_inner(self) -> E {
+        self.0
+    }
 }
 
 impl<E> AsRef<E> for RelNode<E>
@@ -749,6 +790,26 @@ where
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("RelNode").field(&self.0).finish()
+    }
+}
+
+impl<E> PartialEq for RelNode<E>
+where
+    E: MemoExpr,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.0.expr_ptr().equal(other.0.expr_ptr())
+    }
+}
+
+impl<E> Eq for RelNode<E> where E: MemoExpr {}
+
+impl<E> Hash for RelNode<E>
+where
+    E: MemoExpr,
+{
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.expr_ptr().hash(state)
     }
 }
 
@@ -822,6 +883,11 @@ where
     pub fn mexpr(&self) -> &E {
         &self.0
     }
+
+    /// Consumes this scalar expression and returns the underlying memo expression.
+    pub fn into_inner(self) -> E {
+        self.0
+    }
 }
 
 impl<E> AsRef<E> for ScalarNode<E>
@@ -848,6 +914,26 @@ where
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("ScalarNode").field(&self.0).finish()
+    }
+}
+
+impl<E> PartialEq for ScalarNode<E>
+where
+    E: MemoExpr,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.0.expr_ptr().equal(other.0.expr_ptr())
+    }
+}
+
+impl<E> Eq for ScalarNode<E> where E: MemoExpr {}
+
+impl<E> Hash for ScalarNode<E>
+where
+    E: MemoExpr,
+{
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.expr_ptr().hash(state)
     }
 }
 
