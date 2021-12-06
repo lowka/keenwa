@@ -13,6 +13,7 @@ use crate::rules::enforcers::{DefaultEnforcers, EnforcerRules};
 
 mod enforcers;
 pub mod implementation;
+mod rewrite;
 #[cfg(test)]
 pub mod testing;
 pub mod transformation;

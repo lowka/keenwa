@@ -561,8 +561,13 @@ impl ExprRewriter<RelNode> for RewriteExprs<'_> {
 /// A builder for aggregate operators.  
 pub struct AggregateBuilder<'a> {
     builder: &'a mut OperatorBuilder,
-    aggr_exprs: Vec<(AggregateFunction, String)>,
+    aggr_exprs: Vec<AggrExpr>,
     group_exprs: Vec<String>,
+}
+
+enum AggrExpr {
+    Function { func: AggregateFunction, column: String },
+    Column(String),
 }
 
 impl AggregateBuilder<'_> {
@@ -570,7 +575,17 @@ impl AggregateBuilder<'_> {
     pub fn add_func(mut self, func: &str, column_name: &str) -> Result<Self, OptimizerError> {
         let func = AggregateFunction::try_from(func)
             .map_err(|_| OptimizerError::Argument(format!("Unknown aggregate function {}", func)))?;
-        self.aggr_exprs.push((func, column_name.into()));
+        let aggr_expr = AggrExpr::Function {
+            func,
+            column: column_name.into(),
+        };
+        self.aggr_exprs.push(aggr_expr);
+        Ok(self)
+    }
+
+    /// Adds column to the aggregate operator. The given column must appear in group_by clause.
+    pub fn add_column(mut self, column_name: &str) -> Result<Self, OptimizerError> {
+        self.aggr_exprs.push(AggrExpr::Column(column_name.into()));
         Ok(self)
     }
 
@@ -587,28 +602,49 @@ impl AggregateBuilder<'_> {
         let aggr_exprs = std::mem::take(&mut self.aggr_exprs);
         let aggr_exprs: Result<Vec<(ScalarNode, (String, ColumnId))>, OptimizerError> = aggr_exprs
             .into_iter()
-            .map(|(f, a)| {
-                let mut rewriter = RewriteExprs {
-                    scope: &scope,
-                    result: Ok(()),
-                };
-                let expr = ScalarExpr::ColumnName(a);
-                let expr = expr.rewrite(&mut rewriter)?;
+            .map(|expr| match expr {
+                AggrExpr::Function { func, column } => {
+                    let mut rewriter = RewriteExprs {
+                        scope: &scope,
+                        result: Ok(()),
+                    };
+                    let expr = ScalarExpr::ColumnName(column);
+                    let expr = expr.rewrite(&mut rewriter)?;
 
-                let name = format!("{}", f);
-                let expr = ScalarExpr::Aggregate {
-                    func: f,
-                    args: vec![expr],
-                    filter: None,
-                };
-                let metadata = &self.builder.metadata;
-                let data_type = resolve_expr_type(&expr, metadata);
+                    let name = format!("{}", func);
+                    let expr = ScalarExpr::Aggregate {
+                        func,
+                        args: vec![expr],
+                        filter: None,
+                    };
+                    let metadata = &self.builder.metadata;
+                    let data_type = resolve_expr_type(&expr, metadata);
 
-                let column_meta = ColumnMetadata::new_synthetic_column(name.clone(), data_type, Some(expr.clone()));
-                let id = metadata.add_column(column_meta);
-                let expr = self.builder.add_scalar_node(expr);
+                    let column_meta = ColumnMetadata::new_synthetic_column(name.clone(), data_type, Some(expr.clone()));
+                    let id = metadata.add_column(column_meta);
+                    let expr = self.builder.add_scalar_node(expr);
 
-                Ok((expr, (name, id)))
+                    Ok((expr, (name, id)))
+                }
+                AggrExpr::Column(name) => {
+                    let mut rewriter = RewriteExprs {
+                        scope: &scope,
+                        result: Ok(()),
+                    };
+                    let expr = ScalarExpr::ColumnName(name.clone());
+                    let expr = expr.rewrite(&mut rewriter)?;
+                    let expr = self.builder.add_scalar_node(expr);
+                    let id = if let ScalarExpr::Column(id) = expr.expr() {
+                        *id
+                    } else {
+                        unreachable!("Column name has not been replaced with metadata id")
+                    };
+                    if self.group_exprs.iter().any(|group_column| group_column == &name) {
+                        Ok((expr, (name, id)))
+                    } else {
+                        Err(OptimizerError::Internal(format!("Column {} must appear in group by clause", name)))
+                    }
+                }
             })
             .collect();
         let aggr_exprs = aggr_exprs?;
@@ -742,6 +778,7 @@ fn resolve_expr_type(expr: &ScalarExpr, metadata: &MutableMetadata) -> DataType 
 
 fn resolve_binary_expr_type(lhs: DataType, _op: &BinaryOp, rhs: DataType) -> DataType {
     assert_eq!(lhs, rhs, "Types does not match");
+    // TODO: Correctly resolve data types.
     DataType::Bool
 }
 
@@ -1073,6 +1110,42 @@ Memo:
         });
 
         tester.expect_error("Use OperatorBuilder::sub_query_builder to build a nested sub query")
+    }
+
+    #[test]
+    fn test_aggregate() {
+        let mut tester = OperatorBuilderTester::new();
+        tester.build_operator(|builder| {
+            let mut from_a = builder.get("A", vec!["a1", "a2", "a3"])?;
+            let sum = from_a
+                .aggregate_builder()
+                .add_column("a1")?
+                .add_func("sum", "a1")?
+                .group_by("a1")?
+                .build()?;
+
+            sum.build()
+        });
+        tester.expect_expr(
+            r#"
+LogicalAggregate
+  input: LogicalGet A cols=[1, 2, 3]
+  : Expr col:1
+  : Expr sum(col:1)
+  : Expr col:1
+  output cols: [1, 4]
+Metadata:
+  col:1 A.a1 Int32
+  col:2 A.a2 Int32
+  col:3 A.a3 Int32
+  col:4 sum Int32, expr: sum(col:1)
+Memo:
+  03 LogicalAggregate input=00 01 02 01
+  02 Expr sum(col:1)
+  01 Expr col:1
+  00 LogicalGet A cols=[1, 2, 3]
+"#,
+        );
     }
 
     struct OperatorBuilderTester {

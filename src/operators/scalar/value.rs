@@ -2,7 +2,7 @@ use crate::datatypes::DataType;
 use std::fmt::{Display, Formatter};
 
 /// Supported scalar values.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum ScalarValue {
     Null,
     Bool(bool),

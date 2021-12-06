@@ -330,12 +330,12 @@ impl LogicalAggregate {
         let num_group_exprs = self.group_exprs.len();
         match i {
             0 => Some(self.input.mexpr()),
-            _ if i >= 1 && i < num_aggr_exprs => {
-                let expr = &self.aggr_exprs[i];
+            _ if i >= 1 && i < num_aggr_exprs + 1 => {
+                let expr = &self.aggr_exprs[i - 1];
                 Some(expr.mexpr())
             }
-            _ if i >= num_aggr_exprs && i < 1 + num_aggr_exprs + num_group_exprs => {
-                let expr = &self.group_exprs[i];
+            _ if i > num_aggr_exprs && i < 1 + num_aggr_exprs + num_group_exprs => {
+                let expr = &self.group_exprs[i - 1 - num_aggr_exprs];
                 Some(expr.mexpr())
             }
             _ => None,
