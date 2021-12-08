@@ -1,12 +1,12 @@
 use crate::catalog::{Catalog, CatalogRef};
+use crate::datatypes::DataType;
 use crate::error::OptimizerError;
 use crate::memo::MemoExpr;
 use crate::meta::{ColumnId, ColumnMetadata, Metadata, MutableMetadata};
-use crate::operators::operator_tree::resolve_expr_type;
 use crate::operators::relational::join::{JoinCondition, JoinOn};
 use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::RelNode;
-use crate::operators::scalar::expr::{AggregateFunction, Expr, ExprRewriter};
+use crate::operators::scalar::expr::{AggregateFunction, BinaryOp, Expr, ExprRewriter};
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
 use crate::operators::{Operator, OperatorExpr, Properties};
 use crate::properties::logical::{LogicalProperties, LogicalPropertiesBuilder};
@@ -122,7 +122,9 @@ impl OperatorBuilder {
     /// Adds scan operator to an operator tree. A scan operator can only be added as leaf node of a tree.
     pub fn get(mut self, source: &str, columns: Vec<impl Into<String>>) -> Result<Self, OptimizerError> {
         if self.operator.is_some() {
-            return Result::Err(OptimizerError::Internal("Adding a scan operator on top of another operator is not allowed".to_string()));
+            return Result::Err(OptimizerError::Internal(
+                "Adding a scan operator on top of another operator is not allowed".to_string(),
+            ));
         }
         let columns: Vec<String> = columns.into_iter().map(|c| c.into()).collect();
         let table = self
@@ -684,6 +686,48 @@ impl SubQueries {
     }
 }
 
+fn resolve_expr_type(expr: &ScalarExpr, metadata: &MutableMetadata) -> DataType {
+    match expr {
+        ScalarExpr::Column(column_id) => metadata.get_column(column_id).data_type().clone(),
+        ScalarExpr::ColumnName(_) => panic!("Expr Column(name) should have been replaced with Column(id)"),
+        ScalarExpr::Scalar(value) => value.data_type(),
+        ScalarExpr::BinaryExpr { lhs, op, rhs } => {
+            let left_tpe = resolve_expr_type(lhs, metadata);
+            let right_tpe = resolve_expr_type(rhs, metadata);
+            resolve_binary_expr_type(left_tpe, op, right_tpe)
+        }
+        ScalarExpr::Not(expr) => {
+            let tpe = resolve_expr_type(expr, metadata);
+            assert_eq!(tpe, DataType::Bool, "Invalid argument type for NOT operator");
+            tpe
+        }
+        ScalarExpr::Aggregate { func, args, .. } => {
+            for (i, arg) in args.iter().enumerate() {
+                let arg_tpe = resolve_expr_type(arg, metadata);
+                let expected_tpe = match func {
+                    AggregateFunction::Avg
+                    | AggregateFunction::Max
+                    | AggregateFunction::Min
+                    | AggregateFunction::Sum => DataType::Int32,
+                    AggregateFunction::Count => arg_tpe.clone(),
+                };
+                assert_eq!(
+                    &arg_tpe, &expected_tpe,
+                    "Invalid argument type for aggregate function {}. Argument#{} {}",
+                    func, i, arg
+                );
+            }
+            DataType::Int32
+        }
+        ScalarExpr::SubQuery(_) => DataType::Int32,
+    }
+}
+
+fn resolve_binary_expr_type(lhs: DataType, _op: &BinaryOp, rhs: DataType) -> DataType {
+    assert_eq!(lhs, rhs, "Types does not match");
+    DataType::Bool
+}
+
 #[cfg(test)]
 mod test {
     use crate::catalog::mutable::MutableCatalog;
@@ -694,14 +738,14 @@ mod test {
     use crate::meta::{ColumnId, ColumnMetadata, Metadata, MutableMetadata};
     use crate::operators::builder::{OperatorBuilder, OrderingOption};
     use crate::operators::relational::logical::LogicalExpr;
-    
+
     use crate::operators::scalar::expr::{AggregateFunction, BinaryOp};
     use crate::operators::scalar::value::ScalarValue;
     use crate::operators::scalar::ScalarExpr;
     use crate::operators::{ExprMemo, Operator};
     use crate::properties::logical::LogicalPropertiesBuilder;
     use crate::properties::statistics::{Statistics, StatisticsBuilder};
-    
+
     use crate::rules::testing::format_operator_tree;
     use itertools::Itertools;
     use std::rc::Rc;
