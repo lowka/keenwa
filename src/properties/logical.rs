@@ -94,7 +94,11 @@ impl LogicalPropertiesBuilder {
     }
 
     /// Builds logical properties for a projection operator.
-    pub fn build_projection(&self, _input: &RelNode, columns: &[ColumnId]) -> Result<LogicalProperties, OptimizerError> {
+    pub fn build_projection(
+        &self,
+        _input: &RelNode,
+        columns: &[ColumnId],
+    ) -> Result<LogicalProperties, OptimizerError> {
         // FIXME: Is this validation really necessary?
         //let input_columns = input.props().logical().output_columns();
         // for column_id in columns {
