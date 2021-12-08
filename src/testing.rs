@@ -11,7 +11,7 @@ use crate::datatypes::DataType;
 use crate::error::OptimizerError;
 use crate::memo::{ExprNodeRef, MemoExpr, MemoExprFormatter, StringMemoFormatter};
 use crate::meta::{Metadata, MutableMetadata};
-use crate::operators::builder::OperatorBuilder;
+use crate::operators::builder::{NoMemoization, OperatorBuilder};
 
 use crate::operators::{ExprMemo, Operator};
 use crate::optimizer::{Optimizer, SetPropertiesCallback};
@@ -70,7 +70,15 @@ impl OptimizerTester {
 
         tables.register(self.catalog.as_ref());
 
-        OperatorBuilder::new(self.catalog.clone(), self.mutable_metadata.clone(), self.properties_builder.clone())
+        // Currently instances of OperatorBuilders live between calls to Tester::optimize so it is not possible
+        // to retrieve a mutable reference memo.
+        let memoization = Rc::new(NoMemoization);
+        OperatorBuilder::new(
+            memoization,
+            self.catalog.clone(),
+            self.mutable_metadata.clone(),
+            self.properties_builder.clone(),
+        )
     }
 
     /// A toggle to enable/disable rule shuffling.
@@ -143,11 +151,6 @@ impl OptimizerTester {
         let tables = TestTables::new();
         let _columns = tables.columns.clone();
 
-        let propagate_properties = SetPropertiesCallback::new(self.properties_builder.clone());
-        let memo_callback = Rc::new(propagate_properties);
-
-        let mut memo = ExprMemo::with_callback(memo_callback);
-
         let (operator, metadata) = if let Some(metadata) = self.use_metadata.take() {
             let mutable_catalog = self.catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();
 
@@ -180,6 +183,10 @@ impl OptimizerTester {
         let result_callback = TestResultBuilder::new(test_result.clone());
 
         let optimizer = Optimizer::new(Rc::new(rules), Rc::new(cost_estimator), Rc::new(result_callback));
+
+        let propagate_properties = SetPropertiesCallback::new(self.properties_builder.clone());
+        let memo_callback = Rc::new(propagate_properties);
+        let mut memo = ExprMemo::with_callback(memo_callback);
 
         let _opt_expr = optimizer
             .optimize(operator, metadata, &mut memo)

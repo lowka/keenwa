@@ -10,7 +10,7 @@ use keenwa::cost::simple::SimpleCostEstimator;
 use keenwa::datatypes::DataType;
 use keenwa::error::OptimizerError;
 use keenwa::meta::{ColumnId, Metadata, MutableMetadata};
-use keenwa::operators::builder::{OperatorBuilder, OrderingOption};
+use keenwa::operators::builder::{MemoizeWithMemo, OperatorBuilder, OrderingOption};
 
 use keenwa::operators::scalar::expr::BinaryOp;
 use keenwa::operators::scalar::value::ScalarValue;
@@ -74,19 +74,28 @@ fn memo_bench(c: &mut Criterion) {
                     let metadata = Rc::new(MutableMetadata::new());
                     let statistics_builder = CatalogStatisticsBuilder::new(catalog.clone());
                     let properties_builder = Rc::new(LogicalPropertiesBuilder::new(Box::new(statistics_builder)));
-                    let operator_builder = OperatorBuilder::new(catalog.clone(), metadata, properties_builder.clone());
+
+                    let memoization = Rc::new(MemoizeWithMemo::new(ExprMemo::with_callback(Rc::new(
+                        SetPropertiesCallback::new(properties_builder.clone()),
+                    ))));
+                    let operator_builder = OperatorBuilder::new(
+                        memoization.clone(),
+                        catalog.clone(),
+                        metadata,
+                        properties_builder.clone(),
+                    );
 
                     let (query, metadata) = f(operator_builder).expect("Failed to build a query");
-                    let optimizer = create_optimizer(catalog.clone());
 
-                    let propagate_properties = SetPropertiesCallback::new(properties_builder);
-                    let memo_callback = Rc::new(propagate_properties);
-                    let mut memo = ExprMemo::with_callback(memo_callback.clone());
-
+                    // We can retrieve the underlying memoization handler because
+                    // the only user of Rc (an operator_builder) has been consumed.
+                    let memoization = Rc::try_unwrap(memoization).unwrap();
+                    let mut memo = memoization.into_inner();
                     // benchmark should not include time spend in memoization.
                     let (_, expr) = memo.insert(query);
                     let query = expr.mexpr().clone();
 
+                    let optimizer = create_optimizer(catalog.clone());
                     let start = Instant::now();
                     let optimized_expr = optimizer
                         .optimize(query, metadata.clone(), &mut memo)
