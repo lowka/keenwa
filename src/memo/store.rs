@@ -300,7 +300,7 @@ mod test {
     struct Value(usize);
 
     #[test]
-    fn store_is_empty_initially() {
+    fn test_store_is_initially_empty() {
         let store = Store::<Value>::new(2);
         expect_num_pages(&store, 0);
         expect_allocated_bytes(&store, 0);
@@ -309,7 +309,7 @@ mod test {
     }
 
     #[test]
-    fn add_the_first_element() {
+    fn test_add_the_first_element() {
         let mut store = Store::new(2);
 
         expect_added(&mut store, Value(1));
@@ -317,7 +317,7 @@ mod test {
     }
 
     #[test]
-    fn new_page_is_added_when_a_page_is_full() {
+    fn test_new_page_is_added_when_a_page_is_full() {
         let mut store = Store::new(3);
 
         expect_added(&mut store, Value(1));
@@ -334,7 +334,7 @@ mod test {
     }
 
     #[test]
-    fn store_is_send() {
+    fn test_store_is_send() {
         let store = Store::<String>::new(3);
 
         let _r = std::thread::spawn(|| {
@@ -346,7 +346,7 @@ mod test {
     }
 
     #[test]
-    fn move_does_not_invalidates_element_refs() {
+    fn test_move_does_not_invalidates_element_refs() {
         let mut store = Store::new(4);
         let (_, ref1) = store.insert(String::from("a"));
         let (_, ref2) = store.insert(String::from("b"));
@@ -358,7 +358,7 @@ mod test {
     }
 
     #[test]
-    fn slot_is_send() {
+    fn test_element_ref_is_send() {
         let mut store = Store::new(4);
         let (_, elem_ref) = store.insert(String::from("a"));
         let elem_ref = std::thread::spawn(move || elem_ref).join().unwrap();
