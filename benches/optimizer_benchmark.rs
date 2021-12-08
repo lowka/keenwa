@@ -1,4 +1,3 @@
-
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -13,16 +12,14 @@ use keenwa::error::OptimizerError;
 use keenwa::meta::{ColumnId, Metadata, MutableMetadata};
 use keenwa::operators::builder::{OperatorBuilder, OrderingOption};
 
-
-
 use keenwa::operators::scalar::expr::BinaryOp;
 use keenwa::operators::scalar::value::ScalarValue;
-use keenwa::operators::scalar::{ScalarExpr};
+use keenwa::operators::scalar::ScalarExpr;
 use keenwa::operators::*;
 use keenwa::optimizer::{Optimizer, SetPropertiesCallback};
 use keenwa::properties::logical::LogicalPropertiesBuilder;
 use keenwa::properties::physical::PhysicalProperties;
-use keenwa::properties::statistics::{CatalogStatisticsBuilder};
+use keenwa::properties::statistics::CatalogStatisticsBuilder;
 use keenwa::properties::OrderingChoice;
 use keenwa::rules::implementation::*;
 use keenwa::rules::transformation::*;

@@ -3,7 +3,7 @@ use crate::error::OptimizerError;
 use crate::operators::builder::{OrderingOption, OrderingOptions};
 use crate::operators::scalar::expr::*;
 use crate::operators::scalar::value::ScalarValue;
-use crate::operators::scalar::{ScalarExpr};
+use crate::operators::scalar::ScalarExpr;
 
 use crate::rules::implementation::*;
 use crate::rules::transformation::*;
