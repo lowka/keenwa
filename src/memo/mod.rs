@@ -1,3 +1,6 @@
+mod store;
+
+use crate::memo::store::{Store, StoreElementId, StoreElementRef};
 use itertools::Itertools;
 use std::collections::VecDeque;
 use std::fmt::{Display, Formatter, Write};
@@ -21,13 +24,16 @@ pub struct Memo<T>
 where
     T: MemoExpr,
 {
-    groups: Vec<MemoGroupData<T>>,
-    exprs: Vec<MemoExprData<T>>,
+    groups: Store<MemoGroupData<T>>,
+    exprs: Store<MemoExprData<T>>,
     expr_cache: HashMap<String, ExprId>,
     expr_to_group: HashMap<ExprId, GroupId>,
     // TODO: NoOpCallback
     callback: Option<Rc<dyn MemoExprCallback<Expr = T, Props = T::Props>>>,
 }
+
+/// The number of elements per store page.
+const PAGE_SIZE: usize = 8;
 
 impl<T> Memo<T>
 where
@@ -36,8 +42,8 @@ where
     /// Creates a new memo.
     pub fn new() -> Self {
         Memo {
-            groups: Vec::new(),
-            exprs: Vec::new(),
+            groups: Store::new(PAGE_SIZE),
+            exprs: Store::new(PAGE_SIZE),
             expr_cache: HashMap::new(),
             expr_to_group: HashMap::new(),
             callback: None,
@@ -48,8 +54,8 @@ where
     pub fn with_callback(callback: Rc<dyn MemoExprCallback<Expr = T, Props = T::Props>>) -> Self {
         //TODO: Unit test for a Memo with a callback.
         Memo {
-            groups: Vec::new(),
-            exprs: Vec::new(),
+            groups: Store::new(PAGE_SIZE),
+            exprs: Store::new(PAGE_SIZE),
             expr_cache: HashMap::new(),
             expr_to_group: HashMap::new(),
             callback: Some(callback),
@@ -86,31 +92,37 @@ where
     }
 
     fn get_expr_ref(&self, expr_id: &ExprId) -> MemoExprRef<T> {
-        assert!(self.exprs.get(expr_id.index()).is_some(), "expr id is invalid: {}", expr_id);
-        MemoExprRef::new(*expr_id, self as *const Memo<T>)
+        let expr_ref = self
+            .exprs
+            .get(expr_id.index())
+            .unwrap_or_else(|| panic!("expr id is invalid: {}", expr_id));
+
+        MemoExprRef::new(*expr_id, expr_ref)
     }
 
     fn get_group_ref(&self, group_id: &GroupId) -> MemoGroupRef<T> {
-        assert!(self.groups.get(group_id.index()).is_some(), "group id is invalid: {}", group_id);
-        MemoGroupRef::new(*group_id, self as *const Memo<T>)
+        let group_ref = self
+            .groups
+            .get(group_id.index())
+            .unwrap_or_else(|| panic!("group id is invalid: {}", group_id));
+
+        MemoGroupRef::new(*group_id, group_ref)
     }
 
     fn add_group(&mut self, group: MemoGroupData<T>) -> MemoGroupRef<T> {
-        let group_id = group.group_id;
-        self.groups.push(group);
-        self.get_group_ref(&group_id)
+        let (id, elem_ref) = self.groups.insert(group);
+        MemoGroupRef::new(GroupId(id), elem_ref)
     }
 
     fn add_expr(&mut self, expr: MemoExprData<T>) -> MemoExprRef<T> {
-        let expr_id = expr.expr_id;
-        self.exprs.push(expr);
-        self.get_expr_ref(&expr_id)
+        let (id, elem_ref) = self.exprs.insert(expr);
+        MemoExprRef::new(ExprId(id), elem_ref)
     }
 
     fn add_expr_to_group(&mut self, group: &MemoGroupRef<T>, expr: MemoExprRef<T>) {
         let group_id = group.id();
         let expr_id = expr.id();
-        let memo_group = &mut self.groups[group_id.index()];
+        let memo_group = self.groups.get_mut(group_id.index()).unwrap();
 
         memo_group.exprs.push(expr);
         self.expr_to_group.insert(expr_id, group_id);
@@ -267,15 +279,15 @@ where
     T: MemoExpr,
 {
     id: GroupId,
-    memo: *const Memo<T>,
+    group_ref: StoreElementRef<MemoGroupData<T>>,
 }
 
 impl<T> MemoGroupRef<T>
 where
     T: MemoExpr,
 {
-    fn new(id: GroupId, ptr: *const Memo<T>) -> Self {
-        MemoGroupRef { id, memo: ptr }
+    fn new(id: GroupId, group_ref: StoreElementRef<MemoGroupData<T>>) -> Self {
+        MemoGroupRef { id, group_ref }
     }
 
     /// Returns an opaque identifier of this memo group.
@@ -309,13 +321,7 @@ where
     }
 
     fn get_memo_group(&self) -> &MemoGroupData<T> {
-        let memo = unsafe {
-            // Safety: This pointer is always valid. Because:
-            // 1) Lifetime of a Memo is tightly controlled by an instance of the optimizer that created it.
-            // 2) Optimized expression never contains InputNode::Group(..).
-            &*(self.memo)
-        };
-        &memo.groups[self.id.index()]
+        self.group_ref.as_ref()
     }
 }
 
@@ -324,7 +330,7 @@ where
     T: MemoExpr,
 {
     fn clone(&self) -> Self {
-        MemoGroupRef::new(self.id, self.memo)
+        MemoGroupRef::new(self.id, self.group_ref.clone())
     }
 }
 
@@ -333,7 +339,7 @@ where
     T: MemoExpr,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.id == other.id && self.memo == other.memo
+        self.id == other.id && self.group_ref == other.group_ref
     }
 }
 
@@ -344,8 +350,7 @@ where
     T: MemoExpr,
 {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write_usize(self.id.0);
-        state.write_usize(self.memo as usize);
+        state.write_usize(self.id.0 .0);
     }
 }
 
@@ -406,15 +411,15 @@ where
     T: MemoExpr,
 {
     id: ExprId,
-    memo: *const Memo<T>,
+    expr_ref: StoreElementRef<MemoExprData<T>>,
 }
 
 impl<T> MemoExprRef<T>
 where
     T: MemoExpr,
 {
-    fn new(id: ExprId, memo: *const Memo<T>) -> Self {
-        MemoExprRef { id, memo }
+    fn new(id: ExprId, expr_ref: StoreElementRef<MemoExprData<T>>) -> Self {
+        MemoExprRef { id, expr_ref }
     }
 
     /// Returns an opaque identifier of this memo expression.
@@ -448,13 +453,7 @@ where
     }
 
     fn get_memo_expr(&self) -> &MemoExprData<T> {
-        let memo = unsafe {
-            // Safety: This pointer is always valid. Because:
-            // 1) Lifetime of a Memo is tightly controlled by an instance of the optimizer that created it.
-            // 2) Optimized expression never contains InputNode::Group(..).
-            &*(self.memo)
-        };
-        &memo.exprs[self.id.index()]
+        self.expr_ref.as_ref()
     }
 }
 
@@ -463,7 +462,7 @@ where
     T: MemoExpr,
 {
     fn clone(&self) -> Self {
-        MemoExprRef::new(self.id, self.memo)
+        MemoExprRef::new(self.id, self.expr_ref.clone())
     }
 }
 
@@ -472,7 +471,7 @@ where
     T: MemoExpr,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.memo == other.memo
+        self.id == other.id && self.expr_ref == other.expr_ref
     }
 }
 
@@ -489,45 +488,45 @@ where
 
 /// Uniquely identifies a memo group in a memo.
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
-pub struct GroupId(usize);
+pub struct GroupId(StoreElementId);
 
 impl GroupId {
-    fn index(&self) -> usize {
+    fn index(&self) -> StoreElementId {
         self.0
     }
 }
 
 impl Display for GroupId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:02}", self.0)
+        write!(f, "{:02}", self.0.index())
     }
 }
 
 impl Debug for GroupId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "GroupId({:})", self.0)
+        write!(f, "GroupId({:})", self.0.index())
     }
 }
 
 /// Uniquely identifies a memo expression in a memo.
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
-pub struct ExprId(usize);
+pub struct ExprId(StoreElementId);
 
 impl ExprId {
-    fn index(&self) -> usize {
+    fn index(&self) -> StoreElementId {
         self.0
     }
 }
 
 impl Display for ExprId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:01}", self.0)
+        write!(f, "{:02}", self.0.index())
     }
 }
 
 impl Debug for ExprId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ExprId({:})", self.0)
+        write!(f, "ExprId({:})", self.0.index())
     }
 }
 
@@ -659,7 +658,7 @@ where
 
     /// Copies the expression into the memo.
     pub fn copy_in(&mut self, expr: &T, expr_ctx: ExprContext<T>) {
-        let expr_id = ExprId(self.memo.exprs.len());
+        let expr_id = ExprId(self.memo.exprs.next_id());
         let input_groups = expr_ctx
             .children
             .iter()
@@ -698,7 +697,7 @@ where
 
                 (parent, expr_ref)
             } else {
-                let group_id = GroupId(self.memo.groups.len());
+                let group_id = GroupId(self.memo.groups.next_id());
                 let props = if let Some(callback) = self.memo.callback.as_ref() {
                     callback.new_expr(&expr, props)
                 } else {
@@ -903,6 +902,7 @@ where
     let mut f = StringMemoFormatter::new(&mut buf);
 
     for group in memo.groups.iter().rev() {
+        let group = group.as_ref();
         f.push_str(format!("{} ", group.group_id).as_str());
         for (i, expr) in group.exprs.iter().enumerate() {
             if i > 0 {
@@ -1899,7 +1899,8 @@ mod test {
     }
 
     fn expect_group_size(memo: &Memo<TestOperator>, group_id: &GroupId, size: usize) {
-        let group = &memo.groups[group_id.index()];
+        let group = memo.groups.get(group_id.index()).unwrap();
+        let group = group.as_ref();
         assert_eq!(group.exprs.len(), size, "group#{}", group_id);
     }
 
@@ -1928,6 +1929,7 @@ mod test {
         let mut buf = String::new();
         let mut f = StringMemoFormatter::new(&mut buf);
         for group in memo.groups.iter().rev() {
+            let group = group.as_ref();
             f.push_str(format!("{} ", group.group_id).as_str());
             for (i, expr) in group.exprs.iter().enumerate() {
                 if i > 0 {

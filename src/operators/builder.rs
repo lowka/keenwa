@@ -1,4 +1,4 @@
-use crate::catalog::{Catalog, CatalogRef};
+use crate::catalog::CatalogRef;
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
 use crate::memo::MemoExpr;
@@ -8,7 +8,7 @@ use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::{AggregateFunction, BinaryOp, Expr, ExprRewriter};
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
-use crate::operators::{Operator, OperatorExpr, Properties};
+use crate::operators::{ExprMemo, Operator, OperatorExpr, Properties};
 use crate::properties::logical::{LogicalProperties, LogicalPropertiesBuilder};
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::statistics::Statistics;
@@ -17,6 +17,7 @@ use itertools::Itertools;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
+use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
 
 /// Ordering options.
@@ -75,11 +76,16 @@ impl From<OrderingOption> for OrderingOptions {
     }
 }
 
+pub trait MemoizationHandler {
+    fn memoize_rel(&self, expr: Operator) -> RelNode;
+}
+
 /// Provides API to build an [operator tree](super::Operator).
 //FIXME: Method that add operators must accept &mut (allows storing in SQL syntax tree parser as a field etc)
 //FIXME: use column aliases instead of column ids in public API
 #[derive(Debug, Clone)]
 pub struct OperatorBuilder {
+    memoization: Rc<dyn MemoizationHandler>,
     catalog: CatalogRef,
     properties_builder: Rc<LogicalPropertiesBuilder>,
     metadata: Rc<MutableMetadata>,
@@ -92,11 +98,13 @@ pub struct OperatorBuilder {
 impl OperatorBuilder {
     /// Creates a new instance of operator builder that uses the given [catalog](crate::catalog::Catalog).
     pub fn new(
+        memoization: Rc<dyn MemoizationHandler>,
         catalog: CatalogRef,
         metadata: Rc<MutableMetadata>,
         properties_builder: Rc<LogicalPropertiesBuilder>,
     ) -> Self {
         OperatorBuilder {
+            memoization,
             catalog,
             properties_builder,
             metadata,
@@ -109,6 +117,7 @@ impl OperatorBuilder {
 
     fn with_parent(parent: &OperatorBuilder, operator: Operator, scope: OperatorScope) -> Self {
         OperatorBuilder {
+            memoization: parent.memoization.clone(),
             catalog: parent.catalog.clone(),
             properties_builder: parent.properties_builder.clone(),
             metadata: parent.metadata.clone(),
@@ -398,6 +407,7 @@ impl OperatorBuilder {
     /// Creates a builder that can be used to construct a nested sub-query.
     pub fn sub_query_builder(&self) -> Self {
         OperatorBuilder {
+            memoization: self.memoization.clone(),
             catalog: self.catalog.clone(),
             properties_builder: self.properties_builder.clone(),
             metadata: self.metadata.clone(),
@@ -652,6 +662,50 @@ impl AggregateBuilder<'_> {
     }
 }
 
+/// No memoization.
+pub struct NoMemoization;
+
+impl MemoizationHandler for NoMemoization {
+    fn memoize_rel(&self, expr: Operator) -> RelNode {
+        RelNode::from(expr)
+    }
+}
+
+impl Debug for dyn MemoizationHandler {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MemoizationHandler")
+    }
+}
+
+/// Copies operator into a memo.
+#[derive(Debug)]
+pub struct MemoizeWithMemo {
+    // RefCell is necessary because the memo is shared by multiple operator builders.
+    memo: RefCell<ExprMemo>,
+}
+
+impl MemoizeWithMemo {
+    /// Creates a handler that uses the given memo.
+    pub fn new(memo: ExprMemo) -> Self {
+        MemoizeWithMemo {
+            memo: RefCell::new(memo),
+        }
+    }
+
+    /// Consumes this handler and returns the underlying memo.
+    pub fn into_inner(self) -> ExprMemo {
+        self.memo.into_inner()
+    }
+}
+
+impl MemoizationHandler for MemoizeWithMemo {
+    fn memoize_rel(&self, expr: Operator) -> RelNode {
+        let mut memo = self.memo.borrow_mut();
+        let (group, _) = memo.insert(expr);
+        RelNode::Group(group)
+    }
+}
+
 #[derive(Debug, Default)]
 struct PredicateStatistics {
     inner: RefCell<HashMap<String, f64>>,
@@ -736,7 +790,7 @@ mod test {
     use crate::error::OptimizerError;
     use crate::memo::format_memo;
     use crate::meta::{ColumnId, ColumnMetadata, Metadata, MutableMetadata};
-    use crate::operators::builder::{OperatorBuilder, OrderingOption};
+    use crate::operators::builder::{MemoizeWithMemo, OperatorBuilder, OrderingOption};
     use crate::operators::relational::logical::LogicalExpr;
 
     use crate::operators::scalar::expr::{AggregateFunction, BinaryOp};
@@ -746,6 +800,7 @@ mod test {
     use crate::properties::logical::LogicalPropertiesBuilder;
     use crate::properties::statistics::{Statistics, StatisticsBuilder};
 
+    use crate::optimizer::SetPropertiesCallback;
     use crate::rules::testing::format_operator_tree;
     use itertools::Itertools;
     use std::rc::Rc;
@@ -1036,7 +1091,11 @@ Memo:
         let metadata = Rc::new(MutableMetadata::new());
 
         let properties_builder = Rc::new(LogicalPropertiesBuilder::new(Box::new(NoStatsBuilder)));
-        let operator_builder = OperatorBuilder::new(catalog, metadata, properties_builder);
+        // let memoization = Rc::new(NoMemoization);
+        let memoization = Rc::new(MemoizeWithMemo::new(ExprMemo::with_callback(Rc::new(SetPropertiesCallback::new(
+            properties_builder.clone(),
+        )))));
+        let operator_builder = OperatorBuilder::new(memoization, catalog, metadata, properties_builder);
         (f)(operator_builder)
     }
 
