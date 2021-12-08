@@ -126,6 +126,18 @@ impl TableBuilder {
         }
     }
 
+    /// Creates a builder from the given table.
+    pub fn from_table(table: &Table) -> Self {
+        let name = table.name.clone();
+        let columns = table.columns.clone();
+        let statistics = table.statistics.clone();
+
+        let mut table_builder = TableBuilder::new(name.as_str());
+        table_builder.columns = columns;
+        table_builder.statistics = statistics;
+        table_builder
+    }
+
     /// Adds a column with the given name and data type to this table.
     pub fn add_column(mut self, name: &str, data_type: DataType) -> TableBuilder {
         let column = Column::new(name.to_string(), Some(self.name.clone()), data_type);

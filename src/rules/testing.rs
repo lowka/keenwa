@@ -58,7 +58,7 @@ impl RuleTester {
             Err(e) => panic!("Failed to apply a rule. Rule: {:?}. Error: {}", self.rule, e),
         };
         let (_, new_expr) = self.memo.insert(expr);
-        let actual_expr = format_expr(new_expr.mexpr());
+        let actual_expr = format_operator_tree(new_expr.mexpr());
 
         assert_eq!(actual_expr.trim_end(), expected.trim());
     }
@@ -134,7 +134,7 @@ where
     }
 }
 
-/// Builds the following textual representation of the given expression:
+/// Builds the following textual representation of the given operator tree:
 ///
 /// ```text:
 ///  RootExpr [root-expr-properties]
@@ -145,7 +145,7 @@ where
 ///    ...
 ///    Expr_n [expr_n-properties]
 /// ```
-pub fn format_expr(expr: &Operator) -> String {
+pub fn format_operator_tree(expr: &Operator) -> String {
     let mut buf = String::new();
     let fmt = StringMemoFormatter::new(&mut buf);
     let mut fmt = FormatHeader { fmt };

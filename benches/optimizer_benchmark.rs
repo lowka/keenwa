@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -6,21 +6,23 @@ use std::time::{Duration, Instant};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 use keenwa::catalog::mutable::MutableCatalog;
-use keenwa::catalog::CatalogRef;
+use keenwa::catalog::{CatalogRef, TableBuilder, DEFAULT_SCHEMA};
 use keenwa::cost::simple::SimpleCostEstimator;
 use keenwa::datatypes::DataType;
-use keenwa::meta::{ColumnId, Metadata};
-use keenwa::operators::operator_tree::TestOperatorTreeBuilder;
-use keenwa::operators::relational::join::JoinCondition;
-use keenwa::operators::relational::logical::*;
+use keenwa::error::OptimizerError;
+use keenwa::meta::{ColumnId, Metadata, MutableMetadata};
+use keenwa::operators::builder::{OperatorBuilder, OrderingOption};
+
+
+
 use keenwa::operators::scalar::expr::BinaryOp;
 use keenwa::operators::scalar::value::ScalarValue;
-use keenwa::operators::scalar::{ScalarExpr, ScalarNode};
+use keenwa::operators::scalar::{ScalarExpr};
 use keenwa::operators::*;
 use keenwa::optimizer::{Optimizer, SetPropertiesCallback};
 use keenwa::properties::logical::LogicalPropertiesBuilder;
 use keenwa::properties::physical::PhysicalProperties;
-use keenwa::properties::statistics::{CatalogStatisticsBuilder, Statistics};
+use keenwa::properties::statistics::{CatalogStatisticsBuilder};
 use keenwa::properties::OrderingChoice;
 use keenwa::rules::implementation::*;
 use keenwa::rules::transformation::*;
@@ -33,25 +35,60 @@ fn memo_bench(c: &mut Criterion) {
         PhysicalProperties::new(OrderingChoice::new(cols))
     }
 
-    fn add_benchmark(c: &mut Criterion, name: &str, query: Operator) {
+    fn add_benchmark(
+        c: &mut Criterion,
+        name: &str,
+        f: fn(OperatorBuilder) -> Result<(Operator, Metadata), OptimizerError>,
+    ) {
         c.bench_function(format!("optimize_query_{}", name).as_str(), |b| {
             b.iter_custom(|iters| {
                 let mut total = Duration::default();
 
                 for _i in 0..iters {
-                    let tables = vec![
-                        ("A".into(), vec![("a1".into(), DataType::Int32), ("a2".into(), DataType::Int32)]),
-                        ("B".into(), vec![("b1".into(), DataType::Int32), ("b2".into(), DataType::Int32)]),
-                        ("C".into(), vec![("c1".into(), DataType::Int32), ("c2".into(), DataType::Int32)]),
-                    ];
                     let catalog = Arc::new(MutableCatalog::new());
-                    let mut memo = create_memo(catalog.clone());
 
-                    let table_access_costs = HashMap::from([("A".into(), 100), ("B".into(), 100), ("C".into(), 100)]);
-                    let (query, metadata) =
-                        prepare_query(catalog.clone(), &mut memo, query.clone(), tables, table_access_costs);
+                    catalog.add_table(
+                        DEFAULT_SCHEMA,
+                        TableBuilder::new("A")
+                            .add_column("a1", DataType::Int32)
+                            .add_column("a2", DataType::Int32)
+                            .add_row_count(100)
+                            .build(),
+                    );
 
+                    catalog.add_table(
+                        DEFAULT_SCHEMA,
+                        TableBuilder::new("B")
+                            .add_column("b1", DataType::Int32)
+                            .add_column("b2", DataType::Int32)
+                            .add_row_count(100)
+                            .build(),
+                    );
+
+                    catalog.add_table(
+                        DEFAULT_SCHEMA,
+                        TableBuilder::new("C")
+                            .add_column("c1", DataType::Int32)
+                            .add_column("c2", DataType::Int32)
+                            .add_row_count(100)
+                            .build(),
+                    );
+
+                    let metadata = Rc::new(MutableMetadata::new());
+                    let statistics_builder = CatalogStatisticsBuilder::new(catalog.clone());
+                    let properties_builder = Rc::new(LogicalPropertiesBuilder::new(Box::new(statistics_builder)));
+                    let operator_builder = OperatorBuilder::new(catalog.clone(), metadata, properties_builder.clone());
+
+                    let (query, metadata) = f(operator_builder).expect("Failed to build a query");
                     let optimizer = create_optimizer(catalog.clone());
+
+                    let propagate_properties = SetPropertiesCallback::new(properties_builder);
+                    let memo_callback = Rc::new(propagate_properties);
+                    let mut memo = ExprMemo::with_callback(memo_callback.clone());
+
+                    // benchmark should not include time spend in memoization.
+                    let (_, expr) = memo.insert(query);
+                    let query = expr.mexpr().clone();
 
                     let start = Instant::now();
                     let optimized_expr = optimizer
@@ -68,53 +105,26 @@ fn memo_bench(c: &mut Criterion) {
         });
     }
 
-    let filter = ScalarExpr::BinaryExpr {
-        lhs: Box::new(ScalarExpr::Column(1)),
-        op: BinaryOp::Gt,
-        rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Int32(100))),
-    };
-    let query = LogicalExpr::Select {
-        input: LogicalExpr::Join {
-            left: LogicalExpr::Get {
-                source: "A".into(),
-                columns: vec![1],
-            }
-            .into(),
-            right: LogicalExpr::Get {
-                source: "B".into(),
-                columns: vec![3],
-            }
-            .into(),
-            condition: JoinCondition::using(vec![(1, 3)]),
-        }
-        .into(),
-        filter: Some(ScalarNode::from(filter)),
+    fn build_query(builder: OperatorBuilder) -> Result<(Operator, Metadata), OptimizerError> {
+        let from_a = builder.clone().get("A", vec!["a1"])?;
+        let from_b = builder.get("B", vec!["b1"])?;
+        let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
+
+        let filter = ScalarExpr::BinaryExpr {
+            lhs: Box::new(ScalarExpr::ColumnName("a1".into())),
+            op: BinaryOp::Gt,
+            rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Int32(100))),
+        };
+
+        join.set_selectivity("col:a1 > 100", 0.1);
+
+        let select = join.select(Some(filter))?;
+        let order_by = select.order_by(OrderingOption::by(("a1", false)))?;
+
+        Ok(order_by.build())
     }
-    .to_operator()
-    .with_required(ordering(vec![1]))
-    .with_statistics(Statistics::from_selectivity(0.1));
 
-    add_benchmark(c, "Join AxB ordered", query);
-}
-
-fn prepare_query(
-    catalog: CatalogRef,
-    memo: &mut ExprMemo,
-    query: Operator,
-    tables: Vec<(String, Vec<(String, DataType)>)>,
-    table_access_costs: HashMap<String, usize>,
-) -> (Operator, Metadata) {
-    let builder = TestOperatorTreeBuilder::new(memo, catalog, tables, table_access_costs);
-    builder.build_initialized(query)
-}
-
-fn create_memo(catalog: CatalogRef) -> ExprMemo {
-    let statistics_builder = CatalogStatisticsBuilder::new(catalog.clone());
-    let properties_builder = LogicalPropertiesBuilder::new(Box::new(statistics_builder));
-    let propagate_properties = SetPropertiesCallback::new(Rc::new(properties_builder));
-    let memo_callback = Rc::new(propagate_properties);
-
-    ExprMemo::with_callback(memo_callback.clone())
+    add_benchmark(c, "Join AxB ordered", build_query);
 }
 
 fn create_optimizer(catalog: CatalogRef) -> Optimizer<StaticRuleSet, SimpleCostEstimator, NoOpResultCallback> {

@@ -3,7 +3,8 @@ use crate::memo::MemoExprFormatter;
 use crate::meta::ColumnId;
 use crate::operators::scalar::value::ScalarValue;
 use itertools::Itertools;
-use std::fmt::{Debug, Display, Formatter};
+use std::convert::TryFrom;
+use std::fmt::{Debug, Display, Formatter, Write};
 
 /// Expressions supported by the optimizer.
 #[derive(Debug, Clone)]
@@ -12,9 +13,8 @@ where
     T: NestedExpr,
 {
     Column(ColumnId),
-    // TestOperatorTreeBuilder: AliasColumn(table, column_name)
-    // AliasColumn should be used instead of Column(column_id) to simplify testing.
-    // TestOperatorTreeBuilder replaces all instances of AliasColumn expressions to corresponding Column(column_id) expressions.
+    /// OperatorBuilder replaces column(name) expressions with column(id) expressions.
+    ColumnName(String),
     Scalar(ScalarValue),
     BinaryExpr {
         lhs: Box<Expr<T>>,
@@ -30,7 +30,7 @@ where
     SubQuery(T),
 }
 
-/// Trait that must be implemented by other expressions that can be nested inside [Expr](self::Expr).  
+/// Trait that must be implemented by other expressions that can be nested inside [Expr](self::Expr).
 pub trait NestedExpr: Debug + Clone {
     /// Writes this nested expression to the given formatter.
     fn write_to_fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result;
@@ -48,6 +48,7 @@ where
         visitor.pre_visit(self);
         match self {
             Expr::Column(_) => {}
+            Expr::ColumnName(_) => {}
             Expr::Scalar(_) => {}
             Expr::BinaryExpr { lhs, rhs, .. } => {
                 lhs.accept(visitor);
@@ -76,8 +77,12 @@ where
     where
         V: ExprRewriter<T>,
     {
-        match self {
+        if !rewriter.pre_rewrite(&self) {
+            return self;
+        }
+        let expr = match self {
             Expr::Column(_) => rewriter.rewrite(self),
+            Expr::ColumnName(_) => rewriter.rewrite(self),
             Expr::Scalar(_) => rewriter.rewrite(self),
             Expr::BinaryExpr { lhs, rhs, op } => {
                 let lhs = rewrite_boxed(*lhs, rewriter);
@@ -91,7 +96,9 @@ where
                 filter: rewrite_boxed_option(filter, rewriter),
             },
             Expr::SubQuery(_) => rewriter.rewrite(self),
-        }
+        };
+        rewriter.post_rewrite(&expr);
+        expr
     }
 
     pub fn format_expr<F>(&self, f: &mut F)
@@ -120,8 +127,17 @@ pub trait ExprRewriter<T>
 where
     T: NestedExpr,
 {
+    /// Returns `true` if rewriter should attempt to rewrite the given expression.
+    /// Default implementation always returns `true`.
+    fn pre_rewrite(&mut self, _expr: &Expr<T>) -> bool {
+        true
+    }
+
     /// Rewrites the given expression. Called after all children of the given expression are visited.
     fn rewrite(&mut self, expr: Expr<T>) -> Expr<T>;
+
+    /// Called after a call to [rewrite](Self::rewrite).
+    fn post_rewrite(&mut self, _expr: &Expr<T>) {}
 }
 
 fn rewrite_boxed<T, V>(expr: Expr<T>, rewriter: &mut V) -> Box<Expr<T>>
@@ -174,7 +190,8 @@ where
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            Expr::Column(column_id) => write!(f, "col:{:}", column_id),
+            Expr::Column(column_id) => write!(f, "col:{}", column_id),
+            Expr::ColumnName(alias) => write!(f, "col:{}", alias),
             Expr::Scalar(value) => write!(f, "{}", value),
             Expr::BinaryExpr { lhs, op, rhs } => write!(f, "{} {} {}", lhs, op, rhs),
             Expr::Aggregate { func, args, filter } => {
@@ -216,6 +233,21 @@ pub enum AggregateFunction {
     Max,
     Min,
     Sum,
+}
+
+impl TryFrom<&str> for AggregateFunction {
+    type Error = ();
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "avg" => Ok(AggregateFunction::Avg),
+            "count" => Ok(AggregateFunction::Count),
+            "max" => Ok(AggregateFunction::Max),
+            "min" => Ok(AggregateFunction::Min),
+            "sum" => Ok(AggregateFunction::Sum),
+            _ => Err(()),
+        }
+    }
 }
 
 impl Display for AggregateFunction {
