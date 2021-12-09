@@ -245,6 +245,11 @@ impl<T> Drop for Page<T> {
     fn drop(&mut self) {
         let layout = Layout::array::<T>(self.cap).unwrap();
         unsafe {
+            for i in 0..self.len {
+                let elem_ptr = self.ptr.as_ptr().add(i);
+                let elem = std::ptr::read(elem_ptr);
+                drop(elem)
+            }
             std::alloc::dealloc(self.ptr.as_ptr() as *mut u8, layout);
         }
     }
