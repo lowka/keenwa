@@ -330,6 +330,7 @@ impl Rule for HashAggregateRule {
             input,
             aggr_exprs,
             group_exprs,
+            ..
         } = expr
         {
             let expr = PhysicalExpr::HashAggregate {
@@ -364,7 +365,7 @@ impl Rule for UnionRule {
     }
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
-        if let LogicalExpr::Union { left, right, all } = expr {
+        if let LogicalExpr::Union { left, right, all, .. } = expr {
             let expr = if *all {
                 PhysicalExpr::Append {
                     left: left.clone(),
@@ -404,13 +405,13 @@ impl Rule for HashSetOpRule {
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         let expr = match expr {
-            LogicalExpr::Intersect { left, right, all } => PhysicalExpr::HashedSetOp {
+            LogicalExpr::Intersect { left, right, all, .. } => PhysicalExpr::HashedSetOp {
                 left: left.clone(),
                 right: right.clone(),
                 intersect: true,
                 all: *all,
             },
-            LogicalExpr::Except { left, right, all } => PhysicalExpr::HashedSetOp {
+            LogicalExpr::Except { left, right, all, .. } => PhysicalExpr::HashedSetOp {
                 left: left.clone(),
                 right: right.clone(),
                 intersect: false,
@@ -438,6 +439,7 @@ mod test {
                 left: new_get("A", vec![1, 2]),
                 right: new_get("B", vec![3, 4]),
                 all,
+                columns: vec![],
             }
         }
 
@@ -471,6 +473,7 @@ Append
                 left: new_get("A", vec![1, 2]),
                 right: new_get("B", vec![3, 4]),
                 all,
+                columns: vec![],
             }
         }
 
@@ -504,6 +507,7 @@ HashedSetOp intersect=true all=true
                 left: new_get("A", vec![1, 2]),
                 right: new_get("B", vec![3, 4]),
                 all,
+                columns: vec![],
             }
         }
 

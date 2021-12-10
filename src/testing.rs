@@ -73,12 +73,9 @@ impl OptimizerTester {
         // Currently instances of OperatorBuilders live between calls to Tester::optimize so it is not possible
         // to retrieve a mutable reference memo.
         let memoization = Rc::new(NoMemoization);
-        OperatorBuilder::new(
-            memoization,
-            self.catalog.clone(),
-            self.mutable_metadata.clone(),
-            self.properties_builder.clone(),
-        )
+        // When memoization is enabled remove uncomment an error in RewriteExprs located in OperatorBuilder.
+        // ScalarExpr::SubQuery(RelNode::Expr(_)).
+        OperatorBuilder::new(memoization, self.catalog.clone(), self.mutable_metadata.clone())
     }
 
     /// A toggle to enable/disable rule shuffling.

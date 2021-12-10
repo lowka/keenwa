@@ -43,11 +43,6 @@ impl Operator {
         &self.expr
     }
 
-    /// Logical properties shared by this expression and equivalent expressions inside the group this expression belongs to.
-    pub fn logical(&self) -> &LogicalProperties {
-        self.properties.logical()
-    }
-
     /// Physical properties required by this expression.
     pub fn required(&self) -> &PhysicalProperties {
         self.properties.required()

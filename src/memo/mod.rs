@@ -174,6 +174,7 @@ pub trait Expr: Debug + Clone {}
 pub trait Properties: Debug + Clone {}
 
 /// A callback that is called when a new expression is added to a memo.
+//FIXME: rename to MemoGroupCallback
 pub trait MemoExprCallback: Debug {
     /// The type of expression.
     type Expr: MemoExpr;
@@ -181,6 +182,8 @@ pub trait MemoExprCallback: Debug {
     type Props: Properties;
 
     /// Called when the given expression `expr` with properties `props` is added to a memo.
+    //FIXME: rename to new_group
+    //FIXME: should accept a context to pass metadata and other extra stuff.
     fn new_expr(&self, expr: &Self::Expr, props: Self::Props) -> Self::Props;
 }
 
@@ -444,6 +447,12 @@ where
     pub fn mgroup(&self) -> &MemoGroupRef<T> {
         let expr = self.get_memo_expr();
         &expr.group
+    }
+
+    /// Returns a reference to the properties of the memo group this expression belongs to.
+    pub fn props(&self) -> &T::Props {
+        let expr = self.get_memo_expr();
+        &expr.group.props()
     }
 
     /// Returns references to child expressions of this memo expression.
@@ -1454,6 +1463,12 @@ mod test {
         assert_eq!(memo.groups.len(), 1, "group num");
         assert_eq!(memo.exprs.len(), 1, "expr num");
         assert_eq!(memo.expr_cache.len(), 1, "expr cache size");
+
+        assert_eq!(
+            format!("{:#?}", group.props()),
+            format!("{:#?}", expr.props()),
+            "groups properties and expr properties must be equal"
+        );
     }
 
     #[test]

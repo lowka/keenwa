@@ -47,6 +47,11 @@ impl PhysicalProperties {
     pub fn as_option(&self) -> Option<Option<&OrderingChoice>> {
         self.inner.as_ref().map(|_| self.ordering())
     }
+
+    /// Returns a copy of this physical properties without ordering requirements.
+    pub fn without_ordering(self) -> PhysicalProperties {
+        PhysicalProperties::none()
+    }
 }
 
 impl Default for PhysicalProperties {

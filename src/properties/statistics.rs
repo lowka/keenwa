@@ -1,8 +1,13 @@
 use crate::catalog::CatalogRef;
 use crate::error::OptimizerError;
+use crate::meta::ColumnId;
+use crate::operators::relational::join::JoinCondition;
 use std::fmt::Debug;
 
-use crate::operators::relational::logical::LogicalExpr;
+use crate::operators::relational::logical::{LogicalExpr, SetOperator};
+use crate::operators::relational::RelNode;
+use crate::operators::scalar::ScalarNode;
+use crate::properties::logical::LogicalProperties;
 
 /// The number of rows returned by an operator in case when no statistics is available.
 pub const UNKNOWN_ROW_COUNT: f64 = 1000f64;
@@ -55,13 +60,21 @@ impl Statistics {
     }
 }
 
+/// Call build_* from LogicalStatisticsBuilder::build_*
 pub trait StatisticsBuilder: Debug {
     /// Builds statistics for the given expression.
-    fn build_statistics(
+    fn build_statistics(&self, expr: &LogicalExpr) -> Result<Option<Statistics>, OptimizerError>;
+
+    /// Builds statistics for the given expression.
+    // Pass reference to a metadata.
+    // MemoExprCallback should accept context
+    fn build_statistics2(
         &self,
         expr: &LogicalExpr,
-        statistics: Option<&Statistics>,
-    ) -> Result<Option<Statistics>, OptimizerError>;
+        _logical_properties: &LogicalProperties,
+    ) -> Result<Option<Statistics>, OptimizerError> {
+        self.build_statistics(expr)
+    }
 }
 
 /// Builds statistics using information available in a [database catalog].
@@ -79,67 +92,109 @@ impl CatalogStatisticsBuilder {
     }
 }
 
-impl StatisticsBuilder for CatalogStatisticsBuilder {
-    fn build_statistics(
-        &self,
-        expr: &LogicalExpr,
-        _statistics: Option<&Statistics>,
-    ) -> Result<Option<Statistics>, OptimizerError> {
-        let statistics = match expr {
-            LogicalExpr::Projection { input, .. } => {
-                let logical = input.props().logical();
-                let statistics = logical.statistics().unwrap();
-                statistics.clone()
-            }
-            LogicalExpr::Select { input, filter, .. } => {
-                let logical = input.props().logical();
-                let input_statistics = logical.statistics().unwrap();
-                let selectivity = if let Some(filter) = filter {
-                    let filter_statistics = filter.props().logical().statistics().unwrap();
-                    filter_statistics.selectivity()
-                } else {
-                    1.0
-                };
-                let row_count = selectivity * input_statistics.row_count();
-                Statistics::new(row_count, selectivity)
-            }
-            LogicalExpr::Aggregate { group_exprs, .. } => {
-                let max_groups = if group_exprs.is_empty() {
-                    1.0
-                } else {
-                    group_exprs.len() as f64
-                };
-                Statistics::from_row_count(max_groups)
-            }
-            LogicalExpr::Join { left, .. } => {
-                let logical = left.props().logical();
-                let statistics = logical.statistics().unwrap();
-                let row_count = statistics.row_count();
-                // take selectivity of the join condition into account
-                Statistics::new(row_count, 1.0)
-            }
-            LogicalExpr::Get { source, .. } => {
-                let table_ref = match self.catalog.get_table(source) {
-                    Some(table_ref) => table_ref,
-                    None => return Err(OptimizerError::Internal(format!("Table '{}' does not exists", source))),
-                };
-                let row_count = match table_ref.statistics().map(|s| s.row_count()).flatten() {
-                    Some(row_count) => row_count,
-                    None => return Err(OptimizerError::Internal(format!("No row count for table '{}'", source))),
-                };
-                Statistics::new(row_count as f64, 1.0)
-            }
-            LogicalExpr::Union { left, right, .. }
-            | LogicalExpr::Intersect { left, right, .. }
-            | LogicalExpr::Except { left, right, .. } => {
-                let left_statistics = left.props().logical().statistics().unwrap();
-                let right_statistics = right.props().logical().statistics().unwrap();
-                let row_count = left_statistics.row_count() + right_statistics.row_count();
-                //FIXME: The result of a set operation with all=false should include only non-duplicate rows.
-                Statistics::from_row_count(row_count)
-            }
+impl CatalogStatisticsBuilder {
+    fn build_get(&self, source: &str) -> Result<Option<Statistics>, OptimizerError> {
+        let table_ref = match self.catalog.get_table(source) {
+            Some(table_ref) => table_ref,
+            None => return Err(OptimizerError::Internal(format!("Table '{}' does not exists", source))),
         };
-        Ok(Some(statistics))
+        let row_count = match table_ref.statistics().map(|s| s.row_count()).flatten() {
+            Some(row_count) => row_count,
+            None => return Err(OptimizerError::Internal(format!("No row count for table '{}'", source))),
+        };
+        Ok(Some(Statistics::new(row_count as f64, 1.0)))
+    }
+
+    fn build_projection(&self, input: &RelNode, _columns: &[ColumnId]) -> Result<Option<Statistics>, OptimizerError> {
+        let logical = input.props().logical();
+        let statistics = logical.statistics().cloned();
+
+        Ok(statistics)
+    }
+
+    fn build_select(&self, input: &RelNode, filter: Option<&ScalarNode>) -> Result<Option<Statistics>, OptimizerError> {
+        let logical = input.props().logical();
+        let input_statistics = logical.statistics().unwrap();
+        let selectivity = if let Some(filter) = filter {
+            let filter_statistics = filter.props().logical().statistics().unwrap();
+            filter_statistics.selectivity()
+        } else {
+            1.0
+        };
+        let row_count = selectivity * input_statistics.row_count();
+        Ok(Some(Statistics::new(row_count, selectivity)))
+    }
+
+    fn build_join(
+        &self,
+        left: &RelNode,
+        _right: &RelNode,
+        _condition: &JoinCondition,
+    ) -> Result<Option<Statistics>, OptimizerError> {
+        let logical = left.props().logical();
+        let statistics = logical.statistics().unwrap();
+        let row_count = statistics.row_count();
+        // take selectivity of the join condition into account
+        Ok(Some(Statistics::new(row_count, 1.0)))
+    }
+
+    fn build_aggregate(
+        &self,
+        _input: &RelNode,
+        group_exprs: &[ScalarNode],
+        _columns: &[ColumnId],
+    ) -> Result<Option<Statistics>, OptimizerError> {
+        let max_groups = if group_exprs.is_empty() {
+            1.0
+        } else {
+            group_exprs.len() as f64
+        };
+        Ok(Some(Statistics::from_row_count(max_groups)))
+    }
+
+    fn build_set_operator(
+        &self,
+        _set_op: SetOperator,
+        _all: bool,
+        left: &RelNode,
+        right: &RelNode,
+        _columns: &[ColumnId],
+    ) -> Result<Option<Statistics>, OptimizerError> {
+        let left_statistics = left.props().logical().statistics().unwrap();
+        let right_statistics = right.props().logical().statistics().unwrap();
+        let row_count = left_statistics.row_count() + right_statistics.row_count();
+        //FIXME: The result of a set operation with all=false should include only non-duplicate rows.
+        Ok(Some(Statistics::from_row_count(row_count)))
+    }
+}
+
+impl StatisticsBuilder for CatalogStatisticsBuilder {
+    fn build_statistics(&self, expr: &LogicalExpr) -> Result<Option<Statistics>, OptimizerError> {
+        match expr {
+            LogicalExpr::Projection { input, columns, .. } => self.build_projection(input, columns),
+            LogicalExpr::Select { input, filter, .. } => self.build_select(input, filter.as_ref()),
+            LogicalExpr::Aggregate { input, group_exprs, .. } => self.build_aggregate(input, group_exprs, &[]),
+            LogicalExpr::Join { left, right, condition } => self.build_join(left, right, condition),
+            LogicalExpr::Get { source, .. } => self.build_get(source),
+            LogicalExpr::Union {
+                left,
+                right,
+                all,
+                columns,
+            } => self.build_set_operator(SetOperator::Union, *all, left, right, columns),
+            LogicalExpr::Intersect {
+                left,
+                right,
+                all,
+                columns,
+            } => self.build_set_operator(SetOperator::Intersect, *all, left, right, columns),
+            LogicalExpr::Except {
+                left,
+                right,
+                all,
+                columns,
+            } => self.build_set_operator(SetOperator::Except, *all, left, right, columns),
+        }
     }
 }
 
@@ -170,6 +225,7 @@ mod test {
                 filter: None,
             })],
             group_exprs: groups.into_iter().map(ScalarNode::from).collect(),
+            columns: vec![],
         }
     }
 
@@ -179,7 +235,7 @@ mod test {
 
         let aggr = new_aggregate(vec![]);
 
-        tester.expect_statistics(&aggr, None, Some(Statistics::new(1.0, 1.0)));
+        tester.expect_statistics(&aggr, Some(Statistics::new(1.0, 1.0)));
     }
 
     #[test]
@@ -187,7 +243,7 @@ mod test {
         let tester = StatisticsTester::new(Vec::<(String, usize)>::new());
         let aggr = new_aggregate(vec![ScalarExpr::Column(1), ScalarExpr::Column(2)]);
 
-        tester.expect_statistics(&aggr, None, Some(Statistics::new(2.0, 1.0)));
+        tester.expect_statistics(&aggr, Some(Statistics::new(2.0, 1.0)));
     }
 
     #[test]
@@ -200,9 +256,10 @@ mod test {
             left: left.into(),
             right: right.into(),
             all: false,
+            columns: vec![],
         };
 
-        tester.expect_statistics(&union, None, Some(Statistics::from_row_count(15.0)))
+        tester.expect_statistics(&union, Some(Statistics::from_row_count(15.0)))
     }
 
     enum OperatorStatistics {
@@ -260,16 +317,8 @@ mod test {
             Operator::new(OperatorExpr::from(expr), properties)
         }
 
-        fn expect_statistics(
-            &self,
-            expr: &LogicalExpr,
-            expr_statistics: Option<Statistics>,
-            expected: Option<Statistics>,
-        ) {
-            let actual = self
-                .statistics_builder
-                .build_statistics(expr, expr_statistics.as_ref())
-                .expect("Failed to compute statistics");
+        fn expect_statistics(&self, expr: &LogicalExpr, expected: Option<Statistics>) {
+            let actual = self.statistics_builder.build_statistics(expr).expect("Failed to compute statistics");
             match expected {
                 None => assert!(actual.is_none(), "Expected no statistics but got: {:?}. Operator: {:?}", actual, expr),
                 Some(expected) => {

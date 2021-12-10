@@ -171,7 +171,7 @@ where
         // Every time a new expression is added into a memo we need to compute logical properties of that expression.
         let properties = self
             .properties_provider
-            .build_properties(expr.expr(), props)
+            .build_properties(expr, props)
             // If we has not been able to assemble logical properties for the given expression
             // than something has gone terribly wrong and we have no other option but to unwrap an error.
             .expect("Failed to build logical properties");
@@ -555,9 +555,6 @@ fn optimize_inputs<T>(
             OperatorExpr::Relational(expr) => {
                 let logical_properties = group.props().logical();
                 let statistics = logical_properties.statistics();
-                if statistics.is_none() {
-                    println!("{:#?}", expr);
-                }
                 let (cost_ctx, inputs_cost) = new_cost_estimation_ctx(&inputs, &runtime_state.state);
                 let expr_cost = cost_estimator.estimate_cost(expr.as_physical(), &cost_ctx, statistics);
                 expr_cost + inputs_cost

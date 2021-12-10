@@ -1,15 +1,14 @@
 use crate::catalog::CatalogRef;
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
-use crate::memo::MemoExpr;
 use crate::meta::{ColumnId, ColumnMetadata, Metadata, MutableMetadata};
 use crate::operators::relational::join::{JoinCondition, JoinOn};
-use crate::operators::relational::logical::LogicalExpr;
+use crate::operators::relational::logical::{LogicalExpr, SetOperator};
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::{AggregateFunction, BinaryOp, Expr, ExprRewriter};
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
 use crate::operators::{ExprMemo, Operator, OperatorExpr, Properties};
-use crate::properties::logical::{LogicalProperties, LogicalPropertiesBuilder};
+use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::statistics::Statistics;
 use crate::properties::OrderingChoice;
@@ -76,8 +75,12 @@ impl From<OrderingOption> for OrderingOptions {
     }
 }
 
+/// Callback invoked when a new operator is created by an [operator builder](self::OperatorBuilder).
+//FIXME: Rename to operator callback.
 pub trait MemoizationHandler {
     fn memoize_rel(&self, expr: Operator) -> RelNode;
+
+    fn memoize_scalar(&self, expr: Operator) -> ScalarNode;
 }
 
 /// Provides API to build an [operator tree](super::Operator).
@@ -87,31 +90,22 @@ pub trait MemoizationHandler {
 pub struct OperatorBuilder {
     memoization: Rc<dyn MemoizationHandler>,
     catalog: CatalogRef,
-    properties_builder: Rc<LogicalPropertiesBuilder>,
     metadata: Rc<MutableMetadata>,
     operator: Option<(Operator, OperatorScope)>,
     predicate_statistics: Rc<PredicateStatistics>,
     sub_query_builder: bool,
-    sub_queries: Rc<SubQueries>,
 }
 
 impl OperatorBuilder {
     /// Creates a new instance of operator builder that uses the given [catalog](crate::catalog::Catalog).
-    pub fn new(
-        memoization: Rc<dyn MemoizationHandler>,
-        catalog: CatalogRef,
-        metadata: Rc<MutableMetadata>,
-        properties_builder: Rc<LogicalPropertiesBuilder>,
-    ) -> Self {
+    pub fn new(memoization: Rc<dyn MemoizationHandler>, catalog: CatalogRef, metadata: Rc<MutableMetadata>) -> Self {
         OperatorBuilder {
             memoization,
             catalog,
-            properties_builder,
             metadata,
             predicate_statistics: Rc::new(PredicateStatistics::default()),
             operator: None,
             sub_query_builder: false,
-            sub_queries: Rc::new(SubQueries::default()),
         }
     }
 
@@ -119,12 +113,10 @@ impl OperatorBuilder {
         OperatorBuilder {
             memoization: parent.memoization.clone(),
             catalog: parent.catalog.clone(),
-            properties_builder: parent.properties_builder.clone(),
             metadata: parent.metadata.clone(),
             operator: Some((operator, scope)),
             predicate_statistics: parent.predicate_statistics.clone(),
             sub_query_builder: parent.sub_query_builder,
-            sub_queries: parent.sub_queries.clone(),
         }
     }
 
@@ -159,13 +151,12 @@ impl OperatorBuilder {
         let columns = columns?;
         let column_ids: Vec<ColumnId> = columns.clone().into_iter().map(|(_, id)| id).collect();
 
-        let logical = self.properties_builder.build_get(source, &column_ids)?;
         let expr = LogicalExpr::Get {
             source: source.into(),
             columns: column_ids,
         };
 
-        self.add_operator(expr, logical, OperatorScope { columns });
+        self.add_operator(expr, OperatorScope { columns });
         Ok(self)
     }
 
@@ -179,7 +170,6 @@ impl OperatorBuilder {
                 .get_selectivity(filter_expr.as_str())
                 .map(Statistics::from_selectivity)
                 .unwrap_or_default();
-            // .unwrap_or_else(|| panic!("No predicate statistics: {}", filter_expr));
 
             let mut rewriter = RewriteExprs {
                 scope: &scope,
@@ -192,16 +182,15 @@ impl OperatorBuilder {
             let properties = Properties::new(logical, PhysicalProperties::none());
 
             let expr = OperatorExpr::Scalar(filter);
-            let expr = ScalarNode::Expr(Box::new(Operator::new(expr, properties)));
+            let expr = self.memoization.memoize_scalar(Operator::new(expr, properties));
             Some(expr)
         } else {
             None
         };
 
-        let logical = self.properties_builder.build_select(&input, filter.as_ref())?;
         let expr = LogicalExpr::Select { input, filter };
 
-        self.add_operator(expr, logical, scope);
+        self.add_operator(expr, scope);
         Ok(self)
     }
 
@@ -242,7 +231,6 @@ impl OperatorBuilder {
             output_columns.push((name, id))
         }
 
-        let logical = self.properties_builder.build_projection(&input, &column_ids)?;
         let expr = LogicalExpr::Projection {
             input,
             exprs: vec![],
@@ -251,7 +239,6 @@ impl OperatorBuilder {
 
         self.add_operator(
             expr,
-            logical,
             OperatorScope {
                 columns: output_columns,
             },
@@ -292,12 +279,10 @@ impl OperatorBuilder {
         output_columns.extend_from_slice(&right_scope.columns);
 
         let condition = JoinCondition::using(columns_ids);
-        let logical = self.properties_builder.build_join(&left, &right, &condition)?;
         let expr = LogicalExpr::Join { left, right, condition };
 
         self.add_operator(
             expr,
-            logical,
             OperatorScope {
                 columns: output_columns,
             },
@@ -325,10 +310,9 @@ impl OperatorBuilder {
         rewriter.result?;
 
         let condition = JoinCondition::On(JoinOn::new(ScalarNode::from(expr)));
-        let logical = self.properties_builder.build_join(&left, &right, &condition)?;
         let expr = LogicalExpr::Join { left, right, condition };
 
-        self.add_operator(expr, logical, scope);
+        self.add_operator(expr, scope);
         Ok(self)
     }
 
@@ -352,7 +336,7 @@ impl OperatorBuilder {
                     id
                 } else {
                     let expr_type = resolve_expr_type(&expr, &self.metadata);
-                    let column_meta = ColumnMetadata::new_synthetic_column("ord".into(), expr_type, Some(expr));
+                    let column_meta = ColumnMetadata::new_synthetic_column("".into(), expr_type, Some(expr));
                     self.metadata.add_column(column_meta)
                 };
                 ordering_columns.push(column_id);
@@ -369,29 +353,13 @@ impl OperatorBuilder {
 
     /// Adds a union operator.
     pub fn union(mut self, right: OperatorBuilder) -> Result<Self, OptimizerError> {
-        let (left, right, scope, column_ids) = self.build_union(right)?;
-        let logical = self.properties_builder.build_union(&left, &right, &column_ids)?;
-
-        let expr = LogicalExpr::Union {
-            left,
-            right,
-            all: false,
-        };
-
-        self.add_operator(expr, logical, scope);
-
+        self.build_set_operator(SetOperator::Union, false, right)?;
         Ok(self)
     }
 
     /// Adds a union all operator.
     pub fn union_all(mut self, right: OperatorBuilder) -> Result<Self, OptimizerError> {
-        let (left, right, scope, column_ids) = self.build_union(right)?;
-        let logical = self.properties_builder.build_union(&left, &right, &column_ids)?;
-
-        let expr = LogicalExpr::Union { left, right, all: true };
-
-        self.add_operator(expr, logical, scope);
-
+        self.build_set_operator(SetOperator::Union, true, right)?;
         Ok(self)
     }
 
@@ -409,12 +377,10 @@ impl OperatorBuilder {
         OperatorBuilder {
             memoization: self.memoization.clone(),
             catalog: self.catalog.clone(),
-            properties_builder: self.properties_builder.clone(),
             metadata: self.metadata.clone(),
             predicate_statistics: self.predicate_statistics.clone(),
             operator: None,
             sub_query_builder: true,
-            sub_queries: self.sub_queries.clone(),
         }
     }
 
@@ -437,22 +403,21 @@ impl OperatorBuilder {
     /// Creates a nested sub query expression from this nested operator builder.
     /// If this builder has not been created via call to [Self::sub_query_builder()] this method returns an error.
     pub fn to_sub_query(mut self) -> Result<ScalarExpr, OptimizerError> {
-        let (operator, _) = self.rel_node()?;
-        let rel_node = operator;
-        let expr = ScalarExpr::SubQuery(rel_node);
-
         if self.sub_query_builder {
-            self.sub_queries.register(&expr);
-            Ok(expr)
+            let (operator, _) = self.rel_node()?;
+            Ok(ScalarExpr::SubQuery(operator))
         } else {
-            Err(OptimizerError::Internal("Sub queries can only be created using builders instantiated via call to OperatorBuilder::sub_query_builder() method".to_string()))
+            let message = "Sub queries can only be created using builders instantiated via call to OperatorBuilder::sub_query_builder()";
+            Err(OptimizerError::Internal(message.into()))
         }
     }
 
-    fn build_union(
+    fn build_set_operator(
         &mut self,
+        set_op: SetOperator,
+        all: bool,
         mut right: OperatorBuilder,
-    ) -> Result<(RelNode, RelNode, OperatorScope, Vec<ColumnId>), OptimizerError> {
+    ) -> Result<(), OptimizerError> {
         let (left, left_scope) = self.rel_node()?;
         let (right, right_scope) = right.rel_node()?;
 
@@ -482,14 +447,33 @@ impl OperatorBuilder {
             column_ids.push(column_id);
         }
 
-        let scope = OperatorScope { columns };
+        let expr = match set_op {
+            SetOperator::Union => LogicalExpr::Union {
+                left,
+                right,
+                all,
+                columns: column_ids,
+            },
+            SetOperator::Intersect => LogicalExpr::Intersect {
+                left,
+                right,
+                all,
+                columns: column_ids,
+            },
+            SetOperator::Except => LogicalExpr::Except {
+                left,
+                right,
+                all,
+                columns: column_ids,
+            },
+        };
 
-        Ok((left, right, scope, column_ids))
+        self.add_operator(expr, OperatorScope { columns });
+        Ok(())
     }
 
-    fn add_operator(&mut self, expr: LogicalExpr, logical: LogicalProperties, output_columns: OperatorScope) {
-        let properties = Properties::new(logical, PhysicalProperties::none());
-        let operator = Operator::new(OperatorExpr::from(expr), properties);
+    fn add_operator(&mut self, expr: LogicalExpr, output_columns: OperatorScope) {
+        let operator = Operator::from(OperatorExpr::from(expr));
         self.operator = Some((operator, output_columns));
     }
 
@@ -562,7 +546,13 @@ impl ExprRewriter<RelNode> for RewriteExprs<'_> {
                     }
                 }
             }
-            ScalarExpr::SubQuery(ref _rel_node) => expr,
+            ScalarExpr::SubQuery(RelNode::Expr(_)) => {
+                // FIXME: Return the following error when Memoization will be enabled in OptimizerTester::builder()
+                // self.result = Err(OptimizerError::Internal(format!(
+                //     "Use sub_query_builder/to_sub_query to construct nested sub queries"
+                // )));
+                expr
+            }
             _ => expr,
         }
     }
@@ -642,16 +632,13 @@ impl AggregateBuilder<'_> {
             .collect();
         let group_exprs = group_exprs?;
 
-        let properties_builder = &self.builder.properties_builder;
-        let logical = properties_builder.build_aggregate(&input, &column_ids)?;
-        let properties = Properties::new(logical, PhysicalProperties::none());
-
         let aggregate = LogicalExpr::Aggregate {
             input,
             aggr_exprs,
             group_exprs,
+            columns: column_ids,
         };
-        let operator = Operator::new(OperatorExpr::from(aggregate), properties);
+        let operator = Operator::from(OperatorExpr::from(aggregate));
 
         Ok(OperatorBuilder::with_parent(
             self.builder,
@@ -670,6 +657,10 @@ impl MemoizationHandler for NoMemoization {
     fn memoize_rel(&self, expr: Operator) -> RelNode {
         RelNode::from(expr)
     }
+
+    fn memoize_scalar(&self, expr: Operator) -> ScalarNode {
+        ScalarNode::Expr(Box::new(expr))
+    }
 }
 
 impl Debug for dyn MemoizationHandler {
@@ -678,7 +669,7 @@ impl Debug for dyn MemoizationHandler {
     }
 }
 
-/// Copies operator into a memo.
+/// A callback that copies operators into a memo.
 #[derive(Debug)]
 pub struct MemoizeWithMemo {
     // RefCell is necessary because the memo is shared by multiple operator builders.
@@ -686,14 +677,14 @@ pub struct MemoizeWithMemo {
 }
 
 impl MemoizeWithMemo {
-    /// Creates a handler that uses the given memo.
+    /// Creates a callback that uses the given memo.
     pub fn new(memo: ExprMemo) -> Self {
         MemoizeWithMemo {
             memo: RefCell::new(memo),
         }
     }
 
-    /// Consumes this handler and returns the underlying memo.
+    /// Consumes this callback and returns the underlying memo.
     pub fn into_inner(self) -> ExprMemo {
         self.memo.into_inner()
     }
@@ -704,6 +695,12 @@ impl MemoizationHandler for MemoizeWithMemo {
         let mut memo = self.memo.borrow_mut();
         let (group, _) = memo.insert(expr);
         RelNode::Group(group)
+    }
+
+    fn memoize_scalar(&self, expr: Operator) -> ScalarNode {
+        let mut memo = self.memo.borrow_mut();
+        let (group, _) = memo.insert(expr);
+        ScalarNode::Group(group)
     }
 }
 
@@ -721,23 +718,6 @@ impl PredicateStatistics {
     fn get_selectivity(&self, expr: &str) -> Option<f64> {
         let predicates = self.inner.borrow();
         predicates.get(expr).copied()
-    }
-}
-
-#[derive(Debug, Default)]
-struct SubQueries {
-    inner: RefCell<HashSet<String>>,
-}
-
-impl SubQueries {
-    fn register(&self, expr: &ScalarExpr) {
-        let mut inner = self.inner.borrow_mut();
-        inner.insert(format!("{}", expr));
-    }
-
-    fn contains(&self, expr: &ScalarExpr) -> bool {
-        let inner = self.inner.borrow();
-        inner.contains(format!("{}", expr).as_str())
     }
 }
 
@@ -811,11 +791,7 @@ mod test {
     struct NoStatsBuilder;
 
     impl StatisticsBuilder for NoStatsBuilder {
-        fn build_statistics(
-            &self,
-            _expr: &LogicalExpr,
-            _statistics: Option<&Statistics>,
-        ) -> Result<Option<Statistics>, OptimizerError> {
+        fn build_statistics(&self, _expr: &LogicalExpr) -> Result<Option<Statistics>, OptimizerError> {
             Ok(None)
         }
     }
@@ -1106,9 +1082,7 @@ Memo:
                 .build(),
         );
         let metadata = Rc::new(MutableMetadata::new());
-
-        let properties_builder = Rc::new(LogicalPropertiesBuilder::new(Box::new(NoStatsBuilder)));
-        let operator_builder = OperatorBuilder::new(memoization, catalog, metadata, properties_builder);
+        let operator_builder = OperatorBuilder::new(memoization, catalog, metadata);
         (f)(operator_builder)
     }
 
@@ -1123,10 +1097,14 @@ Memo:
         let mut buf = String::new();
         buf.push('\n');
 
-        buf.push_str(format_operator_tree(&expr).as_str());
+        let memoization = Rc::try_unwrap(memoization).unwrap();
+        let mut memo = memoization.into_inner();
+        let (_, expr) = memo.insert(expr);
+
+        buf.push_str(format_operator_tree(expr.mexpr()).as_str());
         buf.push('\n');
 
-        buf.push_str(format!("  output cols: {:?}\n", expr.logical().output_columns()).as_str());
+        buf.push_str(format!("  output cols: {:?}\n", expr.props().logical().output_columns()).as_str());
         buf.push_str("Metadata:\n");
 
         let columns: Vec<(ColumnId, ColumnMetadata)> =
@@ -1148,10 +1126,6 @@ Memo:
             buf.push_str(column_info.as_str());
             buf.push('\n');
         }
-
-        let memoization = Rc::try_unwrap(memoization).unwrap();
-        let mut memo = memoization.into_inner();
-        let _ = memo.insert(expr);
 
         if !memo.is_empty() {
             buf.push_str("Memo:\n");

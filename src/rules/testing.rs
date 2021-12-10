@@ -266,11 +266,7 @@ impl MemoExprFormatter for FormatExprs<'_> {
 struct NoStatsBuilder;
 
 impl StatisticsBuilder for NoStatsBuilder {
-    fn build_statistics(
-        &self,
-        _expr: &LogicalExpr,
-        _statistics: Option<&Statistics>,
-    ) -> Result<Option<Statistics>, OptimizerError> {
+    fn build_statistics(&self, _expr: &LogicalExpr) -> Result<Option<Statistics>, OptimizerError> {
         Ok(None)
     }
 }

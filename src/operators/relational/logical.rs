@@ -25,6 +25,8 @@ pub enum LogicalExpr {
         input: RelNode,
         aggr_exprs: Vec<ScalarNode>,
         group_exprs: Vec<ScalarNode>,
+        /// Output columns produced by an aggregate operator.
+        columns: Vec<ColumnId>,
     },
     Join {
         left: RelNode,
@@ -39,16 +41,22 @@ pub enum LogicalExpr {
         left: RelNode,
         right: RelNode,
         all: bool,
+        /// Output columns produced by a set operator.
+        columns: Vec<ColumnId>,
     },
     Intersect {
         left: RelNode,
         right: RelNode,
         all: bool,
+        /// Output columns produced by a set operator.
+        columns: Vec<ColumnId>,
     },
     Except {
         left: RelNode,
         right: RelNode,
         all: bool,
+        /// Output columns produced by a set operator.
+        columns: Vec<ColumnId>,
     },
 }
 
@@ -74,6 +82,7 @@ impl LogicalExpr {
                 input,
                 aggr_exprs,
                 group_exprs,
+                ..
             } => {
                 visitor.visit_rel(expr_ctx, input);
                 for expr in aggr_exprs {
@@ -137,6 +146,7 @@ impl LogicalExpr {
             LogicalExpr::Aggregate {
                 aggr_exprs,
                 group_exprs,
+                columns,
                 ..
             } => {
                 inputs.expect_len(1 + aggr_exprs.len() + group_exprs.len(), "LogicalAggregate");
@@ -144,30 +154,34 @@ impl LogicalExpr {
                     input: inputs.rel_node(),
                     aggr_exprs: inputs.scalar_nodes(aggr_exprs.len()),
                     group_exprs: inputs.scalar_nodes(group_exprs.len()),
+                    columns: columns.clone(),
                 }
             }
-            LogicalExpr::Union { all, .. } => {
+            LogicalExpr::Union { all, columns, .. } => {
                 inputs.expect_len(2, "LogicalUnion");
                 LogicalExpr::Union {
                     left: inputs.rel_node(),
                     right: inputs.rel_node(),
                     all: *all,
+                    columns: columns.clone(),
                 }
             }
-            LogicalExpr::Intersect { all, .. } => {
+            LogicalExpr::Intersect { all, columns, .. } => {
                 inputs.expect_len(2, "LogicalIntersect");
                 LogicalExpr::Intersect {
                     left: inputs.rel_node(),
                     right: inputs.rel_node(),
                     all: *all,
+                    columns: columns.clone(),
                 }
             }
-            LogicalExpr::Except { all, .. } => {
+            LogicalExpr::Except { all, columns, .. } => {
                 inputs.expect_len(2, "LogicalExcept");
                 LogicalExpr::Except {
                     left: inputs.rel_node(),
                     right: inputs.rel_node(),
                     all: *all,
+                    columns: columns.clone(),
                 }
             }
         }
@@ -209,6 +223,7 @@ impl LogicalExpr {
                 input,
                 aggr_exprs,
                 group_exprs,
+                ..
             } => {
                 f.write_name("LogicalAggregate");
                 f.write_expr("input", input);
@@ -219,19 +234,34 @@ impl LogicalExpr {
                     f.write_expr("", group_expr);
                 }
             }
-            LogicalExpr::Union { left, right, all } => {
+            LogicalExpr::Union {
+                left,
+                right,
+                all,
+                columns: _columns,
+            } => {
                 f.write_name("LogicalUnion");
                 f.write_expr("left", left);
                 f.write_expr("right", right);
                 f.write_value("all", all);
             }
-            LogicalExpr::Intersect { left, right, all } => {
+            LogicalExpr::Intersect {
+                left,
+                right,
+                all,
+                columns: _columns,
+            } => {
                 f.write_name("LogicalIntersect");
                 f.write_expr("left", left);
                 f.write_expr("right", right);
                 f.write_value("all", all);
             }
-            LogicalExpr::Except { left, right, all } => {
+            LogicalExpr::Except {
+                left,
+                right,
+                all,
+                columns: _columns,
+            } => {
                 f.write_name("LogicalExcept");
                 f.write_expr("left", left);
                 f.write_expr("right", right);
@@ -288,6 +318,7 @@ impl LogicalExpr {
                 input,
                 aggr_exprs,
                 group_exprs,
+                ..
             } => {
                 for aggr_expr in aggr_exprs {
                     aggr_expr.expr().accept(&mut expr_visitor);
@@ -322,4 +353,11 @@ pub trait LogicalExprVisitor {
 
     /// Called after all child expressions of `expr` are visited.
     fn post_visit(&mut self, expr: &LogicalExpr);
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum SetOperator {
+    Union,
+    Intersect,
+    Except,
 }
