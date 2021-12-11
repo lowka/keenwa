@@ -1,5 +1,5 @@
 use crate::error::OptimizerError;
-use crate::memo::{ExprNodeRef, MemoExpr, MemoExprCallback, MemoExprFormatter, StringMemoFormatter};
+use crate::memo::{ExprNodeRef, MemoExpr, MemoExprFormatter, MemoGroupCallback, StringMemoFormatter};
 use crate::meta::{Metadata, MutableMetadata};
 use crate::operators::properties::LogicalPropertiesBuilder;
 use crate::operators::relational::logical::LogicalExpr;
@@ -45,7 +45,7 @@ impl RuleTester {
 
     /// Attempts to apply the rule to the given expression and then compares the result with the expected value.
     pub fn apply(&mut self, expr: &LogicalExpr, expected: &str) {
-        let (_, expr_ref) = self.memo.insert(Operator::from(OperatorExpr::from(expr.clone())));
+        let (_, expr_ref) = self.memo.insert_group(Operator::from(OperatorExpr::from(expr.clone())));
 
         let ctx = RuleContext::new(PhysicalProperties::none(), &self.metadata);
         let rule_match = self.rule.matches(&ctx, expr);
@@ -59,7 +59,7 @@ impl RuleTester {
             Ok(None) => panic!("Rule matched but not applied: {:?}", self.rule),
             Err(e) => panic!("Failed to apply a rule. Rule: {:?}. Error: {}", self.rule, e),
         };
-        let (_, new_expr) = self.memo.insert(expr);
+        let (_, new_expr) = self.memo.insert_group(expr);
         let actual_expr = format_operator_tree(new_expr.mexpr());
 
         assert_eq!(actual_expr.trim_end(), expected.trim());
@@ -264,12 +264,12 @@ impl MemoExprFormatter for FormatExprs<'_> {
     }
 }
 
-impl MemoExprCallback for LogicalPropertiesBuilder {
+impl MemoGroupCallback for LogicalPropertiesBuilder {
     type Expr = Operator;
     type Props = Properties;
     type Metadata = OperatorMetadata;
 
-    fn new_expr(&self, _expr: &Self::Expr, props: Self::Props, _metadata: &Self::Metadata) -> Self::Props {
-        props
+    fn new_group(&self, _expr: &Self::Expr, provided_props: Self::Props, _metadata: &Self::Metadata) -> Self::Props {
+        provided_props
     }
 }

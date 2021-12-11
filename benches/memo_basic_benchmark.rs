@@ -143,7 +143,7 @@ fn memo_bench(c: &mut Criterion) {
         b.iter(|| {
             let mut memo = Memo::new(());
             let query = TestOperator::from(query.clone());
-            let (group, _) = memo.insert(query);
+            let (group, _) = memo.insert_group(query);
             black_box(group);
         });
     });
@@ -154,7 +154,7 @@ fn memo_bench(c: &mut Criterion) {
         b.iter(|| {
             let mut memo = Memo::new(());
             let query = TestOperator::from(query.clone());
-            let (group, _) = memo.insert(query);
+            let (group, _) = memo.insert_group(query);
             black_box(group);
         });
     });

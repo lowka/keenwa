@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::cost::{Cost, CostEstimationContext, CostEstimator};
-use crate::memo::{format_memo, ExprId, ExprNode, GroupId, MemoExprCallback, NewChildExprs};
+use crate::memo::{format_memo, ExprId, ExprNode, GroupId, MemoGroupCallback, NewChildExprs};
 use crate::meta::Metadata;
 use crate::operators::properties::PropertiesProvider;
 use crate::operators::relational::{RelExpr, RelNode};
@@ -48,7 +48,7 @@ where
         log::debug!("Optimizing expression: {:?}", expr);
 
         let required_property = expr.required().clone();
-        let (root_group, _) = memo.insert(expr);
+        let (root_group, _) = memo.insert_group(expr);
 
         let ctx = OptimizationContext {
             group: root_group,
@@ -162,7 +162,7 @@ impl<P> SetPropertiesCallback<P> {
     }
 }
 
-impl<P> MemoExprCallback for SetPropertiesCallback<P>
+impl<P> MemoGroupCallback for SetPropertiesCallback<P>
 where
     P: PropertiesProvider,
 {
@@ -170,11 +170,11 @@ where
     type Props = Properties;
     type Metadata = OperatorMetadata;
 
-    fn new_expr(&self, expr: &Self::Expr, props: Self::Props, metadata: &Self::Metadata) -> Self::Props {
+    fn new_group(&self, expr: &Self::Expr, provided_props: Self::Props, metadata: &Self::Metadata) -> Self::Props {
         // Every time a new expression is added into a memo we need to compute logical properties of that expression.
         let properties = self
             .properties_provider
-            .build_properties(expr, props, metadata.get_ref())
+            .build_properties(expr, provided_props, metadata.get_ref())
             // If we has not been able to assemble logical properties for the given expression
             // than something has gone terribly wrong and we have no other option but to unwrap an error.
             .expect("Failed to build logical properties");
@@ -443,7 +443,7 @@ fn apply_rule<R>(
         match result {
             RuleResult::Substitute(expr) => {
                 let new_operator = OperatorExpr::from(expr);
-                let (_, new_expr) = memo.insert_member(&ctx.group, Operator::from(new_operator));
+                let (_, new_expr) = memo.insert_group_member(&ctx.group, Operator::from(new_operator));
 
                 log::debug!(" + Logical expression: {}", &new_expr);
 
@@ -456,7 +456,7 @@ fn apply_rule<R>(
             RuleResult::Implementation(expr) => {
                 let new_operator = OperatorExpr::from(expr);
                 let new_operator = Operator::from(new_operator);
-                let (_, new_expr) = memo.insert_member(&ctx.group, new_operator);
+                let (_, new_expr) = memo.insert_group_member(&ctx.group, new_operator);
 
                 log::debug!(" + Physical expression: {}", &new_expr);
 
@@ -498,7 +498,7 @@ fn enforce_properties<R>(
         // optimize_inputs on the enforcer which then calls optimize group on the same group and we have an infinite loop.
         // 2) copy_out_best_expr traverses its child expressions recursively so adding an enforcer to a group which
         // is used as its input results an infinite loop during the traversal.
-        let (_, enforcer_expr) = memo.insert(Operator::from(enforcer_expr));
+        let (_, enforcer_expr) = memo.insert_group(Operator::from(enforcer_expr));
 
         (enforcer_expr, remaining_properties)
     };

@@ -88,7 +88,7 @@ fn memo_bench(c: &mut Criterion) {
                     let memoization = Rc::try_unwrap(memoization).unwrap();
                     let mut memo = memoization.into_inner();
                     // benchmark should not include time spend in memoization.
-                    let (_, expr) = memo.insert(query);
+                    let (_, expr) = memo.insert_group(query);
                     let query = expr.mexpr().clone();
 
                     let optimizer = create_optimizer(catalog.clone());

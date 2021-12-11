@@ -1,5 +1,5 @@
 use crate::memo::{
-    CopyInExprs, CopyInNestedExprs, ExprContext, ExprNode, ExprNodeRef, MemoExpr, MemoExprCallback, MemoExprFormatter,
+    CopyInExprs, CopyInNestedExprs, ExprContext, ExprNode, ExprNodeRef, MemoExpr, MemoExprFormatter, MemoGroupCallback,
     NewChildExprs,
 };
 use crate::meta::MutableMetadata;
@@ -26,7 +26,7 @@ pub type OperatorMetadata = Rc<MutableMetadata>;
 pub type ExprMemo = crate::memo::Memo<Operator, OperatorMetadata>;
 pub type GroupRef = crate::memo::MemoGroupRef<Operator>;
 pub type ExprRef = crate::memo::MemoExprRef<Operator>;
-pub type ExprCallback = dyn MemoExprCallback<Expr = Operator, Props = Properties, Metadata = OperatorMetadata>;
+pub type ExprCallback = dyn MemoGroupCallback<Expr = Operator, Props = Properties, Metadata = OperatorMetadata>;
 
 /// An operator is an expression (which can be either logical or physical) with a set of properties.
 /// A tree of operators can represent both initial (unoptimized) and optimized query plans.

@@ -693,13 +693,13 @@ impl MemoizeWithMemo {
 impl MemoizationHandler for MemoizeWithMemo {
     fn memoize_rel(&self, expr: Operator) -> RelNode {
         let mut memo = self.memo.borrow_mut();
-        let (group, _) = memo.insert(expr);
+        let (group, _) = memo.insert_group(expr);
         RelNode::Group(group)
     }
 
     fn memoize_scalar(&self, expr: Operator) -> ScalarNode {
         let mut memo = self.memo.borrow_mut();
-        let (group, _) = memo.insert(expr);
+        let (group, _) = memo.insert_group(expr);
         ScalarNode::Group(group)
     }
 }
@@ -1113,7 +1113,7 @@ Memo:
 
         let memoization = Rc::try_unwrap(memoization).unwrap();
         let mut memo = memoization.into_inner();
-        let (_, expr) = memo.insert(expr);
+        let (_, expr) = memo.insert_group(expr);
 
         buf.push_str(format_operator_tree(expr.mexpr()).as_str());
         buf.push('\n');
@@ -1141,25 +1141,23 @@ Memo:
             buf.push('\n');
         }
 
-        if !memo.is_empty() {
-            buf.push_str("Memo:\n");
-            let memo_as_string = format_memo(&memo);
-            let lines = memo_as_string
-                .split('\n')
-                .map(|l| {
-                    if !l.is_empty() {
-                        let mut s = String::new();
-                        s.push_str("  ");
-                        s.push_str(l);
-                        s
-                    } else {
-                        l.to_string()
-                    }
-                })
-                .join("\n");
+        buf.push_str("Memo:\n");
+        let memo_as_string = format_memo(&memo);
+        let lines = memo_as_string
+            .split('\n')
+            .map(|l| {
+                if !l.is_empty() {
+                    let mut s = String::new();
+                    s.push_str("  ");
+                    s.push_str(l);
+                    s
+                } else {
+                    l.to_string()
+                }
+            })
+            .join("\n");
 
-            buf.push_str(lines.as_str());
-        }
+        buf.push_str(lines.as_str());
 
         assert_eq!(buf.as_str(), expected);
     }
