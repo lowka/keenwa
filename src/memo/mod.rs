@@ -34,6 +34,7 @@ where
 }
 
 /// The number of elements per store page.
+#[doc(hidden)]
 const PAGE_SIZE: usize = 8;
 
 impl<T, D> Memo<T, D>
@@ -162,7 +163,8 @@ pub trait MemoExpr: Debug + Clone {
     /// Recursively traverses this expression and copies it into a memo.
     fn copy_in<T>(&self, visitor: &mut CopyInExprs<Self, T>);
 
-    /// Creates a new expression from this expression by replacing its child expressions with the new ones.
+    /// Creates a new expression from this expression by replacing its child expressions
+    /// provided by the given [NewChildExprs](self::NewChildExprs).
     fn with_new_children(&self, children: NewChildExprs<Self>) -> Self;
 
     /// Builds a textual representation of this expression.
@@ -740,7 +742,7 @@ where
     }
 }
 
-/// Stores information used to create a new memo expression.
+/// Stores information that is used to build a new memo expression.
 pub struct ExprContext<T>
 where
     T: MemoExpr,
@@ -834,7 +836,7 @@ where
 }
 
 /// Provides methods to collect nested expressions from an expression and copy them into a memo.
-/// Can be used to support nested relational expressions inside scalar expressions.
+/// Can be used to support nested relational expressions inside a scalar expression.
 //TODO: Examples
 pub struct CopyInNestedExprs<'a, 'c, T, D>
 where
@@ -888,6 +890,7 @@ where
     }
 }
 
+#[doc(hidden)]
 struct CopyIn<'a, T, D>
 where
     T: MemoExpr,
