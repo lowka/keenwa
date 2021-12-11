@@ -4,29 +4,38 @@ use crate::meta::{ColumnId, MetadataRef};
 use crate::operators::relational::join::JoinCondition;
 use crate::operators::relational::logical::{LogicalExpr, SetOperator};
 use crate::operators::relational::RelNode;
-use crate::operators::scalar::ScalarNode;
+use crate::operators::scalar::expr::{Expr, ExprRewriter};
+use crate::operators::scalar::{ScalarExpr, ScalarNode};
 use crate::operators::statistics::StatisticsBuilder;
 use crate::properties::logical::LogicalProperties;
 use crate::properties::statistics::Statistics;
-
+use std::any::Any;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::rc::Rc;
 /// A simple implementation of [StatisticsBuilder](super::StatisticsBuilder) that information available in a [database catalog].
 ///
 /// [database catalog]: crate::catalog::Catalog
-// FIXME: (MemoMetadata) Rename to mutable SimpleStatisticsBuilder (remove dependency on Catalog and instead add method to set statistics manually.
+// FIXME: (MemoMetadata) remove dependency on Catalog and instead add method to set statistics manually.
 //  Add method that sets the number of rows per table.
 //  Add method that specifies predicate selectivity (directly or indirectly ag. select filter selectivity = select (row count)/ input (row count) )
 #[derive(Debug)]
-pub struct SimpleCatalogStatisticsBuilder {
+pub struct SimpleCatalogStatisticsBuilder<T> {
     catalog: CatalogRef,
+    selectivity_provider: T,
 }
 
-impl SimpleCatalogStatisticsBuilder {
-    pub fn new(catalog: CatalogRef) -> Self {
-        SimpleCatalogStatisticsBuilder { catalog }
+impl<T> SimpleCatalogStatisticsBuilder<T>
+where
+    T: SelectivityProvider,
+{
+    pub fn new(catalog: CatalogRef, selectivity_provider: T) -> Self {
+        SimpleCatalogStatisticsBuilder {
+            catalog,
+            selectivity_provider,
+        }
     }
-}
 
-impl SimpleCatalogStatisticsBuilder {
     fn build_get(&self, source: &str) -> Result<Option<Statistics>, OptimizerError> {
         let table_ref = match self.catalog.get_table(source) {
             Some(table_ref) => table_ref,
@@ -46,15 +55,24 @@ impl SimpleCatalogStatisticsBuilder {
         Ok(statistics)
     }
 
-    fn build_select(&self, input: &RelNode, filter: Option<&ScalarNode>) -> Result<Option<Statistics>, OptimizerError> {
+    fn build_select(
+        &self,
+        expr: &LogicalExpr,
+        logical: &LogicalProperties,
+        metadata: MetadataRef,
+        input: &RelNode,
+        filter: Option<&ScalarNode>,
+    ) -> Result<Option<Statistics>, OptimizerError> {
+        let selectivity = if let Some(filter) = filter {
+            // let filter_statistics = filter.props().logical().statistics().unwrap();
+            // filter_statistics.selectivity()
+            self.selectivity_provider.get_selectivity(filter.expr(), expr, logical, metadata)
+        } else {
+            Some(1.0)
+        }
+        .unwrap();
         let logical = input.props().logical();
         let input_statistics = logical.statistics().unwrap();
-        let selectivity = if let Some(filter) = filter {
-            let filter_statistics = filter.props().logical().statistics().unwrap();
-            filter_statistics.selectivity()
-        } else {
-            1.0
-        };
         let row_count = selectivity * input_statistics.row_count();
         Ok(Some(Statistics::new(row_count, selectivity)))
     }
@@ -102,16 +120,21 @@ impl SimpleCatalogStatisticsBuilder {
     }
 }
 
-impl StatisticsBuilder for SimpleCatalogStatisticsBuilder {
+impl<T> StatisticsBuilder for SimpleCatalogStatisticsBuilder<T>
+where
+    T: SelectivityProvider,
+{
     fn build_statistics(
         &self,
         expr: &LogicalExpr,
-        _logical: &LogicalProperties,
+        logical: &LogicalProperties,
         metadata: MetadataRef,
     ) -> Result<Option<Statistics>, OptimizerError> {
         match expr {
             LogicalExpr::Projection { input, columns, .. } => self.build_projection(input, columns),
-            LogicalExpr::Select { input, filter, .. } => self.build_select(input, filter.as_ref()),
+            LogicalExpr::Select { input, filter, .. } => {
+                self.build_select(expr, logical, metadata, input, filter.as_ref())
+            }
             LogicalExpr::Aggregate { input, group_exprs, .. } => self.build_aggregate(input, group_exprs, &[]),
             LogicalExpr::Join { left, right, condition } => self.build_join(left, right, condition),
             LogicalExpr::Get { source, .. } => self.build_get(source),
@@ -137,6 +160,119 @@ impl StatisticsBuilder for SimpleCatalogStatisticsBuilder {
     }
 }
 
+/// An extra trait that computes selectivity of predicate expressions.  
+pub trait SelectivityProvider {
+    /// Returns this selectivity statistics as [`Any`](std::any::Any) in order it can be downcast to its implementation.
+    fn as_any(&self) -> &dyn Any;
+
+    /// Returns selectivity of the given predicate expression `filter` in the context of the relational expression `expr`.
+    fn get_selectivity(
+        &self,
+        filter: &ScalarExpr,
+        expr: &LogicalExpr,
+        logical_properties: &LogicalProperties,
+        metadata: MetadataRef,
+    ) -> Option<f64>;
+}
+
+/// [SelectivityStatistics](self::SelectivityStatistics) that always returns selectivity of 1.0.
+#[derive(Debug)]
+pub struct DefaultSelectivityStatistics;
+
+impl SelectivityProvider for DefaultSelectivityStatistics {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn get_selectivity(
+        &self,
+        _filter: &ScalarExpr,
+        _expr: &LogicalExpr,
+        _logical_properties: &LogicalProperties,
+        _metadata: MetadataRef,
+    ) -> Option<f64> {
+        Some(1.0)
+    }
+}
+
+/// [SelectivityStatistics](self::SelectivityStatistics) that allows to set selectivity on per predicate basis.
+/// When selectivity for a predicate is not specified returns selectivity of 1.0.
+#[derive(Debug)]
+pub struct PrecomputedSelectivityStatistics {
+    inner: RefCell<HashMap<String, f64>>,
+}
+
+impl PrecomputedSelectivityStatistics {
+    /// Creates a new instance of `PrecomputedSelectivityStatistics`.
+    pub fn new() -> Self {
+        PrecomputedSelectivityStatistics {
+            inner: RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// Sets selectivity for the given predicate `expr`.
+    pub fn set_selectivity(&self, expr: &str, value: f64) {
+        let mut inner = self.inner.borrow_mut();
+        inner.insert(expr.into(), value);
+    }
+}
+
+impl SelectivityProvider for PrecomputedSelectivityStatistics {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn get_selectivity(
+        &self,
+        filter: &ScalarExpr,
+        _expr: &LogicalExpr,
+        _logical_properties: &LogicalProperties,
+        metadata: MetadataRef,
+    ) -> Option<f64> {
+        struct ReplaceColumnIdsWithColumnNames<'a> {
+            metadata: MetadataRef<'a>,
+        }
+
+        impl ExprRewriter<RelNode> for ReplaceColumnIdsWithColumnNames<'_> {
+            fn rewrite(&mut self, expr: ScalarExpr) -> ScalarExpr {
+                if let ScalarExpr::Column(id) = expr {
+                    let column = self.metadata.get_column(&id);
+                    ScalarExpr::ColumnName(column.name().clone())
+                } else {
+                    expr
+                }
+            }
+        }
+
+        let filter = filter.clone();
+        let mut rewriter = ReplaceColumnIdsWithColumnNames { metadata };
+        let filter = filter.rewrite(&mut rewriter);
+        let filter_str = format!("{}", filter);
+
+        let inner = self.inner.borrow();
+        inner.get(&filter_str).copied().or(Some(1.0))
+    }
+}
+
+impl<T> SelectivityProvider for Rc<T>
+where
+    T: SelectivityProvider + 'static,
+{
+    fn as_any(&self) -> &dyn Any {
+        self.as_ref()
+    }
+
+    fn get_selectivity(
+        &self,
+        filter: &ScalarExpr,
+        expr: &LogicalExpr,
+        logical_properties: &LogicalProperties,
+        metadata: MetadataRef,
+    ) -> Option<f64> {
+        self.as_ref().get_selectivity(filter, expr, logical_properties, metadata)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::catalog::mutable::MutableCatalog;
@@ -146,7 +282,7 @@ mod test {
     use crate::operators::relational::logical::LogicalExpr;
     use crate::operators::scalar::expr::AggregateFunction;
     use crate::operators::scalar::{ScalarExpr, ScalarNode};
-    use crate::operators::statistics::simple::SimpleCatalogStatisticsBuilder;
+    use crate::operators::statistics::simple::{DefaultSelectivityStatistics, SimpleCatalogStatisticsBuilder};
     use crate::operators::statistics::StatisticsBuilder;
     use crate::operators::{Operator, OperatorExpr, Properties};
     use crate::properties::logical::LogicalProperties;
@@ -210,7 +346,7 @@ mod test {
     }
 
     struct StatisticsTester {
-        statistics_builder: SimpleCatalogStatisticsBuilder,
+        statistics_builder: SimpleCatalogStatisticsBuilder<DefaultSelectivityStatistics>,
     }
 
     impl StatisticsTester {
@@ -227,9 +363,10 @@ mod test {
 
                 catalog.add_table(crate::catalog::DEFAULT_SCHEMA, table);
             }
+            let selectivity_provider = DefaultSelectivityStatistics;
 
             StatisticsTester {
-                statistics_builder: SimpleCatalogStatisticsBuilder::new(Arc::new(catalog)),
+                statistics_builder: SimpleCatalogStatisticsBuilder::new(Arc::new(catalog), selectivity_provider),
             }
         }
 

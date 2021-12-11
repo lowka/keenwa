@@ -1,6 +1,7 @@
 use crate::datatypes::DataType;
 use crate::operators::scalar::ScalarExpr;
 use std::cell::{Ref, RefCell};
+use std::ops::Deref;
 
 /// Uniquely identifies a column within a query.
 pub type ColumnId = usize;
@@ -104,6 +105,14 @@ impl MutableMetadata {
         }
     }
 
+    pub fn from(metadata: Metadata) -> Self {
+        let columns = metadata.columns;
+        let inner = MutableMetadataInner { columns };
+        MutableMetadata {
+            inner: RefCell::new(inner),
+        }
+    }
+
     /// Adds a new column to this metadata.
     // FIXME: Update docs.
     pub fn add_column(&self, mut column: ColumnMetadata) -> ColumnId {
@@ -126,14 +135,15 @@ impl MutableMetadata {
     /// # Panics
     ///
     /// This method panics if there is no metadata for the given column.
-    pub fn get_column(&self, column_id: &ColumnId) -> Ref<'_, ColumnMetadata> {
+    pub fn get_column(&self, column_id: &ColumnId) -> ColumnMetadataRef {
         let inner = self.inner.borrow();
-        Ref::map(inner, |inner| {
+        let r = Ref::map(inner, |inner| {
             inner
                 .columns
                 .get(column_id - 1)
                 .unwrap_or_else(|| panic!("Unknown or unexpected column id: {:?}", column_id))
-        })
+        });
+        ColumnMetadataRef { inner: r }
     }
 
     /// Returns a reference to a this metadata. A reference provides read-view into this metadata.
@@ -159,7 +169,8 @@ struct MutableMetadataInner {
     columns: Vec<ColumnMetadata>,
 }
 
-/// A read-only view into this metadata.
+/// A reference to an instance of mutable metadata.
+#[derive(Debug, Clone)]
 pub struct MetadataRef<'a> {
     metadata: &'a MutableMetadata,
 }
@@ -170,7 +181,21 @@ impl<'a> MetadataRef<'a> {
     /// # Panics
     ///
     /// This method panics if there is no metadata for the given column.
-    pub fn get_column(&self, column_id: &ColumnId) -> Ref<'_, ColumnMetadata> {
+    pub fn get_column(&self, column_id: &ColumnId) -> ColumnMetadataRef {
         self.metadata.get_column(column_id)
+    }
+}
+
+/// A reference to a column metadata.
+#[derive(Debug)]
+pub struct ColumnMetadataRef<'a> {
+    inner: Ref<'a, ColumnMetadata>,
+}
+
+impl Deref for ColumnMetadataRef<'_> {
+    type Target = ColumnMetadata;
+
+    fn deref(&self) -> &Self::Target {
+        self.inner.deref()
     }
 }

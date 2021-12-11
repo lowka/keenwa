@@ -92,7 +92,6 @@ pub struct OperatorBuilder {
     catalog: CatalogRef,
     metadata: Rc<MutableMetadata>,
     operator: Option<(Operator, OperatorScope)>,
-    predicate_statistics: Rc<PredicateStatistics>,
     sub_query_builder: bool,
 }
 
@@ -103,7 +102,6 @@ impl OperatorBuilder {
             memoization,
             catalog,
             metadata,
-            predicate_statistics: Rc::new(PredicateStatistics::default()),
             operator: None,
             sub_query_builder: false,
         }
@@ -115,7 +113,6 @@ impl OperatorBuilder {
             catalog: parent.catalog.clone(),
             metadata: parent.metadata.clone(),
             operator: Some((operator, scope)),
-            predicate_statistics: parent.predicate_statistics.clone(),
             sub_query_builder: parent.sub_query_builder,
         }
     }
@@ -164,13 +161,6 @@ impl OperatorBuilder {
     pub fn select(mut self, filter: Option<ScalarExpr>) -> Result<Self, OptimizerError> {
         let (input, scope) = self.rel_node()?;
         let filter = if let Some(filter) = filter {
-            let filter_expr = format!("{}", filter);
-            let selectivity = self
-                .predicate_statistics
-                .get_selectivity(filter_expr.as_str())
-                .map(Statistics::from_selectivity)
-                .unwrap_or_default();
-
             let mut rewriter = RewriteExprs {
                 scope: &scope,
                 result: Ok(()),
@@ -178,11 +168,8 @@ impl OperatorBuilder {
             let filter = filter.rewrite(&mut rewriter);
             rewriter.result?;
 
-            let logical = LogicalProperties::new(Vec::new(), Some(selectivity));
-            let properties = Properties::new(logical, PhysicalProperties::none());
-
             let expr = OperatorExpr::Scalar(filter);
-            let expr = self.memoization.memoize_scalar(Operator::new(expr, properties));
+            let expr = self.memoization.memoize_scalar(Operator::from(expr));
             Some(expr)
         } else {
             None
@@ -378,14 +365,9 @@ impl OperatorBuilder {
             memoization: self.memoization.clone(),
             catalog: self.catalog.clone(),
             metadata: self.metadata.clone(),
-            predicate_statistics: self.predicate_statistics.clone(),
             operator: None,
             sub_query_builder: true,
         }
-    }
-
-    pub fn set_selectivity(&self, expr: &str, value: f64) {
-        self.predicate_statistics.set_selectivity(expr.into(), value);
     }
 
     /// Creates an operator tree and returns its metadata.
@@ -701,23 +683,6 @@ impl MemoizationHandler for MemoizeWithMemo {
         let mut memo = self.memo.borrow_mut();
         let (group, _) = memo.insert_group(expr);
         ScalarNode::Group(group)
-    }
-}
-
-#[derive(Debug, Default)]
-struct PredicateStatistics {
-    inner: RefCell<HashMap<String, f64>>,
-}
-
-impl PredicateStatistics {
-    fn set_selectivity(&self, expr: String, value: f64) {
-        let mut predicates = self.inner.borrow_mut();
-        predicates.insert(expr, value);
-    }
-
-    fn get_selectivity(&self, expr: &str) -> Option<f64> {
-        let predicates = self.inner.borrow();
-        predicates.get(expr).copied()
     }
 }
 
@@ -1100,7 +1065,7 @@ Memo:
     }
 
     fn memoization(metadata: OperatorMetadata) -> Rc<MemoizeWithMemo> {
-        let properties_builder = Rc::new(LogicalPropertiesBuilder::new(Box::new(NoStatisticsBuilder)));
+        let properties_builder = Rc::new(LogicalPropertiesBuilder::new(NoStatisticsBuilder));
         Rc::new(MemoizeWithMemo::new(ExprMemo::with_callback(
             metadata,
             Rc::new(SetPropertiesCallback::new(properties_builder.clone())),

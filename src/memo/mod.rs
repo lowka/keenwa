@@ -90,9 +90,9 @@ where
         copy_in.execute(&expr)
     }
 
-    /// Returns `true` if this memo contains no expressions.
-    pub fn is_empty(&self) -> bool {
-        self.groups.is_empty()
+    /// Returns a reference to the metadata.
+    pub fn metadata(&self) -> &T {
+        &self.metadata
     }
 
     fn get_expr_ref(&self, expr_id: &ExprId) -> MemoExprRef<E> {
@@ -819,7 +819,8 @@ where
     }
 
     fn next_index(&mut self) -> ExprNode<E> {
-        self.children.pop_front().expect("")
+        // the assertion in ensure_available guarantees that `children` has enough elements.
+        self.children.pop_front().unwrap()
     }
 
     fn ensure_available(&mut self, n: usize) {
@@ -1759,7 +1760,7 @@ mod test {
     #[test]
     fn test_memo_debug_formatting() {
         let mut memo = new_memo();
-        assert_eq!(format!("{:?}", memo), "Memo { groups: [], exprs: [], expr_to_group: {}, data: () }");
+        assert_eq!(format!("{:?}", memo), "Memo { groups: [], exprs: [], expr_to_group: {}, metadata: () }");
 
         let expr = TestOperator::from(TestRelExpr::Leaf("a"));
         let (group, expr) = memo.insert_group(expr);

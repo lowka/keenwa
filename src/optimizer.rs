@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use crate::cost::{Cost, CostEstimationContext, CostEstimator};
 use crate::memo::{format_memo, ExprId, ExprNode, GroupId, MemoGroupCallback, NewChildExprs};
-use crate::meta::Metadata;
+use crate::meta::{Metadata, MetadataRef};
 use crate::operators::properties::PropertiesProvider;
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::expr_with_new_inputs;
@@ -42,7 +42,7 @@ where
     }
 
     /// Optimizes the given operator tree.
-    pub fn optimize(&self, expr: Operator, metadata: Metadata, memo: &mut ExprMemo) -> Result<Operator, String> {
+    pub fn optimize(&self, expr: Operator, memo: &mut ExprMemo) -> Result<Operator, String> {
         let mut runtime_state = RuntimeState::new();
 
         log::debug!("Optimizing expression: {:?}", expr);
@@ -59,7 +59,7 @@ where
 
         runtime_state.tasks.schedule(Task::OptimizeGroup { ctx: ctx.clone() });
 
-        self.do_optimize(&mut runtime_state, memo, &metadata);
+        self.do_optimize(&mut runtime_state, memo);
 
         let state = runtime_state.state.get_state(&ctx);
         assert!(state.optimized, "Root node has not been optimized: {:?}", state);
@@ -69,7 +69,7 @@ where
         self.build_result(runtime_state, memo, &ctx)
     }
 
-    fn do_optimize(&self, runtime_state: &mut RuntimeState, memo: &mut ExprMemo, metadata: &Metadata) {
+    fn do_optimize(&self, runtime_state: &mut RuntimeState, memo: &mut ExprMemo) {
         let start_time = Instant::now();
 
         while let Some(task) = runtime_state.tasks.retrieve() {
@@ -87,7 +87,7 @@ where
                     group_optimized(runtime_state, ctx);
                 }
                 Task::OptimizeExpr { ctx, expr, explore } => {
-                    optimize_expr(runtime_state, ctx, expr, explore, self.rule_set.as_ref(), metadata);
+                    optimize_expr(runtime_state, ctx, expr, explore, self.rule_set.as_ref(), memo.metadata().get_ref());
                 }
                 Task::ApplyRule {
                     ctx,
@@ -95,7 +95,7 @@ where
                     binding,
                     explore,
                 } => {
-                    apply_rule(runtime_state, memo, ctx, expr, binding, explore, self.rule_set.as_ref(), metadata);
+                    apply_rule(runtime_state, memo, ctx, expr, binding, explore, self.rule_set.as_ref());
                 }
                 Task::EnforceProperties { ctx, expr } => {
                     enforce_properties(runtime_state, memo, ctx, expr, self.rule_set.as_ref());
@@ -339,7 +339,7 @@ fn optimize_expr<R>(
     expr: ExprRef,
     explore: bool,
     rule_set: &R,
-    metadata: &Metadata,
+    metadata: MetadataRef,
 ) where
     R: RuleSet,
 {
@@ -415,7 +415,6 @@ fn apply_rule<R>(
     binding: RuleBinding,
     explore: bool,
     rule_set: &R,
-    metadata: &Metadata,
 ) where
     R: RuleSet,
 {
@@ -433,6 +432,8 @@ fn apply_rule<R>(
 
     let result = {
         let operator = expr.expr();
+        let metadata = memo.metadata().get_ref();
+
         let rule_ctx = RuleContext::new(ctx.required_properties.clone(), metadata);
         rule_set
             .apply_rule(&rule_id, &rule_ctx, operator.as_relational().as_logical())

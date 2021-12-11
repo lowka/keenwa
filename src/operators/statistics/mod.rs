@@ -1,10 +1,10 @@
+//FIXME: Statistics must be a top level module.
+
 use crate::catalog::{Catalog, CatalogRef};
 use crate::error::OptimizerError;
 use crate::meta::{ColumnId, MetadataRef};
-use crate::operators::relational::join::JoinCondition;
-use crate::operators::relational::logical::{LogicalExpr, SetOperator};
-use crate::operators::relational::RelNode;
-use crate::operators::scalar::ScalarNode;
+use crate::operators::relational::logical::LogicalExpr;
+use crate::operators::scalar::ScalarExpr;
 use crate::properties::logical::LogicalProperties;
 use crate::properties::statistics::Statistics;
 use std::fmt::Debug;
@@ -12,10 +12,8 @@ use std::fmt::Debug;
 pub mod simple;
 
 /// Provide statistics
-pub trait StatisticsBuilder: Debug {
+pub trait StatisticsBuilder {
     /// Builds statistics for the given expression.
-    // Pass reference to a metadata.
-    // MemoExprCallback should accept context
     fn build_statistics(
         &self,
         expr: &LogicalExpr,
@@ -33,7 +31,7 @@ impl StatisticsBuilder for NoStatisticsBuilder {
         &self,
         _expr: &LogicalExpr,
         _logical_properties: &LogicalProperties,
-        metadata: MetadataRef,
+        _metadata: MetadataRef,
     ) -> Result<Option<Statistics>, OptimizerError> {
         Ok(None)
     }

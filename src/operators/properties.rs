@@ -10,10 +10,10 @@ use crate::operators::statistics::StatisticsBuilder;
 use crate::operators::{Operator, OperatorExpr, Properties};
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
-use std::fmt::Debug;
+use std::fmt::{Debug, Formatter};
 
 /// Provides logical properties for memo expressions.
-pub trait PropertiesProvider: Debug {
+pub trait PropertiesProvider {
     /// Builds properties for the given expression `expr`. `manual_props` contains properties that
     /// has been added by hand to modify statistics or other properties of the given expression to simplify testing.  
     fn build_properties(
@@ -24,18 +24,20 @@ pub trait PropertiesProvider: Debug {
     ) -> Result<Properties, OptimizerError>;
 }
 
-#[derive(Debug)]
-pub struct LogicalPropertiesBuilder {
-    statistics: Box<dyn StatisticsBuilder>,
+/// Builds logical properties shared by expressions in a memo group.
+pub struct LogicalPropertiesBuilder<T> {
+    statistics: T,
 }
 
-impl LogicalPropertiesBuilder {
-    pub fn new(statistics: Box<dyn StatisticsBuilder>) -> Self {
+impl<T> LogicalPropertiesBuilder<T>
+where
+    T: StatisticsBuilder,
+{
+    /// Creates a new logical properties builder.
+    pub fn new(statistics: T) -> Self {
         LogicalPropertiesBuilder { statistics }
     }
-}
 
-impl LogicalPropertiesBuilder {
     /// Builds logical properties for a get operator.
     pub fn build_get(&self, _source: &str, columns: &[ColumnId]) -> Result<LogicalProperties, OptimizerError> {
         let output_columns = columns.iter().copied().collect();
@@ -46,12 +48,8 @@ impl LogicalPropertiesBuilder {
     pub fn build_select(
         &self,
         input: &RelNode,
-        filter: Option<&ScalarNode>,
+        _filter: Option<&ScalarNode>,
     ) -> Result<LogicalProperties, OptimizerError> {
-        // FIXME: Is this validation really necessary?
-        if let Some(filter) = filter {
-            expect_columns("Select", filter, input)?;
-        };
         Ok(LogicalProperties::new(input.props().logical().output_columns.to_vec(), None))
     }
 
@@ -148,6 +146,15 @@ impl LogicalPropertiesBuilder {
     }
 }
 
+impl<T> Debug for LogicalPropertiesBuilder<T>
+where
+    T: StatisticsBuilder + Debug,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LogicalPropertiesBuilder").field("statistics", &self.statistics).finish()
+    }
+}
+
 // Move to OperatorBuilder
 fn expect_columns(operator: &str, expr: &ScalarNode, input: &RelNode) -> Result<(), OptimizerError> {
     struct ExpectColumns<'a> {
@@ -180,7 +187,10 @@ fn expect_columns(operator: &str, expr: &ScalarNode, input: &RelNode) -> Result<
     visitor.result
 }
 
-impl PropertiesProvider for LogicalPropertiesBuilder {
+impl<T> PropertiesProvider for LogicalPropertiesBuilder<T>
+where
+    T: StatisticsBuilder,
+{
     fn build_properties(
         &self,
         expr: &Operator,

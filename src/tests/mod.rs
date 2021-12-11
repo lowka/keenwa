@@ -125,7 +125,6 @@ fn test_get_ordered_top_level_enforcer() -> Result<(), OptimizerError> {
     let mut tester = OptimizerTester::new();
 
     let builder = tester.builder();
-    builder.set_selectivity("col:a1 > 10", 0.1);
 
     let from_a = builder.get("A", vec!["a1", "a2"])?;
     let select = from_a.select(filter_expr("a1", ScalarValue::Int32(10)))?;
@@ -134,6 +133,7 @@ fn test_get_ordered_top_level_enforcer() -> Result<(), OptimizerError> {
     let query = tester.build_query(select);
 
     tester.set_table_access_cost("A", 100);
+    tester.update_statistics(|p| p.set_selectivity("col:a1 > 10", 0.1));
 
     tester.optimize(
         query,
@@ -151,7 +151,6 @@ fn test_get_ordered_no_top_level_enforcer() -> Result<(), OptimizerError> {
     let mut tester = OptimizerTester::new();
 
     let builder = tester.builder();
-    builder.set_selectivity("col:a1 > 10", 0.1);
 
     let from_a = builder.get("A", vec!["a1", "a2"])?;
     let select = from_a.select(filter_expr("a1", ScalarValue::Int32(10)))?;
@@ -160,6 +159,7 @@ fn test_get_ordered_no_top_level_enforcer() -> Result<(), OptimizerError> {
     let query = tester.build_query(select);
 
     tester.set_table_access_cost("A", 100);
+    tester.update_statistics(|p| p.set_selectivity("col:a1 > 10", 0.1));
 
     tester.explore_with_enforcer(false);
     tester.optimize(
@@ -231,7 +231,6 @@ fn test_join_commutativity_ordered() -> Result<(), OptimizerError> {
     let right = tester.builder().get("B", vec!["b1"])?;
 
     let join = left.join_using(right, vec![("a1", "b1")])?;
-    join.set_selectivity("col:a1 > 10", 0.1);
 
     let select = join.select(filter_expr("a1", ScalarValue::Int32(10)))?;
     let ordered = select.order_by(OrderingOption::by(("a1", false)))?;
@@ -242,6 +241,7 @@ fn test_join_commutativity_ordered() -> Result<(), OptimizerError> {
 
     tester.set_table_access_cost("A", 100);
     tester.set_table_access_cost("B", 110);
+    tester.update_statistics(|p| p.set_selectivity("col:a1 > 10", 0.1));
 
     tester.optimize(
         query,
@@ -512,8 +512,6 @@ fn test_inner_sort_satisfied_by_ordering_providing_operator() -> Result<(), Opti
     let join = left.join_using(right, vec![("a1", "a1")])?;
     let ordered = join.order_by(OrderingOption::by(("a1", false)))?;
 
-    ordered.set_selectivity("col:a1 > 10", 0.1);
-
     let select = ordered.select(filter_expr("a1", ScalarValue::Int32(10)))?;
 
     let query = tester.build_query(select);
@@ -522,6 +520,7 @@ fn test_inner_sort_satisfied_by_ordering_providing_operator() -> Result<(), Opti
 
     tester.set_table_access_cost("A", 100);
     tester.set_table_access_cost("B", 50);
+    tester.update_statistics(|p| p.set_selectivity("col:a1 > 10", 0.1));
 
     tester.optimize(
         query,

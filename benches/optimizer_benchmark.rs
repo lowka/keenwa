@@ -16,7 +16,7 @@ use keenwa::operators::properties::LogicalPropertiesBuilder;
 use keenwa::operators::scalar::expr::BinaryOp;
 use keenwa::operators::scalar::value::ScalarValue;
 use keenwa::operators::scalar::ScalarExpr;
-use keenwa::operators::statistics::simple::SimpleCatalogStatisticsBuilder;
+use keenwa::operators::statistics::simple::{PrecomputedSelectivityStatistics, SimpleCatalogStatisticsBuilder};
 use keenwa::operators::*;
 use keenwa::optimizer::{Optimizer, SetPropertiesCallback};
 use keenwa::properties::physical::PhysicalProperties;
@@ -35,7 +35,7 @@ fn memo_bench(c: &mut Criterion) {
     fn add_benchmark(
         c: &mut Criterion,
         name: &str,
-        f: fn(OperatorBuilder) -> Result<(Operator, Metadata), OptimizerError>,
+        f: fn(OperatorBuilder, &PrecomputedSelectivityStatistics) -> Result<(Operator, Metadata), OptimizerError>,
     ) {
         c.bench_function(format!("optimize_query_{}", name).as_str(), |b| {
             b.iter_custom(|iters| {
@@ -72,8 +72,11 @@ fn memo_bench(c: &mut Criterion) {
                     );
 
                     let metadata = Rc::new(MutableMetadata::new());
-                    let statistics_builder = SimpleCatalogStatisticsBuilder::new(catalog.clone());
-                    let properties_builder = Rc::new(LogicalPropertiesBuilder::new(Box::new(statistics_builder)));
+                    let selectivity_provider = Rc::new(PrecomputedSelectivityStatistics::new());
+
+                    let statistics_builder =
+                        SimpleCatalogStatisticsBuilder::new(catalog.clone(), selectivity_provider.clone());
+                    let properties_builder = Rc::new(LogicalPropertiesBuilder::new(statistics_builder));
 
                     let memoization = Rc::new(MemoizeWithMemo::new(ExprMemo::with_callback(
                         metadata.clone(),
@@ -81,7 +84,8 @@ fn memo_bench(c: &mut Criterion) {
                     )));
                     let operator_builder = OperatorBuilder::new(memoization.clone(), catalog.clone(), metadata);
 
-                    let (query, metadata) = f(operator_builder).expect("Failed to build a query");
+                    let (query, metadata) =
+                        f(operator_builder, selectivity_provider.as_ref()).expect("Failed to build a query");
 
                     // We can retrieve the underlying memoization handler because
                     // the only user of Rc (an operator_builder) has been consumed.
@@ -93,9 +97,7 @@ fn memo_bench(c: &mut Criterion) {
 
                     let optimizer = create_optimizer(catalog.clone());
                     let start = Instant::now();
-                    let optimized_expr = optimizer
-                        .optimize(query, metadata.clone(), &mut memo)
-                        .expect("Failed to optimize a query");
+                    let optimized_expr = optimizer.optimize(query, &mut memo).expect("Failed to optimize a query");
 
                     black_box(optimized_expr);
 
@@ -107,7 +109,10 @@ fn memo_bench(c: &mut Criterion) {
         });
     }
 
-    fn build_query(builder: OperatorBuilder) -> Result<(Operator, Metadata), OptimizerError> {
+    fn build_query(
+        builder: OperatorBuilder,
+        stats: &PrecomputedSelectivityStatistics,
+    ) -> Result<(Operator, Metadata), OptimizerError> {
         let from_a = builder.clone().get("A", vec!["a1"])?;
         let from_b = builder.get("B", vec!["b1"])?;
         let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
@@ -118,7 +123,7 @@ fn memo_bench(c: &mut Criterion) {
             rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Int32(100))),
         };
 
-        join.set_selectivity("col:a1 > 100", 0.1);
+        stats.set_selectivity("col:a1 > 100", 0.1);
 
         let select = join.select(Some(filter))?;
         let order_by = select.order_by(OrderingOption::by(("a1", false)))?;

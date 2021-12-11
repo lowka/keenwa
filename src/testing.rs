@@ -14,7 +14,7 @@ use crate::meta::{Metadata, MutableMetadata};
 use crate::operators::builder::{NoMemoization, OperatorBuilder};
 
 use crate::operators::properties::LogicalPropertiesBuilder;
-use crate::operators::statistics::simple::SimpleCatalogStatisticsBuilder;
+use crate::operators::statistics::simple::{PrecomputedSelectivityStatistics, SimpleCatalogStatisticsBuilder};
 use crate::operators::{ExprMemo, Operator};
 use crate::optimizer::{Optimizer, SetPropertiesCallback};
 use crate::rules::implementation::{GetToScanRule, ProjectionRule, SelectRule};
@@ -30,7 +30,9 @@ static INIT_LOG: Once = Once::new();
 /// [optimizer]: crate::optimizer::Optimizer
 pub struct OptimizerTester {
     catalog: CatalogRef,
-    properties_builder: Rc<LogicalPropertiesBuilder>,
+    selectivity_provider: Rc<PrecomputedSelectivityStatistics>,
+    properties_builder:
+        Rc<LogicalPropertiesBuilder<SimpleCatalogStatisticsBuilder<Rc<PrecomputedSelectivityStatistics>>>>,
     mutable_metadata: Rc<MutableMetadata>,
     rules: Box<dyn Fn(CatalogRef) -> Vec<Box<dyn Rule>>>,
     rules_filter: Box<dyn Fn(&Box<dyn Rule>) -> bool>,
@@ -46,12 +48,14 @@ impl OptimizerTester {
         INIT_LOG.call_once(pretty_env_logger::init);
 
         let catalog = Arc::new(MutableCatalog::new());
-        let statistics_builder = SimpleCatalogStatisticsBuilder::new(catalog.clone());
-        let properties_builder = Rc::new(LogicalPropertiesBuilder::new(Box::new(statistics_builder)));
+        let selectivity_provider = Rc::new(PrecomputedSelectivityStatistics::new());
+        let statistics_builder = SimpleCatalogStatisticsBuilder::new(catalog.clone(), selectivity_provider.clone());
+        let properties_builder = Rc::new(LogicalPropertiesBuilder::new(statistics_builder));
         let mutable_metadata = Rc::new(MutableMetadata::new());
 
         OptimizerTester {
             catalog,
+            selectivity_provider,
             properties_builder,
             mutable_metadata,
             rules: Box::new(|_| Vec::new()),
@@ -101,6 +105,14 @@ impl OptimizerTester {
 
     pub fn set_table_access_cost(&mut self, table: &str, cost: usize) {
         self.table_access_costs.insert(table.into(), cost);
+    }
+
+    //FIXME: Combine with set_table_access_cost
+    pub fn update_statistics<F>(&mut self, f: F)
+    where
+        F: Fn(&PrecomputedSelectivityStatistics),
+    {
+        (f)(self.selectivity_provider.as_ref())
     }
 
     /// Rules that satisfy the given predicate won't be used by the optimizer.
@@ -183,11 +195,10 @@ impl OptimizerTester {
 
         let propagate_properties = SetPropertiesCallback::new(self.properties_builder.clone());
         let memo_callback = Rc::new(propagate_properties);
-        let mut memo = ExprMemo::with_callback(Rc::new(MutableMetadata::new()), memo_callback);
+        let metadata = MutableMetadata::from(metadata);
+        let mut memo = ExprMemo::with_callback(Rc::new(metadata), memo_callback);
 
-        let _opt_expr = optimizer
-            .optimize(operator, metadata, &mut memo)
-            .expect("Failed to optimize an operator tree");
+        let _opt_expr = optimizer.optimize(operator, &mut memo).expect("Failed to optimize an operator tree");
         let expected_lines: Vec<String> = expected_plan.split('\n').map(|l| l.to_string()).collect();
         let label = if expected_plan.starts_with("query:") {
             expected_lines[0].trim()

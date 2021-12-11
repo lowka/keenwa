@@ -22,7 +22,7 @@ use std::rc::Rc;
 pub struct RuleTester {
     rule: Box<dyn Rule>,
     memo: ExprMemo,
-    metadata: Metadata,
+    metadata: MutableMetadata,
 }
 
 impl RuleTester {
@@ -31,23 +31,34 @@ impl RuleTester {
     where
         T: Rule + 'static,
     {
-        let props_builder = LogicalPropertiesBuilder::new(Box::new(NoStatisticsBuilder));
+        struct Callback;
+        impl MemoGroupCallback for Callback {
+            type Expr = Operator;
+            type Props = Properties;
+            type Metadata = OperatorMetadata;
+
+            fn new_group(
+                &self,
+                _expr: &Self::Expr,
+                provided_props: Self::Props,
+                _metadata: &Self::Metadata,
+            ) -> Self::Props {
+                provided_props
+            }
+        }
+
         RuleTester {
             rule: Box::new(rule),
-            memo: ExprMemo::with_callback(Rc::new(MutableMetadata::new()), Rc::new(props_builder)),
-            metadata: Metadata::new(Vec::new()),
+            memo: ExprMemo::with_callback(Rc::new(MutableMetadata::new()), Rc::new(Callback)),
+            metadata: MutableMetadata::new(),
         }
-    }
-
-    pub fn set_metadata(&mut self, metadata: Metadata) {
-        self.metadata = metadata;
     }
 
     /// Attempts to apply the rule to the given expression and then compares the result with the expected value.
     pub fn apply(&mut self, expr: &LogicalExpr, expected: &str) {
         let (_, expr_ref) = self.memo.insert_group(Operator::from(OperatorExpr::from(expr.clone())));
 
-        let ctx = RuleContext::new(PhysicalProperties::none(), &self.metadata);
+        let ctx = RuleContext::new(PhysicalProperties::none(), self.metadata.get_ref());
         let rule_match = self.rule.matches(&ctx, expr);
         assert!(rule_match.is_some(), "Rule does not match: {:?}", self.rule);
 
@@ -261,15 +272,5 @@ impl MemoExprFormatter for FormatExprs<'_> {
         D: Display,
     {
         // values are written by another formatter
-    }
-}
-
-impl MemoGroupCallback for LogicalPropertiesBuilder {
-    type Expr = Operator;
-    type Props = Properties;
-    type Metadata = OperatorMetadata;
-
-    fn new_group(&self, _expr: &Self::Expr, provided_props: Self::Props, _metadata: &Self::Metadata) -> Self::Props {
-        provided_props
     }
 }
