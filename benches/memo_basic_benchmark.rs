@@ -62,7 +62,7 @@ impl MemoExpr for TestOperator {
         &self.props
     }
 
-    fn copy_in(&self, ctx: &mut CopyInExprs<Self>) {
+    fn copy_in<T>(&self, ctx: &mut CopyInExprs<Self, T>) {
         let mut expr_ctx = ctx.enter_expr(self);
         match self.expr() {
             TestExpr::Scan { .. } => {}
@@ -141,7 +141,7 @@ fn memo_bench(c: &mut Criterion) {
 
     c.bench_function("memo_basic_query1", |b| {
         b.iter(|| {
-            let mut memo = Memo::new();
+            let mut memo = Memo::new(());
             let query = TestOperator::from(query.clone());
             let (group, _) = memo.insert(query);
             black_box(group);
@@ -152,7 +152,7 @@ fn memo_bench(c: &mut Criterion) {
 
     c.bench_function("memo_basic_query2", |b| {
         b.iter(|| {
-            let mut memo = Memo::new();
+            let mut memo = Memo::new(());
             let query = TestOperator::from(query.clone());
             let (group, _) = memo.insert(query);
             black_box(group);

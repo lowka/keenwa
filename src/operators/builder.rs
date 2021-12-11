@@ -777,7 +777,7 @@ mod test {
     use crate::operators::scalar::expr::{AggregateFunction, BinaryOp};
     use crate::operators::scalar::value::ScalarValue;
     use crate::operators::scalar::ScalarExpr;
-    use crate::operators::{ExprMemo, Operator};
+    use crate::operators::{ExprMemo, Operator, OperatorMetadata};
     use crate::properties::logical::LogicalProperties;
     use crate::properties::statistics::Statistics;
 
@@ -791,10 +791,13 @@ mod test {
 
     #[test]
     fn test_get() {
-        let memoization = memoization();
-        let (expr, metadata) =
-            build_tree(memoization.clone(), |operator_builder| Ok(operator_builder.get("A", vec!["a1"])?.build()))
-                .unwrap();
+        let metadata = Rc::new(MutableMetadata::new());
+        let memoization = memoization(metadata.clone());
+
+        let (expr, metadata) = build_tree(metadata, memoization.clone(), |operator_builder| {
+            Ok(operator_builder.get("A", vec!["a1"])?.build())
+        })
+        .unwrap();
 
         expect_expr(
             memoization,
@@ -813,8 +816,10 @@ Memo:
 
     #[test]
     fn test_get_order_by() {
-        let memoization = memoization();
-        let (expr, metadata) = build_tree(memoization.clone(), |operator_builder| {
+        let metadata = Rc::new(MutableMetadata::new());
+        let memoization = memoization(metadata.clone());
+
+        let (expr, metadata) = build_tree(metadata, memoization.clone(), |operator_builder| {
             let ord = OrderingOption::by(("a1", false));
             let tree = operator_builder.get("A", vec!["a1"])?.order_by(ord)?;
 
@@ -840,8 +845,10 @@ Memo:
 
     #[test]
     fn test_select() {
-        let memoization = memoization();
-        let (expr, metadata) = build_tree(memoization.clone(), |operator_builder| {
+        let metadata = Rc::new(MutableMetadata::new());
+        let memoization = memoization(metadata.clone());
+
+        let (expr, metadata) = build_tree(metadata, memoization.clone(), |operator_builder| {
             let filter = ScalarExpr::BinaryExpr {
                 lhs: Box::new(ScalarExpr::ColumnName("a1".into())),
                 op: BinaryOp::Gt,
@@ -874,8 +881,10 @@ Memo:
 
     #[test]
     fn test_projection() {
-        let memoization = memoization();
-        let (expr, metadata) = build_tree(memoization.clone(), |operator_builder| {
+        let metadata = Rc::new(MutableMetadata::new());
+        let memoization = memoization(metadata.clone());
+
+        let (expr, metadata) = build_tree(metadata, memoization.clone(), |operator_builder| {
             let projection_list =
                 vec![ScalarExpr::ColumnName("a2".into()), ScalarExpr::Scalar(ScalarValue::Int32(100))];
 
@@ -904,8 +913,10 @@ Memo:
 
     #[test]
     fn test_projection_of_projection() {
-        let memoization = memoization();
-        let (expr, metadata) = build_tree(memoization.clone(), |operator_builder| {
+        let metadata = Rc::new(MutableMetadata::new());
+        let memoization = memoization(metadata.clone());
+
+        let (expr, metadata) = build_tree(metadata, memoization.clone(), |operator_builder| {
             let projection_list1 = vec![
                 ScalarExpr::ColumnName("a2".into()),
                 ScalarExpr::Scalar(ScalarValue::Int32(100)),
@@ -945,8 +956,10 @@ Memo:
 
     #[test]
     fn test_join() {
-        let memoization = memoization();
-        let (expr, metadata) = build_tree(memoization.clone(), |operator_builder| {
+        let metadata = Rc::new(MutableMetadata::new());
+        let memoization = memoization(metadata.clone());
+
+        let (expr, metadata) = build_tree(metadata, memoization.clone(), |operator_builder| {
             let left = operator_builder.clone().get("A", vec!["a1", "a2"])?;
             let right = operator_builder.get("B", vec!["b1", "b2"])?;
             let join = left.join_using(right, vec![("a1", "b2")])?;
@@ -979,8 +992,10 @@ Memo:
 
     #[test]
     fn test_nested() {
-        let memoization = memoization();
-        let (expr, metadata) = build_tree(memoization.clone(), |operator_builder| {
+        let metadata = Rc::new(MutableMetadata::new());
+        let memoization = memoization(metadata.clone());
+
+        let (expr, metadata) = build_tree(metadata, memoization.clone(), |operator_builder| {
             let from_a = operator_builder.get("A", vec!["a1", "a2"])?;
 
             let expr = ScalarExpr::Aggregate {
@@ -1033,8 +1048,10 @@ Memo:
 
     #[test]
     fn test_prohibit_nested_sub_queries_not_created_via_sub_query_builder() {
-        let memoization = memoization();
-        let err = build_tree(memoization.clone(), |operator_builder| {
+        let metadata = Rc::new(MutableMetadata::new());
+        let memoization = memoization(metadata.clone());
+
+        let err = build_tree(metadata, memoization.clone(), |operator_builder| {
             let _from_a = operator_builder.clone().get("A", vec!["a1", "a2"])?;
 
             let _expr = ScalarExpr::Aggregate {
@@ -1051,7 +1068,11 @@ Memo:
         assert!(err.is_err(), "Created sub query from a non sub query build");
     }
 
-    fn build_tree<F, T>(memoization: Rc<dyn MemoizationHandler>, mut f: F) -> Result<T, OptimizerError>
+    fn build_tree<F, T>(
+        metadata: OperatorMetadata,
+        memoization: Rc<dyn MemoizationHandler>,
+        mut f: F,
+    ) -> Result<T, OptimizerError>
     where
         F: FnMut(OperatorBuilder) -> Result<T, OptimizerError>,
     {
@@ -1074,16 +1095,16 @@ Memo:
                 .add_column("b3", DataType::Int32)
                 .build(),
         );
-        let metadata = Rc::new(MutableMetadata::new());
         let operator_builder = OperatorBuilder::new(memoization, catalog, metadata);
         (f)(operator_builder)
     }
 
-    fn memoization() -> Rc<MemoizeWithMemo> {
+    fn memoization(metadata: OperatorMetadata) -> Rc<MemoizeWithMemo> {
         let properties_builder = Rc::new(LogicalPropertiesBuilder::new(Box::new(NoStatisticsBuilder)));
-        Rc::new(MemoizeWithMemo::new(ExprMemo::with_callback(Rc::new(SetPropertiesCallback::new(
-            properties_builder.clone(),
-        )))))
+        Rc::new(MemoizeWithMemo::new(ExprMemo::with_callback(
+            metadata,
+            Rc::new(SetPropertiesCallback::new(properties_builder.clone())),
+        )))
     }
 
     fn expect_expr(memoization: Rc<MemoizeWithMemo>, expr: Operator, metadata: Metadata, expected: &str) {

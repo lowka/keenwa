@@ -183,7 +183,7 @@ impl OptimizerTester {
 
         let propagate_properties = SetPropertiesCallback::new(self.properties_builder.clone());
         let memo_callback = Rc::new(propagate_properties);
-        let mut memo = ExprMemo::with_callback(memo_callback);
+        let mut memo = ExprMemo::with_callback(Rc::new(MutableMetadata::new()), memo_callback);
 
         let _opt_expr = optimizer
             .optimize(operator, metadata, &mut memo)

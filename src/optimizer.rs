@@ -11,7 +11,9 @@ use crate::meta::Metadata;
 use crate::operators::properties::PropertiesProvider;
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::expr_with_new_inputs;
-use crate::operators::{ExprMemo, ExprRef, GroupRef, Operator, OperatorExpr, OperatorInputs, Properties};
+use crate::operators::{
+    ExprMemo, ExprRef, GroupRef, Operator, OperatorExpr, OperatorInputs, OperatorMetadata, Properties,
+};
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
 use crate::rules::{RuleContext, RuleId, RuleMatch, RuleResult, RuleSet, RuleType};
@@ -166,12 +168,13 @@ where
 {
     type Expr = Operator;
     type Props = Properties;
+    type Metadata = OperatorMetadata;
 
-    fn new_expr(&self, expr: &Self::Expr, props: Self::Props) -> Self::Props {
+    fn new_expr(&self, expr: &Self::Expr, props: Self::Props, metadata: &Self::Metadata) -> Self::Props {
         // Every time a new expression is added into a memo we need to compute logical properties of that expression.
         let properties = self
             .properties_provider
-            .build_properties(expr, props)
+            .build_properties(expr, props, metadata.get_ref())
             // If we has not been able to assemble logical properties for the given expression
             // than something has gone terribly wrong and we have no other option but to unwrap an error.
             .expect("Failed to build logical properties");

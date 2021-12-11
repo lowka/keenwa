@@ -122,7 +122,7 @@ impl TestScalarExpr {
         }
     }
 
-    fn copy_in_nested(&self, visitor: &mut CopyInNestedExprs<TestOperator>) {
+    fn copy_in_nested<T>(&self, visitor: &mut CopyInNestedExprs<TestOperator, T>) {
         match self {
             TestScalarExpr::Value(_) => {}
             TestScalarExpr::Gt { lhs, rhs } => {
@@ -136,11 +136,11 @@ impl TestScalarExpr {
     }
 }
 
-struct TraversalWrapper<'c, 'm> {
-    ctx: &'c mut CopyInExprs<'m, TestOperator>,
+struct TraversalWrapper<'c, 'm, T> {
+    ctx: &'c mut CopyInExprs<'m, TestOperator, T>,
 }
 
-impl TraversalWrapper<'_, '_> {
+impl<T> TraversalWrapper<'_, '_, T> {
     fn enter_expr(&mut self, expr: &TestOperator) -> ExprContext<TestOperator> {
         self.ctx.enter_expr(expr)
     }
@@ -155,7 +155,7 @@ impl TraversalWrapper<'_, '_> {
 
     fn copy_in_nested(&mut self, expr_ctx: &mut ExprContext<TestOperator>, expr: &TestScalarExpr) {
         let visitor = CopyInNestedExprs::new(self.ctx, expr_ctx);
-        visitor.execute(expr, |expr, c: &mut CopyInNestedExprs<TestOperator>| {
+        visitor.execute(expr, |expr, c: &mut CopyInNestedExprs<TestOperator, T>| {
             expr.copy_in_nested(c);
         })
     }
@@ -190,7 +190,7 @@ impl MemoExpr for TestOperator {
         &self.props
     }
 
-    fn copy_in(&self, ctx: &mut CopyInExprs<Self>) {
+    fn copy_in<T>(&self, ctx: &mut CopyInExprs<Self, T>) {
         let mut ctx = TraversalWrapper { ctx };
         let mut expr_ctx = ctx.enter_expr(self);
         match self.expr() {
@@ -325,7 +325,7 @@ fn memo_bench(c: &mut Criterion) {
 
     c.bench_function("memo_rel_scalar_query1", |b| {
         b.iter(|| {
-            let mut memo = Memo::new();
+            let mut memo = Memo::new(());
             let query = TestOperator::from(query.clone());
             let (group, _) = memo.insert(query);
             black_box(group);
@@ -336,7 +336,7 @@ fn memo_bench(c: &mut Criterion) {
 
     c.bench_function("memo_rel_scalar_query2", |b| {
         b.iter(|| {
-            let mut memo = Memo::new();
+            let mut memo = Memo::new(());
             let query = TestOperator::from(query.clone());
             let (group, _) = memo.insert(query);
             black_box(group);

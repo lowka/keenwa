@@ -136,6 +136,11 @@ impl MutableMetadata {
         })
     }
 
+    /// Returns a reference to a this metadata. A reference provides read-view into this metadata.
+    pub fn get_ref(&self) -> MetadataRef<'_> {
+        MetadataRef { metadata: self }
+    }
+
     /// Converts this instance to a immutable [metadata](self::Metadata).
     pub fn to_metadata(self) -> Metadata {
         let inner = self.inner.borrow();
@@ -152,4 +157,20 @@ impl MutableMetadata {
 #[derive(Debug, Clone, Default)]
 struct MutableMetadataInner {
     columns: Vec<ColumnMetadata>,
+}
+
+/// A read-only view into this metadata.
+pub struct MetadataRef<'a> {
+    metadata: &'a MutableMetadata,
+}
+
+impl<'a> MetadataRef<'a> {
+    /// Returns column metadata for the given column id.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if there is no metadata for the given column.
+    pub fn get_column(&self, column_id: &ColumnId) -> Ref<'_, ColumnMetadata> {
+        self.metadata.get_column(column_id)
+    }
 }

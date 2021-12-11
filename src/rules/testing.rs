@@ -1,12 +1,12 @@
 use crate::error::OptimizerError;
 use crate::memo::{ExprNodeRef, MemoExpr, MemoExprCallback, MemoExprFormatter, StringMemoFormatter};
-use crate::meta::Metadata;
+use crate::meta::{Metadata, MutableMetadata};
 use crate::operators::properties::LogicalPropertiesBuilder;
 use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::relational::RelNode;
 use crate::operators::statistics::{NoStatisticsBuilder, StatisticsBuilder};
-use crate::operators::{ExprMemo, Operator, OperatorExpr, Properties};
+use crate::operators::{ExprMemo, Operator, OperatorExpr, OperatorMetadata, Properties};
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::statistics::Statistics;
@@ -34,7 +34,7 @@ impl RuleTester {
         let props_builder = LogicalPropertiesBuilder::new(Box::new(NoStatisticsBuilder));
         RuleTester {
             rule: Box::new(rule),
-            memo: ExprMemo::with_callback(Rc::new(props_builder)),
+            memo: ExprMemo::with_callback(Rc::new(MutableMetadata::new()), Rc::new(props_builder)),
             metadata: Metadata::new(Vec::new()),
         }
     }
@@ -267,8 +267,9 @@ impl MemoExprFormatter for FormatExprs<'_> {
 impl MemoExprCallback for LogicalPropertiesBuilder {
     type Expr = Operator;
     type Props = Properties;
+    type Metadata = OperatorMetadata;
 
-    fn new_expr(&self, _expr: &Self::Expr, props: Self::Props) -> Self::Props {
+    fn new_expr(&self, _expr: &Self::Expr, props: Self::Props, _metadata: &Self::Metadata) -> Self::Props {
         props
     }
 }

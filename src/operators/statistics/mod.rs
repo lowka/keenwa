@@ -1,6 +1,6 @@
 use crate::catalog::{Catalog, CatalogRef};
 use crate::error::OptimizerError;
-use crate::meta::ColumnId;
+use crate::meta::{ColumnId, MetadataRef};
 use crate::operators::relational::join::JoinCondition;
 use crate::operators::relational::logical::{LogicalExpr, SetOperator};
 use crate::operators::relational::RelNode;
@@ -19,7 +19,8 @@ pub trait StatisticsBuilder: Debug {
     fn build_statistics(
         &self,
         expr: &LogicalExpr,
-        _logical_properties: &LogicalProperties,
+        logical_properties: &LogicalProperties,
+        metadata: MetadataRef,
     ) -> Result<Option<Statistics>, OptimizerError>;
 }
 
@@ -32,6 +33,7 @@ impl StatisticsBuilder for NoStatisticsBuilder {
         &self,
         _expr: &LogicalExpr,
         _logical_properties: &LogicalProperties,
+        metadata: MetadataRef,
     ) -> Result<Option<Statistics>, OptimizerError> {
         Ok(None)
     }

@@ -1,5 +1,5 @@
 use crate::error::OptimizerError;
-use crate::meta::ColumnId;
+use crate::meta::{ColumnId, MetadataRef};
 use crate::operators::relational::join::JoinCondition;
 use crate::operators::relational::logical::{LogicalExpr, SetOperator};
 use crate::operators::relational::physical::PhysicalExpr;
@@ -16,7 +16,12 @@ use std::fmt::Debug;
 pub trait PropertiesProvider: Debug {
     /// Builds properties for the given expression `expr`. `manual_props` contains properties that
     /// has been added by hand to modify statistics or other properties of the given expression to simplify testing.  
-    fn build_properties(&self, expr: &Operator, manual_props: Properties) -> Result<Properties, OptimizerError>;
+    fn build_properties(
+        &self,
+        expr: &Operator,
+        manual_props: Properties,
+        metadata: MetadataRef,
+    ) -> Result<Properties, OptimizerError>;
 }
 
 #[derive(Debug)]
@@ -176,7 +181,12 @@ fn expect_columns(operator: &str, expr: &ScalarNode, input: &RelNode) -> Result<
 }
 
 impl PropertiesProvider for LogicalPropertiesBuilder {
-    fn build_properties(&self, expr: &Operator, manual_props: Properties) -> Result<Properties, OptimizerError> {
+    fn build_properties(
+        &self,
+        expr: &Operator,
+        manual_props: Properties,
+        metadata: MetadataRef,
+    ) -> Result<Properties, OptimizerError> {
         let Properties { logical, required } = manual_props;
         let statistics = logical.statistics;
         match expr.expr() {
@@ -210,7 +220,7 @@ impl PropertiesProvider for LogicalPropertiesBuilder {
                     } => self.build_except(left, right, *all, columns),
                 }?;
                 let logical = LogicalProperties::new(output_columns, None);
-                let statistics = self.statistics.build_statistics(expr, &logical)?;
+                let statistics = self.statistics.build_statistics(expr, &logical, metadata)?;
                 let logical = if let Some(statistics) = statistics {
                     logical.with_statistics(statistics)
                 } else {

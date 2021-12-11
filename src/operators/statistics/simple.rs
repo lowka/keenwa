@@ -1,6 +1,6 @@
 use crate::catalog::{Catalog, CatalogRef};
 use crate::error::OptimizerError;
-use crate::meta::ColumnId;
+use crate::meta::{ColumnId, MetadataRef};
 use crate::operators::relational::join::JoinCondition;
 use crate::operators::relational::logical::{LogicalExpr, SetOperator};
 use crate::operators::relational::RelNode;
@@ -107,6 +107,7 @@ impl StatisticsBuilder for SimpleCatalogStatisticsBuilder {
         &self,
         expr: &LogicalExpr,
         _logical: &LogicalProperties,
+        metadata: MetadataRef,
     ) -> Result<Option<Statistics>, OptimizerError> {
         match expr {
             LogicalExpr::Projection { input, columns, .. } => self.build_projection(input, columns),
@@ -141,6 +142,7 @@ mod test {
     use crate::catalog::mutable::MutableCatalog;
     use crate::catalog::TableBuilder;
     use crate::datatypes::DataType;
+    use crate::meta::{Metadata, MutableMetadata};
     use crate::operators::relational::logical::LogicalExpr;
     use crate::operators::scalar::expr::AggregateFunction;
     use crate::operators::scalar::{ScalarExpr, ScalarNode};
@@ -260,9 +262,10 @@ mod test {
         fn expect_statistics(&self, expr: &LogicalExpr, expected: Option<Statistics>) {
             // At the moment logical properties are not used when statistics are computed.
             let logical_properties = LogicalProperties::new(vec![], None);
+            let metadata = MutableMetadata::new();
             let actual = self
                 .statistics_builder
-                .build_statistics(expr, &logical_properties)
+                .build_statistics(expr, &logical_properties, metadata.get_ref())
                 .expect("Failed to compute statistics");
             match expected {
                 None => assert!(actual.is_none(), "Expected no statistics but got: {:?}. Operator: {:?}", actual, expr),

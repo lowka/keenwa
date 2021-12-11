@@ -75,9 +75,10 @@ fn memo_bench(c: &mut Criterion) {
                     let statistics_builder = SimpleCatalogStatisticsBuilder::new(catalog.clone());
                     let properties_builder = Rc::new(LogicalPropertiesBuilder::new(Box::new(statistics_builder)));
 
-                    let memoization = Rc::new(MemoizeWithMemo::new(ExprMemo::with_callback(Rc::new(
-                        SetPropertiesCallback::new(properties_builder.clone()),
-                    ))));
+                    let memoization = Rc::new(MemoizeWithMemo::new(ExprMemo::with_callback(
+                        metadata.clone(),
+                        Rc::new(SetPropertiesCallback::new(properties_builder.clone())),
+                    )));
                     let operator_builder = OperatorBuilder::new(memoization.clone(), catalog.clone(), metadata);
 
                     let (query, metadata) = f(operator_builder).expect("Failed to build a query");

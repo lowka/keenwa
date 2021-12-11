@@ -61,7 +61,7 @@ pub enum LogicalExpr {
 }
 
 impl LogicalExpr {
-    pub(crate) fn traverse(&self, visitor: &mut OperatorCopyIn, expr_ctx: &mut ExprContext<Operator>) {
+    pub(crate) fn traverse<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
         match self {
             LogicalExpr::Projection { input, .. } => {
                 visitor.visit_rel(expr_ctx, input);

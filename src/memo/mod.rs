@@ -20,7 +20,7 @@ use std::{
 /// The optimizer guarantees that references to both memo groups and memo expressions never outlive the memo they are referencing.
 // TODO: Examples
 // TODO: add generic implementation of a copy-out method.
-pub struct Memo<T>
+pub struct Memo<T, D>
 where
     T: MemoExpr,
 {
@@ -28,42 +28,44 @@ where
     exprs: Store<MemoExprData<T>>,
     expr_cache: HashMap<String, ExprId>,
     expr_to_group: HashMap<ExprId, GroupId>,
+    metadata: D,
     // TODO: NoOpCallback
-    callback: Option<Rc<dyn MemoExprCallback<Expr = T, Props = T::Props>>>,
+    callback: Option<Rc<dyn MemoExprCallback<Expr = T, Props = T::Props, Metadata = D>>>,
 }
 
 /// The number of elements per store page.
 const PAGE_SIZE: usize = 8;
 
-impl<T> Memo<T>
+impl<T, D> Memo<T, D>
 where
     T: MemoExpr,
 {
     /// Creates a new memo.
-    pub fn new() -> Self {
+    pub fn new(metadata: D) -> Self {
         Memo {
             groups: Store::new(PAGE_SIZE),
             exprs: Store::new(PAGE_SIZE),
             expr_cache: HashMap::new(),
             expr_to_group: HashMap::new(),
+            metadata,
             callback: None,
         }
     }
 
     /// Creates a new memo with the given callback.
-    pub fn with_callback(callback: Rc<dyn MemoExprCallback<Expr = T, Props = T::Props>>) -> Self {
+    pub fn with_callback(
+        metadata: D,
+        callback: Rc<dyn MemoExprCallback<Expr = T, Props = T::Props, Metadata = D>>,
+    ) -> Self {
         //TODO: Unit test for a Memo with a callback.
         Memo {
             groups: Store::new(PAGE_SIZE),
             exprs: Store::new(PAGE_SIZE),
             expr_cache: HashMap::new(),
             expr_to_group: HashMap::new(),
+            metadata,
             callback: Some(callback),
         }
-    }
-
-    pub fn set_callback(&mut self, callback: Option<Rc<dyn MemoExprCallback<Expr = T, Props = T::Props>>>) {
-        self.callback = callback;
     }
 
     /// Copies the expression `expr` into this memo.
@@ -129,15 +131,17 @@ where
     }
 }
 
-impl<T> Debug for Memo<T>
+impl<T, D> Debug for Memo<T, D>
 where
     T: MemoExpr,
+    D: Debug,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Memo")
             .field("groups", &self.groups)
             .field("exprs", &self.exprs)
             .field("expr_to_group", &self.expr_to_group)
+            .field("data", &self.metadata)
             .finish()
     }
 }
@@ -156,7 +160,7 @@ pub trait MemoExpr: Debug + Clone {
     fn props(&self) -> &Self::Props;
 
     /// Recursively traverses this expression and copies it into a memo.
-    fn copy_in(&self, visitor: &mut CopyInExprs<Self>);
+    fn copy_in<T>(&self, visitor: &mut CopyInExprs<Self, T>);
 
     /// Creates a new expression from this expression by replacing its child expressions with the new ones.
     fn with_new_children(&self, children: NewChildExprs<Self>) -> Self;
@@ -180,11 +184,13 @@ pub trait MemoExprCallback: Debug {
     type Expr: MemoExpr;
     /// The type of properties of the expression.
     type Props: Properties;
+    /// The type of metadata stored by memo.
+    type Metadata;
 
     /// Called when the given expression `expr` with properties `props` is added to a memo.
     //FIXME: rename to new_group
     //FIXME: should accept a context to pass metadata and other extra stuff.
-    fn new_expr(&self, expr: &Self::Expr, props: Self::Props) -> Self::Props;
+    fn new_expr(&self, expr: &Self::Expr, props: Self::Props, metadata: &Self::Metadata) -> Self::Props;
 }
 
 /// `ExprNode` represents an expression in within an expression tree. A node can be an expression or a memo group.
@@ -588,21 +594,21 @@ where
 }
 
 /// Provides methods to traverse an expression tree and copy it into a memo.
-pub struct CopyInExprs<'a, T>
+pub struct CopyInExprs<'a, T, D>
 where
     T: MemoExpr,
 {
-    memo: &'a mut Memo<T>,
+    memo: &'a mut Memo<T, D>,
     parent: Option<MemoGroupRef<T>>,
     depth: usize,
     result: Option<(MemoGroupRef<T>, MemoExprRef<T>)>,
 }
 
-impl<'a, T> CopyInExprs<'a, T>
+impl<'a, T, D> CopyInExprs<'a, T, D>
 where
     T: MemoExpr,
 {
-    fn new(memo: &'a mut Memo<T>, parent: Option<MemoGroupRef<T>>, depth: usize) -> Self {
+    fn new(memo: &'a mut Memo<T, D>, parent: Option<MemoGroupRef<T>>, depth: usize) -> Self {
         CopyInExprs {
             memo,
             parent,
@@ -708,7 +714,7 @@ where
             } else {
                 let group_id = GroupId(self.memo.groups.next_id());
                 let props = if let Some(callback) = self.memo.callback.as_ref() {
-                    callback.new_expr(&expr, props)
+                    callback.new_expr(&expr, props, &self.memo.metadata)
                 } else {
                     props
                 };
@@ -830,21 +836,21 @@ where
 /// Provides methods to collect nested expressions from an expression and copy them into a memo.
 /// Can be used to support nested relational expressions inside scalar expressions.
 //TODO: Examples
-pub struct CopyInNestedExprs<'a, 'c, T>
+pub struct CopyInNestedExprs<'a, 'c, T, D>
 where
     T: MemoExpr,
 {
-    ctx: &'c mut CopyInExprs<'a, T>,
+    ctx: &'c mut CopyInExprs<'a, T, D>,
     expr_ctx: &'c mut ExprContext<T>,
     nested_exprs: Vec<MemoGroupRef<T>>,
 }
 
-impl<'a, 'c, T> CopyInNestedExprs<'a, 'c, T>
+impl<'a, 'c, T, D> CopyInNestedExprs<'a, 'c, T, D>
 where
     T: MemoExpr,
 {
     /// Creates a new nested expression collector.
-    pub fn new(ctx: &'c mut CopyInExprs<'a, T>, expr_ctx: &'c mut ExprContext<T>) -> Self {
+    pub fn new(ctx: &'c mut CopyInExprs<'a, T, D>, expr_ctx: &'c mut ExprContext<T>) -> Self {
         CopyInNestedExprs {
             ctx,
             expr_ctx,
@@ -882,16 +888,16 @@ where
     }
 }
 
-struct CopyIn<'a, T>
+struct CopyIn<'a, T, D>
 where
     T: MemoExpr,
 {
-    memo: &'a mut Memo<T>,
+    memo: &'a mut Memo<T, D>,
     parent: Option<MemoGroupRef<T>>,
     depth: usize,
 }
 
-impl<'a, T> CopyIn<'a, T>
+impl<'a, T, D> CopyIn<'a, T, D>
 where
     T: MemoExpr,
 {
@@ -903,7 +909,7 @@ where
 }
 
 /// Builds a textual representation of the given memo.
-pub(crate) fn format_memo<T>(memo: &Memo<T>) -> String
+pub(crate) fn format_memo<T, D>(memo: &Memo<T, D>) -> String
 where
     T: MemoExpr,
 {
@@ -1252,7 +1258,7 @@ mod test {
             }
         }
 
-        fn copy_in_nested(&self, collector: &mut CopyInNestedExprs<TestOperator>) {
+        fn copy_in_nested<D>(&self, collector: &mut CopyInNestedExprs<TestOperator, D>) {
             match self {
                 TestScalarExpr::Value(_) => {}
                 TestScalarExpr::Gt { lhs, rhs } => {
@@ -1286,11 +1292,11 @@ mod test {
         }
     }
 
-    struct TraversalWrapper<'c, 'm> {
-        ctx: &'c mut CopyInExprs<'m, TestOperator>,
+    struct TraversalWrapper<'c, 'm, D> {
+        ctx: &'c mut CopyInExprs<'m, TestOperator, D>,
     }
 
-    impl TraversalWrapper<'_, '_> {
+    impl<D> TraversalWrapper<'_, '_, D> {
         fn enter_expr(&mut self, expr: &TestOperator) -> ExprContext<TestOperator> {
             self.ctx.enter_expr(expr)
         }
@@ -1306,7 +1312,7 @@ mod test {
         fn copy_in_nested(&mut self, expr_ctx: &mut ExprContext<TestOperator>, expr: &TestOperator) {
             let nested_ctx = CopyInNestedExprs::new(self.ctx, expr_ctx);
             let scalar = expr.expr().as_scalar();
-            nested_ctx.execute(scalar, |expr, collect: &mut CopyInNestedExprs<TestOperator>| {
+            nested_ctx.execute(scalar, |expr, collect: &mut CopyInNestedExprs<TestOperator, D>| {
                 expr.copy_in_nested(collect);
             })
         }
@@ -1359,7 +1365,7 @@ mod test {
             &self.props
         }
 
-        fn copy_in(&self, ctx: &mut CopyInExprs<Self>) {
+        fn copy_in<T>(&self, ctx: &mut CopyInExprs<Self, T>) {
             let mut ctx = TraversalWrapper { ctx };
             let mut expr_ctx = ctx.enter_expr(self);
             match self.expr() {
@@ -1447,7 +1453,7 @@ mod test {
 
     #[test]
     fn test_basics() {
-        let mut memo = Memo::new();
+        let mut memo = new_memo();
         let expr = TestOperator::from(TestRelExpr::Leaf("aaaa")).with_props(100);
         let (group, expr) = memo.insert(expr);
 
@@ -1473,7 +1479,7 @@ mod test {
 
     #[test]
     fn test_properties() {
-        let mut memo = Memo::new();
+        let mut memo = new_memo();
 
         let leaf = TestOperator::from(TestRelExpr::Leaf("a")).with_props(10);
         let inner = TestOperator::from(TestRelExpr::Node { input: leaf.into() }).with_props(15);
@@ -1495,7 +1501,7 @@ mod test {
 
     #[test]
     fn test_child_expr() {
-        let mut memo = Memo::new();
+        let mut memo = new_memo();
 
         let leaf = TestOperator::from(TestRelExpr::Leaf("a")).with_props(10);
         let expr = TestOperator::from(TestRelExpr::Node {
@@ -1518,7 +1524,7 @@ mod test {
 
     #[test]
     fn test_memo_trivial_expr() {
-        let mut memo = Memo::new();
+        let mut memo = new_memo();
 
         let expr = TestOperator::from(TestRelExpr::Leaf("a"));
         let (group1, expr1) = memo.insert(expr.clone());
@@ -1540,7 +1546,7 @@ mod test {
 
     #[test]
     fn test_memo_node_leaf_expr() {
-        let mut memo = Memo::new();
+        let mut memo = new_memo();
 
         let expr = TestOperator::from(TestRelExpr::Node {
             input: TestOperator::from(TestRelExpr::Leaf("a")).into(),
@@ -1563,7 +1569,7 @@ mod test {
 
     #[test]
     fn test_memo_node_multiple_leaves() {
-        let mut memo = Memo::new();
+        let mut memo = new_memo();
 
         let expr = TestOperator::from(TestRelExpr::Nodes {
             inputs: vec![
@@ -1592,7 +1598,7 @@ mod test {
 
     #[test]
     fn test_memo_node_nested_duplicates() {
-        let mut memo = Memo::new();
+        let mut memo = new_memo();
 
         let expr = TestOperator::from(TestRelExpr::Nodes {
             inputs: vec![
@@ -1629,7 +1635,7 @@ mod test {
 
     #[test]
     fn test_memo_node_duplicate_leaves() {
-        let mut memo = Memo::new();
+        let mut memo = new_memo();
 
         let expr = TestOperator::from(TestRelExpr::Nodes {
             inputs: vec![
@@ -1659,7 +1665,7 @@ mod test {
 
     #[test]
     fn test_insert_member() {
-        let mut memo = Memo::new();
+        let mut memo = new_memo();
 
         let expr = TestOperator::from(TestRelExpr::Leaf("a"));
 
@@ -1685,7 +1691,7 @@ mod test {
 
     #[test]
     fn test_insert_member_to_a_leaf_group() {
-        let mut memo = Memo::new();
+        let mut memo = new_memo();
 
         let expr = TestOperator::from(TestRelExpr::Node {
             input: TestOperator::from(TestRelExpr::Leaf("a")).into(),
@@ -1715,7 +1721,7 @@ mod test {
 
     #[test]
     fn test_insert_member_to_the_top_group() {
-        let mut memo = Memo::new();
+        let mut memo = new_memo();
 
         let expr = TestOperator::from(TestRelExpr::Node {
             input: TestOperator::from(TestRelExpr::Leaf("a")).into(),
@@ -1748,8 +1754,8 @@ mod test {
 
     #[test]
     fn test_memo_debug_formatting() {
-        let mut memo = Memo::new();
-        assert_eq!(format!("{:?}", memo), "Memo { groups: [], exprs: [], expr_to_group: {} }");
+        let mut memo = new_memo();
+        assert_eq!(format!("{:?}", memo), "Memo { groups: [], exprs: [], expr_to_group: {}, data: () }");
 
         let expr = TestOperator::from(TestRelExpr::Leaf("a"));
         let (group, expr) = memo.insert(expr);
@@ -1776,7 +1782,7 @@ mod test {
             props: Default::default(),
         };
 
-        let mut memo = Memo::new();
+        let mut memo = new_memo();
         let _ = memo.insert(expr);
 
         expect_memo(
@@ -1811,7 +1817,7 @@ mod test {
             filter: filter_expr.into(),
         });
 
-        let mut memo = Memo::new();
+        let mut memo = new_memo();
         let (group, _) = memo.insert(expr);
 
         expect_memo(
@@ -1847,7 +1853,7 @@ mod test {
             filter: filter_expr.into(),
         });
 
-        let mut memo = Memo::new();
+        let mut memo = new_memo();
         let (_, _) = memo.insert(expr);
 
         expect_memo(
@@ -1872,8 +1878,9 @@ mod test {
         impl MemoExprCallback for Callback {
             type Expr = TestOperator;
             type Props = TestProps;
+            type Metadata = ();
 
-            fn new_expr(&self, expr: &Self::Expr, props: Self::Props) -> Self::Props {
+            fn new_expr(&self, expr: &Self::Expr, props: Self::Props, metadata: &Self::Metadata) -> Self::Props {
                 let mut added = self.added.borrow_mut();
                 let mut buf = String::new();
                 let mut fmt = StringMemoFormatter::new(&mut buf);
@@ -1885,7 +1892,7 @@ mod test {
 
         let added = Rc::new(RefCell::new(vec![]));
         let callback = Callback { added: added.clone() };
-        let mut memo = Memo::with_callback(Rc::new(callback));
+        let mut memo = Memo::with_callback((), Rc::new(callback));
 
         memo.insert(TestOperator::from(TestRelExpr::Leaf("A")));
 
@@ -1913,7 +1920,11 @@ mod test {
         }
     }
 
-    fn expect_group_size(memo: &Memo<TestOperator>, group_id: &GroupId, size: usize) {
+    fn new_memo() -> Memo<TestOperator, ()> {
+        Memo::new(())
+    }
+
+    fn expect_group_size<T>(memo: &Memo<TestOperator, T>, group_id: &GroupId, size: usize) {
         let group = memo.groups.get(group_id.index()).unwrap();
         let group = group.as_ref();
         assert_eq!(group.exprs.len(), size, "group#{}", group_id);
@@ -1924,7 +1935,7 @@ mod test {
         assert_eq!(actual, expected, "group#{} exprs", group.id());
     }
 
-    fn expect_memo(memo: &Memo<TestOperator>, expected: &str) {
+    fn expect_memo<T>(memo: &Memo<TestOperator, T>, expected: &str) {
         let lines: Vec<String> = expected.split('\n').map(String::from).collect();
         let expected = lines.join("\n");
 
@@ -1932,7 +1943,7 @@ mod test {
         assert_eq!(buf.trim(), expected.trim());
     }
 
-    fn expect_memo_with_props(memo: &Memo<TestOperator>, expected: &str) {
+    fn expect_memo_with_props<T>(memo: &Memo<TestOperator, T>, expected: &str) {
         let lines: Vec<String> = expected.split('\n').map(String::from).collect();
         let expected = lines.join("\n");
 
@@ -1940,7 +1951,7 @@ mod test {
         assert_eq!(buf.trim(), expected.trim());
     }
 
-    fn format_test_memo(memo: &Memo<TestOperator>, include_props: bool) -> String {
+    fn format_test_memo<T>(memo: &Memo<TestOperator, T>, include_props: bool) -> String {
         let mut buf = String::new();
         let mut f = StringMemoFormatter::new(&mut buf);
         for group in memo.groups.iter().rev() {
