@@ -1,13 +1,15 @@
 use crate::error::OptimizerError;
 use crate::memo::{ExprNodeRef, MemoExpr, MemoExprCallback, MemoExprFormatter, StringMemoFormatter};
 use crate::meta::Metadata;
+use crate::operators::properties::LogicalPropertiesBuilder;
 use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::relational::RelNode;
+use crate::operators::statistics::{NoStatisticsBuilder, StatisticsBuilder};
 use crate::operators::{ExprMemo, Operator, OperatorExpr, Properties};
-use crate::properties::logical::LogicalPropertiesBuilder;
+use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
-use crate::properties::statistics::{Statistics, StatisticsBuilder};
+use crate::properties::statistics::Statistics;
 use crate::rules::{Rule, RuleContext, RuleId, RuleIterator, RuleResult, RuleSet};
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
@@ -29,7 +31,7 @@ impl RuleTester {
     where
         T: Rule + 'static,
     {
-        let props_builder = LogicalPropertiesBuilder::new(Box::new(NoStatsBuilder));
+        let props_builder = LogicalPropertiesBuilder::new(Box::new(NoStatisticsBuilder));
         RuleTester {
             rule: Box::new(rule),
             memo: ExprMemo::with_callback(Rc::new(props_builder)),
@@ -259,15 +261,6 @@ impl MemoExprFormatter for FormatExprs<'_> {
         D: Display,
     {
         // values are written by another formatter
-    }
-}
-
-#[derive(Debug)]
-struct NoStatsBuilder;
-
-impl StatisticsBuilder for NoStatsBuilder {
-    fn build_statistics(&self, _expr: &LogicalExpr) -> Result<Option<Statistics>, OptimizerError> {
-        Ok(None)
     }
 }
 

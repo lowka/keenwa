@@ -13,10 +13,10 @@ use crate::memo::{ExprNodeRef, MemoExpr, MemoExprFormatter, StringMemoFormatter}
 use crate::meta::{Metadata, MutableMetadata};
 use crate::operators::builder::{NoMemoization, OperatorBuilder};
 
+use crate::operators::properties::LogicalPropertiesBuilder;
+use crate::operators::statistics::simple::SimpleCatalogStatisticsBuilder;
 use crate::operators::{ExprMemo, Operator};
 use crate::optimizer::{Optimizer, SetPropertiesCallback};
-use crate::properties::logical::LogicalPropertiesBuilder;
-use crate::properties::statistics::CatalogStatisticsBuilder;
 use crate::rules::implementation::{GetToScanRule, ProjectionRule, SelectRule};
 use crate::rules::testing::TestRuleSet;
 use crate::rules::Rule;
@@ -46,7 +46,7 @@ impl OptimizerTester {
         INIT_LOG.call_once(pretty_env_logger::init);
 
         let catalog = Arc::new(MutableCatalog::new());
-        let statistics_builder = CatalogStatisticsBuilder::new(catalog.clone());
+        let statistics_builder = SimpleCatalogStatisticsBuilder::new(catalog.clone());
         let properties_builder = Rc::new(LogicalPropertiesBuilder::new(Box::new(statistics_builder)));
         let mutable_metadata = Rc::new(MutableMetadata::new());
 
@@ -70,10 +70,10 @@ impl OptimizerTester {
 
         tables.register(self.catalog.as_ref());
 
-        // Currently instances of OperatorBuilders live between calls to Tester::optimize so it is not possible
-        // to retrieve a mutable reference memo.
+        // Currently lifetime of an OperatorBuilder can span between multiple calls to Tester::optimize so it is not possible
+        // to retrieve a mutable reference to a memo via Rc::try_unwrap().
         let memoization = Rc::new(NoMemoization);
-        // When memoization is enabled remove uncomment an error in RewriteExprs located in OperatorBuilder.
+        // When memoization is enabled uncomment an error in RewriteExprs located in OperatorBuilder.
         // ScalarExpr::SubQuery(RelNode::Expr(_)).
         OperatorBuilder::new(memoization, self.catalog.clone(), self.mutable_metadata.clone())
     }

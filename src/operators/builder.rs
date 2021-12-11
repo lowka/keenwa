@@ -778,23 +778,16 @@ mod test {
     use crate::operators::scalar::value::ScalarValue;
     use crate::operators::scalar::ScalarExpr;
     use crate::operators::{ExprMemo, Operator};
-    use crate::properties::logical::LogicalPropertiesBuilder;
-    use crate::properties::statistics::{Statistics, StatisticsBuilder};
+    use crate::properties::logical::LogicalProperties;
+    use crate::properties::statistics::Statistics;
 
+    use crate::operators::properties::LogicalPropertiesBuilder;
+    use crate::operators::statistics::{NoStatisticsBuilder, StatisticsBuilder};
     use crate::optimizer::SetPropertiesCallback;
     use crate::rules::testing::format_operator_tree;
     use itertools::Itertools;
     use std::rc::Rc;
     use std::sync::Arc;
-
-    #[derive(Debug)]
-    struct NoStatsBuilder;
-
-    impl StatisticsBuilder for NoStatsBuilder {
-        fn build_statistics(&self, _expr: &LogicalExpr) -> Result<Option<Statistics>, OptimizerError> {
-            Ok(None)
-        }
-    }
 
     #[test]
     fn test_get() {
@@ -1087,7 +1080,7 @@ Memo:
     }
 
     fn memoization() -> Rc<MemoizeWithMemo> {
-        let properties_builder = Rc::new(LogicalPropertiesBuilder::new(Box::new(NoStatsBuilder)));
+        let properties_builder = Rc::new(LogicalPropertiesBuilder::new(Box::new(NoStatisticsBuilder)));
         Rc::new(MemoizeWithMemo::new(ExprMemo::with_callback(Rc::new(SetPropertiesCallback::new(
             properties_builder.clone(),
         )))))

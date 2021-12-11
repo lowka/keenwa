@@ -12,14 +12,14 @@ use keenwa::error::OptimizerError;
 use keenwa::meta::{ColumnId, Metadata, MutableMetadata};
 use keenwa::operators::builder::{MemoizeWithMemo, OperatorBuilder, OrderingOption};
 
+use keenwa::operators::properties::LogicalPropertiesBuilder;
 use keenwa::operators::scalar::expr::BinaryOp;
 use keenwa::operators::scalar::value::ScalarValue;
 use keenwa::operators::scalar::ScalarExpr;
+use keenwa::operators::statistics::simple::SimpleCatalogStatisticsBuilder;
 use keenwa::operators::*;
 use keenwa::optimizer::{Optimizer, SetPropertiesCallback};
-use keenwa::properties::logical::LogicalPropertiesBuilder;
 use keenwa::properties::physical::PhysicalProperties;
-use keenwa::properties::statistics::CatalogStatisticsBuilder;
 use keenwa::properties::OrderingChoice;
 use keenwa::rules::implementation::*;
 use keenwa::rules::transformation::*;
@@ -72,18 +72,13 @@ fn memo_bench(c: &mut Criterion) {
                     );
 
                     let metadata = Rc::new(MutableMetadata::new());
-                    let statistics_builder = CatalogStatisticsBuilder::new(catalog.clone());
+                    let statistics_builder = SimpleCatalogStatisticsBuilder::new(catalog.clone());
                     let properties_builder = Rc::new(LogicalPropertiesBuilder::new(Box::new(statistics_builder)));
 
                     let memoization = Rc::new(MemoizeWithMemo::new(ExprMemo::with_callback(Rc::new(
                         SetPropertiesCallback::new(properties_builder.clone()),
                     ))));
-                    let operator_builder = OperatorBuilder::new(
-                        memoization.clone(),
-                        catalog.clone(),
-                        metadata,
-                        properties_builder.clone(),
-                    );
+                    let operator_builder = OperatorBuilder::new(memoization.clone(), catalog.clone(), metadata);
 
                     let (query, metadata) = f(operator_builder).expect("Failed to build a query");
 

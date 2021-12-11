@@ -15,8 +15,10 @@ use scalar::{ScalarExpr, ScalarNode};
 use std::fmt::Debug;
 
 pub mod builder;
+pub mod properties;
 pub mod relational;
 pub mod scalar;
+pub mod statistics;
 
 pub type ExprMemo = crate::memo::Memo<Operator>;
 pub type GroupRef = crate::memo::MemoGroupRef<Operator>;
