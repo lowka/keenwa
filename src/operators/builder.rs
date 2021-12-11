@@ -373,7 +373,10 @@ impl OperatorBuilder {
     /// Creates an operator tree and returns its metadata.
     /// If this builder has been created via call to [Self::sub_query_builder()] this method returns an error.
     pub fn build(self) -> (Operator, Metadata) {
+        //TODO: Metadata can be removed when OptimizerTester fully supports memoization.
+        // See OptimizerTester::builder() for details.
         if self.sub_query_builder {
+            //TODO: Replace this panic with an error when this method no longer returns the metadata.
             panic!("Use to_sub_query() to create sub queries")
         } else {
             let (operator, _) = self.operator.expect("No operator");

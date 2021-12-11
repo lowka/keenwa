@@ -64,8 +64,6 @@ where
         filter: Option<&ScalarNode>,
     ) -> Result<Option<Statistics>, OptimizerError> {
         let selectivity = if let Some(filter) = filter {
-            // let filter_statistics = filter.props().logical().statistics().unwrap();
-            // filter_statistics.selectivity()
             self.selectivity_provider.get_selectivity(filter.expr(), expr, logical, metadata)
         } else {
             Some(1.0)
@@ -165,7 +163,7 @@ pub trait SelectivityProvider {
     /// Returns this selectivity statistics as [`Any`](std::any::Any) in order it can be downcast to its implementation.
     fn as_any(&self) -> &dyn Any;
 
-    /// Returns selectivity of the given predicate expression `filter` in the context of the relational expression `expr`.
+    /// Returns selectivity of the given predicate expression `filter` in a context of the relational expression `expr`.
     fn get_selectivity(
         &self,
         filter: &ScalarExpr,
