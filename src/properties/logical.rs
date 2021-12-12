@@ -1,15 +1,4 @@
-use crate::error::OptimizerError;
-use crate::memo::MemoExpr;
 use crate::meta::ColumnId;
-use crate::operators::relational::join::JoinCondition;
-use crate::operators::relational::logical::{LogicalExpr, SetOperator};
-use crate::operators::relational::physical::PhysicalExpr;
-use crate::operators::relational::{RelExpr, RelNode};
-use crate::operators::scalar::expr::ExprVisitor;
-use crate::operators::scalar::{ScalarExpr, ScalarNode};
-use crate::operators::statistics::StatisticsBuilder;
-use crate::operators::{Operator, OperatorExpr, Properties};
-use crate::properties::physical::PhysicalProperties;
 use crate::properties::statistics::Statistics;
 use std::fmt::Debug;
 

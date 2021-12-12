@@ -1,15 +1,11 @@
 use crate::error::OptimizerError;
 use crate::memo::{ExprNodeRef, MemoExpr, MemoExprFormatter, MemoGroupCallback, StringMemoFormatter};
-use crate::meta::{Metadata, MutableMetadata};
-use crate::operators::properties::LogicalPropertiesBuilder;
+use crate::meta::MutableMetadata;
 use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::relational::RelNode;
-use crate::operators::statistics::{NoStatisticsBuilder, StatisticsBuilder};
 use crate::operators::{ExprMemo, Operator, OperatorExpr, OperatorMetadata, Properties};
-use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
-use crate::properties::statistics::Statistics;
 use crate::rules::{Rule, RuleContext, RuleId, RuleIterator, RuleResult, RuleSet};
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;

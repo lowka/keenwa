@@ -4,7 +4,7 @@ use crate::operators::relational::join::JoinCondition;
 use crate::operators::relational::logical::{LogicalExpr, SetOperator};
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::relational::{RelExpr, RelNode};
-use crate::operators::scalar::{ScalarExpr, ScalarNode};
+use crate::operators::scalar::ScalarNode;
 use crate::operators::statistics::StatisticsBuilder;
 use crate::operators::{Operator, OperatorExpr, Properties};
 use crate::properties::logical::LogicalProperties;
@@ -207,7 +207,9 @@ where
 
                     Ok(Properties::new(logical, required))
                 } else {
-                    Err(OptimizerError::Internal(format!("Physical expressions are not allowed in an operator tree")))
+                    Err(OptimizerError::Internal(
+                        "Physical expressions are not allowed in an operator tree".to_string(),
+                    ))
                 }
             }
             OperatorExpr::Scalar(_) => {

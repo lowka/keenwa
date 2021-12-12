@@ -1,5 +1,4 @@
 use crate::catalog::{Catalog, IndexBuilder, DEFAULT_SCHEMA};
-use crate::error::OptimizerError;
 use crate::operators::builder::{OrderingOption, OrderingOptions};
 use crate::operators::scalar::expr::*;
 use crate::operators::scalar::value::ScalarValue;
@@ -550,7 +549,7 @@ fn test_join_associativity_ax_bxc() {
         let left = builder.clone().get("A", vec!["a1", "a2"])?;
 
         let right = builder.clone().get("B", vec!["b1", "b2"])?;
-        let from_c = builder.clone().get("C", vec!["c1", "c2"])?;
+        let from_c = builder.get("C", vec!["c1", "c2"])?;
         let right = right.join_using(from_c, vec![("b1", "c2")])?;
         let join = left.join_using(right, vec![("a1", "b1")])?;
 
@@ -673,7 +672,7 @@ fn test_union() {
     tester.set_operator(|builder| {
         let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
         let from_b = builder.get("B", vec!["b1", "b2"])?;
-        let union = from_a.clone().union(from_b.clone())?;
+        let union = from_a.union(from_b)?;
 
         union.build()
     });

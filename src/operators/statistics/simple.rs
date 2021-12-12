@@ -4,7 +4,7 @@ use crate::meta::{ColumnId, MetadataRef};
 use crate::operators::relational::join::JoinCondition;
 use crate::operators::relational::logical::{LogicalExpr, SetOperator};
 use crate::operators::relational::RelNode;
-use crate::operators::scalar::expr::{Expr, ExprRewriter};
+use crate::operators::scalar::expr::{ExprRewriter};
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
 use crate::operators::statistics::StatisticsBuilder;
 use crate::properties::logical::LogicalProperties;
@@ -276,7 +276,7 @@ mod test {
     use crate::catalog::mutable::MutableCatalog;
     use crate::catalog::TableBuilder;
     use crate::datatypes::DataType;
-    use crate::meta::{Metadata, MutableMetadata};
+    use crate::meta::{MutableMetadata};
     use crate::operators::relational::logical::LogicalExpr;
     use crate::operators::scalar::expr::AggregateFunction;
     use crate::operators::scalar::{ScalarExpr, ScalarNode};

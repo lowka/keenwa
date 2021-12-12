@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use crate::cost::{Cost, CostEstimationContext, CostEstimator};
 use crate::memo::{format_memo, ExprId, ExprNode, GroupId, MemoGroupCallback, NewChildExprs};
-use crate::meta::{Metadata, MetadataRef};
+use crate::meta::MetadataRef;
 use crate::operators::properties::PropertiesProvider;
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::expr_with_new_inputs;

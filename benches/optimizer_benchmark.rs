@@ -9,7 +9,7 @@ use keenwa::catalog::{CatalogRef, TableBuilder, DEFAULT_SCHEMA};
 use keenwa::cost::simple::SimpleCostEstimator;
 use keenwa::datatypes::DataType;
 use keenwa::error::OptimizerError;
-use keenwa::meta::{ColumnId, Metadata, MutableMetadata};
+use keenwa::meta::{ColumnId, MutableMetadata};
 use keenwa::operators::builder::{MemoizeWithMemo, OperatorBuilder, OrderingOption};
 
 use keenwa::operators::properties::LogicalPropertiesBuilder;
@@ -28,10 +28,6 @@ use keenwa::rules::*;
 use keenwa::util::NoOpResultCallback;
 
 fn memo_bench(c: &mut Criterion) {
-    fn ordering(cols: Vec<ColumnId>) -> PhysicalProperties {
-        PhysicalProperties::new(OrderingChoice::new(cols))
-    }
-
     fn add_benchmark(
         c: &mut Criterion,
         name: &str,

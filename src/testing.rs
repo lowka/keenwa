@@ -10,9 +10,8 @@ use crate::cost::simple::SimpleCostEstimator;
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
 use crate::memo::{ExprNodeRef, MemoExpr, MemoExprFormatter, StringMemoFormatter};
-use crate::meta::{Metadata, MutableMetadata};
-use crate::operators::builder::{MemoizeWithMemo, NoMemoization, OperatorBuilder};
-
+use crate::meta::MutableMetadata;
+use crate::operators::builder::{MemoizeWithMemo, OperatorBuilder};
 use crate::operators::properties::LogicalPropertiesBuilder;
 use crate::operators::statistics::simple::{PrecomputedSelectivityStatistics, SimpleCatalogStatisticsBuilder};
 use crate::operators::{ExprMemo, Operator};
@@ -38,7 +37,7 @@ pub struct OptimizerTester {
     shuffle_rules: bool,
     explore_with_enforcer: bool,
     table_access_costs: HashMap<String, usize>,
-    update_selectivity: Box<dyn Fn(&PrecomputedSelectivityStatistics) -> ()>,
+    update_selectivity: Box<dyn Fn(&PrecomputedSelectivityStatistics)>,
     operator: Box<dyn Fn(OperatorBuilder) -> Result<Operator, OptimizerError>>,
     update_catalog: Box<dyn Fn(&MutableCatalog)>,
 }
@@ -152,7 +151,7 @@ impl OptimizerTester {
         let propagate_properties = SetPropertiesCallback::new(self.properties_builder.clone());
         let memo_callback = Rc::new(propagate_properties);
         let metadata = Rc::new(MutableMetadata::new());
-        let mut memo = ExprMemo::with_callback(metadata.clone(), memo_callback);
+        let memo = ExprMemo::with_callback(metadata.clone(), memo_callback);
 
         let memoization = Rc::new(MemoizeWithMemo::new(memo));
         let mutable_catalog = self.catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();
@@ -161,7 +160,7 @@ impl OptimizerTester {
         (self.update_catalog)(mutable_catalog);
         (self.update_selectivity)(self.selectivity_provider.as_ref());
 
-        let builder = OperatorBuilder::new(memoization.clone(), self.catalog.clone(), metadata.clone());
+        let builder = OperatorBuilder::new(memoization.clone(), self.catalog.clone(), metadata);
         let rs = (self.operator)(builder);
         let operator = rs.unwrap();
 

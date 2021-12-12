@@ -461,7 +461,7 @@ where
     /// Returns a reference to the properties of the memo group this expression belongs to.
     pub fn props(&self) -> &E::Props {
         let expr = self.get_memo_expr();
-        &expr.group.props()
+        expr.group.props()
     }
 
     /// Returns references to child expressions of this memo expression.
@@ -1885,7 +1885,7 @@ mod test {
             type Props = TestProps;
             type Metadata = ();
 
-            fn new_group(&self, expr: &Self::Expr, props: Self::Props, metadata: &Self::Metadata) -> Self::Props {
+            fn new_group(&self, expr: &Self::Expr, props: Self::Props, _metadata: &Self::Metadata) -> Self::Props {
                 let mut added = self.added.borrow_mut();
                 let mut buf = String::new();
                 let mut fmt = StringMemoFormatter::new(&mut buf);

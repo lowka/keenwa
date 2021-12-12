@@ -1,20 +1,17 @@
 use crate::catalog::CatalogRef;
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
-use crate::meta::{ColumnId, ColumnMetadata, Metadata, MutableMetadata};
+use crate::meta::{ColumnId, ColumnMetadata, MutableMetadata};
 use crate::operators::relational::join::{JoinCondition, JoinOn};
 use crate::operators::relational::logical::{LogicalExpr, SetOperator};
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::{AggregateFunction, BinaryOp, Expr, ExprRewriter};
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
 use crate::operators::{ExprMemo, Operator, OperatorExpr, Properties};
-use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
-use crate::properties::statistics::Statistics;
 use crate::properties::OrderingChoice;
 use itertools::Itertools;
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::fmt::{Debug, Formatter};
 use std::rc::Rc;
@@ -374,7 +371,7 @@ impl OperatorBuilder {
     /// If this builder has been created via call to [Self::sub_query_builder()] this method returns an error.
     pub fn build(self) -> Result<Operator, OptimizerError> {
         if self.sub_query_builder {
-            Err(OptimizerError::Internal(format!("Use to_sub_query() to create sub queries")))
+            Err(OptimizerError::Internal("Use to_sub_query() to create sub queries".to_string()))
         } else {
             let (operator, _) = self.operator.expect("No operator");
             Ok(operator)
@@ -734,19 +731,16 @@ mod test {
     use crate::datatypes::DataType;
     use crate::error::OptimizerError;
     use crate::memo::format_memo;
-    use crate::meta::{ColumnId, ColumnMetadata, Metadata, MutableMetadata};
+    use crate::meta::{ColumnId, ColumnMetadata, MutableMetadata};
     use crate::operators::builder::{MemoizationHandler, MemoizeWithMemo, OperatorBuilder, OrderingOption};
-    use crate::operators::relational::logical::LogicalExpr;
 
     use crate::operators::scalar::expr::{AggregateFunction, BinaryOp};
     use crate::operators::scalar::value::ScalarValue;
     use crate::operators::scalar::ScalarExpr;
     use crate::operators::{ExprMemo, Operator, OperatorMetadata};
-    use crate::properties::logical::LogicalProperties;
-    use crate::properties::statistics::Statistics;
 
     use crate::operators::properties::LogicalPropertiesBuilder;
-    use crate::operators::statistics::{NoStatisticsBuilder, StatisticsBuilder};
+    use crate::operators::statistics::NoStatisticsBuilder;
     use crate::optimizer::SetPropertiesCallback;
     use crate::rules::testing::format_operator_tree;
     use itertools::Itertools;
@@ -1014,7 +1008,7 @@ Memo:
         let metadata = Rc::new(MutableMetadata::new());
         let memoization = memoization(metadata.clone());
 
-        let err = build_tree(metadata.clone(), memoization.clone(), |operator_builder| {
+        let _err = build_tree(metadata, memoization, |operator_builder| {
             let _from_a = operator_builder.clone().get("A", vec!["a1", "a2"])?;
 
             let _expr = ScalarExpr::Aggregate {
@@ -1065,7 +1059,7 @@ Memo:
         let properties_builder = Rc::new(LogicalPropertiesBuilder::new(NoStatisticsBuilder));
         Rc::new(MemoizeWithMemo::new(ExprMemo::with_callback(
             metadata,
-            Rc::new(SetPropertiesCallback::new(properties_builder.clone())),
+            Rc::new(SetPropertiesCallback::new(properties_builder)),
         )))
     }
 

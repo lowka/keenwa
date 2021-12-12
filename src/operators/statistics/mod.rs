@@ -1,10 +1,8 @@
 //FIXME: Statistics must be a top level module.
 
-use crate::catalog::{Catalog, CatalogRef};
 use crate::error::OptimizerError;
-use crate::meta::{ColumnId, MetadataRef};
+use crate::meta::MetadataRef;
 use crate::operators::relational::logical::LogicalExpr;
-use crate::operators::scalar::ScalarExpr;
 use crate::properties::logical::LogicalProperties;
 use crate::properties::statistics::Statistics;
 use std::fmt::Debug;

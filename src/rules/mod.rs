@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::iter::FromIterator;
 
-use crate::meta::{Metadata, MetadataRef};
+use crate::meta::MetadataRef;
 use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::relational::RelNode;
