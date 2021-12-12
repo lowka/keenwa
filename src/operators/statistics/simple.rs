@@ -45,7 +45,7 @@ where
             Some(row_count) => row_count,
             None => return Err(OptimizerError::Internal(format!("No row count for table '{}'", source))),
         };
-        Ok(Some(Statistics::new(row_count as f64, 1.0)))
+        Ok(Some(Statistics::from_row_count(row_count as f64)))
     }
 
     fn build_projection(&self, input: &RelNode, _columns: &[ColumnId]) -> Result<Option<Statistics>, OptimizerError> {
@@ -66,7 +66,7 @@ where
         let selectivity = if let Some(filter) = filter {
             self.selectivity_provider.get_selectivity(filter.expr(), expr, logical, metadata)
         } else {
-            Some(1.0)
+            Some(Statistics::DEFAULT_SELECTIVITY)
         }
         .unwrap();
         let logical = input.props().logical();
@@ -85,7 +85,7 @@ where
         let statistics = logical.statistics().unwrap();
         let row_count = statistics.row_count();
         // take selectivity of the join condition into account
-        Ok(Some(Statistics::new(row_count, 1.0)))
+        Ok(Some(Statistics::from_row_count(row_count)))
     }
 
     fn build_aggregate(
@@ -189,7 +189,7 @@ impl SelectivityProvider for DefaultSelectivityStatistics {
         _logical_properties: &LogicalProperties,
         _metadata: MetadataRef,
     ) -> Option<f64> {
-        Some(1.0)
+        Some(Statistics::DEFAULT_SELECTIVITY)
     }
 }
 
@@ -248,7 +248,7 @@ impl SelectivityProvider for PrecomputedSelectivityStatistics {
         let filter_str = format!("{}", filter);
 
         let inner = self.inner.borrow();
-        inner.get(&filter_str).copied().or(Some(1.0))
+        inner.get(&filter_str).copied().or(Some(Statistics::DEFAULT_SELECTIVITY))
     }
 }
 

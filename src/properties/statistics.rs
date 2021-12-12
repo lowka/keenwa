@@ -12,16 +12,24 @@ impl Default for Statistics {
     fn default() -> Self {
         Self {
             row_count: UNKNOWN_ROW_COUNT,
-            selectivity: 1.0,
+            selectivity: Statistics::DEFAULT_SELECTIVITY,
         }
     }
 }
 
 impl Statistics {
+    /// The default value of selectivity statistics.
+    pub const DEFAULT_SELECTIVITY: f64 = 1.0;
+
+    /// Creates new statistics with the given row count and selectivity.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if the `row_count` is negative or the `selectivity` lies outside `[0.0, 1.0]` bounds.
     pub fn new(row_count: f64, selectivity: f64) -> Self {
         assert!(row_count >= 0f64, "row_count must be non negative");
         assert!(
-            (0f64..=1.0f64).contains(&selectivity),
+            (0f64..=Self::DEFAULT_SELECTIVITY).contains(&selectivity),
             "selectivity must be within [0.0, 1.0] range but got: {}",
             selectivity
         );
@@ -33,9 +41,9 @@ impl Statistics {
         Statistics::new(0.0, selectivity)
     }
 
-    /// Creates a new statisticcs with row_count set to the given value.
+    /// Creates a new statistics with row_count set to the given value.
     pub fn from_row_count(row_count: f64) -> Self {
-        Statistics::new(row_count, 1.0)
+        Statistics::new(row_count, Self::DEFAULT_SELECTIVITY)
     }
 
     /// The estimated number of rows returned by an operator.
