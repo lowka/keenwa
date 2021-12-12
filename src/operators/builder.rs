@@ -709,25 +709,15 @@ fn resolve_binary_expr_type(lhs: DataType, _op: &BinaryOp, rhs: DataType) -> Dat
 
 #[cfg(test)]
 mod test {
+    use super::*;
     use crate::catalog::mutable::MutableCatalog;
     use crate::catalog::{TableBuilder, DEFAULT_SCHEMA};
-    use crate::datatypes::DataType;
-    use crate::error::OptimizerError;
     use crate::memo::format_memo;
-    use crate::meta::{ColumnId, ColumnMetadata, MutableMetadata};
-    use crate::operators::builder::{MemoizationHandler, MemoizeWithMemo, OperatorBuilder, OrderingOption};
-
-    use crate::operators::scalar::expr::{AggregateFunction, BinaryOp};
-    use crate::operators::scalar::value::ScalarValue;
-    use crate::operators::scalar::ScalarExpr;
-    use crate::operators::{ExprMemo, Operator, OperatorMetadata};
-
     use crate::operators::properties::LogicalPropertiesBuilder;
+    use crate::operators::scalar::value::ScalarValue;
     use crate::optimizer::SetPropertiesCallback;
     use crate::rules::testing::format_operator_tree;
     use crate::statistics::NoStatisticsBuilder;
-    use itertools::Itertools;
-    use std::rc::Rc;
     use std::sync::Arc;
 
     #[test]
