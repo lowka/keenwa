@@ -6,7 +6,6 @@ use crate::meta::MutableMetadata;
 use crate::operators::scalar::expr_with_new_inputs;
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
-use crate::statistics::Statistics;
 use relational::join::JoinCondition;
 use relational::logical::LogicalExpr;
 use relational::physical::PhysicalExpr;
@@ -66,23 +65,6 @@ impl Operator {
                 logical: old_properties.logical,
                 required,
             },
-        }
-    }
-
-    /// Creates a new operator from this one but with new statistics.
-    pub fn with_statistics(self, statistics: Statistics) -> Self {
-        let Operator {
-            expr,
-            properties: old_properties,
-            ..
-        } = self;
-        let Properties { logical, required } = old_properties;
-        let columns = logical.output_columns().to_vec();
-        let logical = LogicalProperties::new(columns, Some(statistics));
-
-        Operator {
-            expr,
-            properties: Properties { logical, required },
         }
     }
 }
