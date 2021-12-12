@@ -732,18 +732,11 @@ mod test {
 
     #[test]
     fn test_get() {
-        let metadata = Rc::new(MutableMetadata::new());
-        let memoization = memoization(metadata.clone());
+        let mut tester = OperatorBuilderTester::new();
 
-        let expr = build_tree(metadata.clone(), memoization.clone(), |operator_builder| {
-            operator_builder.get("A", vec!["a1"])?.build()
-        })
-        .unwrap();
+        tester.build_operator(|builder| builder.get("A", vec!["a1"])?.build());
 
-        expect_expr(
-            memoization,
-            expr,
-            metadata,
+        tester.expect_expr(
             r#"
 LogicalGet A cols=[1]
   output cols: [1]
@@ -757,22 +750,17 @@ Memo:
 
     #[test]
     fn test_get_order_by() {
-        let metadata = Rc::new(MutableMetadata::new());
-        let memoization = memoization(metadata.clone());
+        let mut tester = OperatorBuilderTester::new();
 
-        let expr = build_tree(metadata.clone(), memoization.clone(), |operator_builder| {
+        tester.build_operator(|builder| {
             let ord = OrderingOption::by(("a1", false));
-            let tree = operator_builder.get("A", vec!["a1"])?.order_by(ord)?;
+            let from_a = builder.get("A", vec!["a1"])?.order_by(ord)?;
 
-            tree.build()
-        })
-        .unwrap();
+            from_a.build()
+        });
 
         //TODO: include properties
-        expect_expr(
-            memoization,
-            expr,
-            metadata,
+        tester.expect_expr(
             r#"
 LogicalGet A cols=[1]
   output cols: [1]
@@ -781,29 +769,24 @@ Metadata:
 Memo:
   00 LogicalGet A cols=[1]
 "#,
-        )
+        );
     }
 
     #[test]
     fn test_select() {
-        let metadata = Rc::new(MutableMetadata::new());
-        let memoization = memoization(metadata.clone());
+        let mut tester = OperatorBuilderTester::new();
 
-        let expr = build_tree(metadata.clone(), memoization.clone(), |operator_builder| {
+        tester.build_operator(|builder| {
             let filter = ScalarExpr::BinaryExpr {
                 lhs: Box::new(ScalarExpr::ColumnName("a1".into())),
                 op: BinaryOp::Gt,
                 rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Int32(100))),
             };
 
-            operator_builder.get("A", vec!["a1"])?.select(Some(filter))?.build()
-        })
-        .unwrap();
+            builder.get("A", vec!["a1"])?.select(Some(filter))?.build()
+        });
 
-        expect_expr(
-            memoization,
-            expr,
-            metadata,
+        tester.expect_expr(
             r#"
 LogicalSelect
   input: LogicalGet A cols=[1]
@@ -816,26 +799,21 @@ Memo:
   01 Expr col:1 > 100
   00 LogicalGet A cols=[1]
 "#,
-        )
+        );
     }
 
     #[test]
     fn test_projection() {
-        let metadata = Rc::new(MutableMetadata::new());
-        let memoization = memoization(metadata.clone());
+        let mut tester = OperatorBuilderTester::new();
 
-        let expr = build_tree(metadata.clone(), memoization.clone(), |operator_builder| {
+        tester.build_operator(|builder| {
             let projection_list =
                 vec![ScalarExpr::ColumnName("a2".into()), ScalarExpr::Scalar(ScalarValue::Int32(100))];
 
-            operator_builder.get("A", vec!["a1", "a2"])?.project(projection_list)?.build()
-        })
-        .unwrap();
+            builder.get("A", vec!["a1", "a2"])?.project(projection_list)?.build()
+        });
 
-        expect_expr(
-            memoization,
-            expr,
-            metadata,
+        tester.expect_expr(
             r#"
 LogicalProjection cols=[2, 3]
   input: LogicalGet A cols=[1, 2]
@@ -848,15 +826,14 @@ Memo:
   01 LogicalProjection input=00 cols=[2, 3]
   00 LogicalGet A cols=[1, 2]
 "#,
-        )
+        );
     }
 
     #[test]
     fn test_projection_of_projection() {
-        let metadata = Rc::new(MutableMetadata::new());
-        let memoization = memoization(metadata.clone());
+        let mut tester = OperatorBuilderTester::new();
 
-        let expr = build_tree(metadata.clone(), memoization.clone(), |operator_builder| {
+        tester.build_operator(|builder| {
             let projection_list1 = vec![
                 ScalarExpr::ColumnName("a2".into()),
                 ScalarExpr::Scalar(ScalarValue::Int32(100)),
@@ -865,18 +842,14 @@ Memo:
 
             let projection_list2 = vec![ScalarExpr::ColumnName("a2".into())];
 
-            operator_builder
+            builder
                 .get("A", vec!["a1", "a2"])?
                 .project(projection_list1)?
                 .project(projection_list2)?
                 .build()
-        })
-        .unwrap();
+        });
 
-        expect_expr(
-            memoization,
-            expr,
-            metadata,
+        tester.expect_expr(
             r#"
 LogicalProjection cols=[2]
   input: LogicalProjection cols=[2, 3, 1]
@@ -891,27 +864,22 @@ Memo:
   01 LogicalProjection input=00 cols=[2, 3, 1]
   00 LogicalGet A cols=[1, 2]
 "#,
-        )
+        );
     }
 
     #[test]
     fn test_join() {
-        let metadata = Rc::new(MutableMetadata::new());
-        let memoization = memoization(metadata.clone());
+        let mut tester = OperatorBuilderTester::new();
 
-        let expr = build_tree(metadata.clone(), memoization.clone(), |operator_builder| {
-            let left = operator_builder.clone().get("A", vec!["a1", "a2"])?;
-            let right = operator_builder.get("B", vec!["b1", "b2"])?;
+        tester.build_operator(|builder| {
+            let left = builder.clone().get("A", vec!["a1", "a2"])?;
+            let right = builder.get("B", vec!["b1", "b2"])?;
             let join = left.join_using(right, vec![("a1", "b2")])?;
 
             join.build()
-        })
-        .unwrap();
+        });
 
-        expect_expr(
-            memoization,
-            expr,
-            metadata,
+        tester.expect_expr(
             r#"
 LogicalJoin using=[(1, 4)]
   left: LogicalGet A cols=[1, 2]
@@ -927,16 +895,15 @@ Memo:
   01 LogicalGet B cols=[3, 4]
   00 LogicalGet A cols=[1, 2]
 "#,
-        )
+        );
     }
 
     #[test]
     fn test_nested() {
-        let metadata = Rc::new(MutableMetadata::new());
-        let memoization = memoization(metadata.clone());
+        let mut tester = OperatorBuilderTester::new();
 
-        let expr = build_tree(metadata.clone(), memoization.clone(), |operator_builder| {
-            let from_a = operator_builder.get("A", vec!["a1", "a2"])?;
+        tester.build_operator(|builder| {
+            let from_a = builder.get("A", vec!["a1", "a2"])?;
 
             let expr = ScalarExpr::Aggregate {
                 func: AggregateFunction::Count,
@@ -958,13 +925,9 @@ Memo:
             let select = from_a.select(Some(filter))?;
 
             select.build()
-        })
-        .unwrap();
+        });
 
-        expect_expr(
-            memoization,
-            expr,
-            metadata,
+        tester.expect_expr(
             r#"
 LogicalSelect
   input: LogicalGet A cols=[1, 2]
@@ -983,16 +946,15 @@ Memo:
   01 LogicalProjection input=00 cols=[5]
   00 LogicalGet B cols=[3, 4]
 "#,
-        )
+        );
     }
 
     #[test]
     fn test_prohibit_nested_sub_queries_not_created_via_sub_query_builder() {
-        let metadata = Rc::new(MutableMetadata::new());
-        let memoization = memoization(metadata.clone());
+        let mut tester = OperatorBuilderTester::new();
 
-        let _err = build_tree(metadata, memoization, |operator_builder| {
-            let _from_a = operator_builder.clone().get("A", vec!["a1", "a2"])?;
+        tester.build_operator(|builder| {
+            let _from_a = builder.clone().get("A", vec!["a1", "a2"])?;
 
             let _expr = ScalarExpr::Aggregate {
                 func: AggregateFunction::Count,
@@ -1000,104 +962,130 @@ Memo:
                 filter: None,
             };
 
-            let from_b = operator_builder.get("B", vec!["b1"])?;
+            let from_b = builder.get("B", vec!["b1"])?;
             let _sub_query = from_b.to_sub_query()?;
 
-            panic!("Created sub query from a non sub query build")
+            panic!("Created sub query from a non sub query build");
         });
+
+        tester.expect_error("Should have failed")
     }
 
-    fn build_tree<F>(
-        metadata: OperatorMetadata,
-        memoization: Rc<dyn MemoizationHandler>,
-        mut f: F,
-    ) -> Result<Operator, OptimizerError>
-    where
-        F: FnMut(OperatorBuilder) -> Result<Operator, OptimizerError>,
-    {
-        let catalog = Arc::new(MutableCatalog::new());
-        catalog.add_table(
-            DEFAULT_SCHEMA,
-            TableBuilder::new("A")
-                .add_column("a1", DataType::Int32)
-                .add_column("a2", DataType::Int32)
-                .add_column("a3", DataType::Int32)
-                .add_column("a4", DataType::Int32)
-                .build(),
-        );
-
-        catalog.add_table(
-            DEFAULT_SCHEMA,
-            TableBuilder::new("B")
-                .add_column("b1", DataType::Int32)
-                .add_column("b2", DataType::Int32)
-                .add_column("b3", DataType::Int32)
-                .build(),
-        );
-        let operator_builder = OperatorBuilder::new(memoization, catalog, metadata);
-        (f)(operator_builder)
+    struct OperatorBuilderTester {
+        operator: Box<dyn Fn(OperatorBuilder) -> Result<Operator, OptimizerError>>,
+        metadata: Rc<MutableMetadata>,
+        memoization: Rc<MemoizeWithMemo>,
     }
 
-    fn memoization(metadata: OperatorMetadata) -> Rc<MemoizeWithMemo> {
-        let properties_builder = Rc::new(LogicalPropertiesBuilder::new(NoStatisticsBuilder));
-        Rc::new(MemoizeWithMemo::new(ExprMemo::with_callback(
-            metadata,
-            Rc::new(SetPropertiesCallback::new(properties_builder)),
-        )))
-    }
+    impl OperatorBuilderTester {
+        fn new() -> Self {
+            let properties_builder = Rc::new(LogicalPropertiesBuilder::new(NoStatisticsBuilder));
+            let metadata = Rc::new(MutableMetadata::new());
+            let memoization = Rc::new(MemoizeWithMemo::new(ExprMemo::with_callback(
+                metadata.clone(),
+                Rc::new(SetPropertiesCallback::new(properties_builder)),
+            )));
 
-    fn expect_expr(memoization: Rc<MemoizeWithMemo>, expr: Operator, metadata: Rc<MutableMetadata>, expected: &str) {
-        let mut buf = String::new();
-        buf.push('\n');
-
-        let memoization = Rc::try_unwrap(memoization).unwrap();
-        let mut memo = memoization.into_inner();
-        let (_, expr) = memo.insert_group(expr);
-
-        buf.push_str(format_operator_tree(expr.mexpr()).as_str());
-        buf.push('\n');
-
-        buf.push_str(format!("  output cols: {:?}\n", expr.props().logical().output_columns()).as_str());
-        buf.push_str("Metadata:\n");
-
-        let columns: Vec<(ColumnId, ColumnMetadata)> =
-            metadata.get_columns().into_iter().sorted_by(|a, b| a.0.cmp(&b.0)).collect();
-
-        for (id, column) in columns {
-            let expr = column.expr();
-            let table = column.table();
-            let column_name = if !column.name().is_empty() {
-                column.name().as_str()
-            } else {
-                "?column?"
-            };
-            let column_info = match (expr, table) {
-                (None, None) => format!("  col:{} {} {:?}", id, column_name, column.data_type()),
-                (None, Some(table)) => format!("  col:{} {}.{} {:?}", id, table, column_name, column.data_type()),
-                (Some(expr), _) => format!("  col:{} {} {:?}, expr: {}", id, column_name, column.data_type(), expr),
-            };
-            buf.push_str(column_info.as_str());
-            buf.push('\n');
+            OperatorBuilderTester {
+                operator: Box::new(|_| panic!("Operator has not been specified")),
+                metadata,
+                memoization,
+            }
         }
 
-        buf.push_str("Memo:\n");
-        let memo_as_string = format_memo(&memo);
-        let lines = memo_as_string
-            .split('\n')
-            .map(|l| {
-                if !l.is_empty() {
-                    let mut s = String::new();
-                    s.push_str("  ");
-                    s.push_str(l);
-                    s
+        fn build_operator<F>(&mut self, f: F)
+        where
+            F: Fn(OperatorBuilder) -> Result<Operator, OptimizerError> + 'static,
+        {
+            self.operator = Box::new(f)
+        }
+
+        fn expect_error(mut self, msg: &str) {
+            let result = self.do_build_operator();
+            assert!(result.is_err(), "Expected an error: {}", msg)
+        }
+
+        fn expect_expr(mut self, expected: &str) {
+            let result = self.do_build_operator();
+            let expr = result.expect("Build failed");
+
+            let mut buf = String::new();
+            buf.push('\n');
+
+            let memoization = Rc::try_unwrap(self.memoization).unwrap();
+            let mut memo = memoization.into_inner();
+            let (_, expr) = memo.insert_group(expr);
+
+            buf.push_str(format_operator_tree(expr.mexpr()).as_str());
+            buf.push('\n');
+
+            buf.push_str(format!("  output cols: {:?}\n", expr.props().logical().output_columns()).as_str());
+            buf.push_str("Metadata:\n");
+
+            let columns: Vec<(ColumnId, ColumnMetadata)> =
+                self.metadata.get_columns().into_iter().sorted_by(|a, b| a.0.cmp(&b.0)).collect();
+
+            for (id, column) in columns {
+                let expr = column.expr();
+                let table = column.table();
+                let column_name = if !column.name().is_empty() {
+                    column.name().as_str()
                 } else {
-                    l.to_string()
-                }
-            })
-            .join("\n");
+                    "?column?"
+                };
+                let column_info = match (expr, table) {
+                    (None, None) => format!("  col:{} {} {:?}", id, column_name, column.data_type()),
+                    (None, Some(table)) => format!("  col:{} {}.{} {:?}", id, table, column_name, column.data_type()),
+                    (Some(expr), _) => format!("  col:{} {} {:?}, expr: {}", id, column_name, column.data_type(), expr),
+                };
+                buf.push_str(column_info.as_str());
+                buf.push('\n');
+            }
 
-        buf.push_str(lines.as_str());
+            buf.push_str("Memo:\n");
+            let memo_as_string = format_memo(&memo);
+            let lines = memo_as_string
+                .split('\n')
+                .map(|l| {
+                    if !l.is_empty() {
+                        let mut s = String::new();
+                        s.push_str("  ");
+                        s.push_str(l);
+                        s
+                    } else {
+                        l.to_string()
+                    }
+                })
+                .join("\n");
 
-        assert_eq!(buf.as_str(), expected);
+            buf.push_str(lines.as_str());
+
+            assert_eq!(buf.as_str(), expected);
+        }
+
+        fn do_build_operator(&mut self) -> Result<Operator, OptimizerError> {
+            let catalog = Arc::new(MutableCatalog::new());
+            catalog.add_table(
+                DEFAULT_SCHEMA,
+                TableBuilder::new("A")
+                    .add_column("a1", DataType::Int32)
+                    .add_column("a2", DataType::Int32)
+                    .add_column("a3", DataType::Int32)
+                    .add_column("a4", DataType::Int32)
+                    .build(),
+            );
+
+            catalog.add_table(
+                DEFAULT_SCHEMA,
+                TableBuilder::new("B")
+                    .add_column("b1", DataType::Int32)
+                    .add_column("b2", DataType::Int32)
+                    .add_column("b3", DataType::Int32)
+                    .build(),
+            );
+
+            let builder = OperatorBuilder::new(self.memoization.clone(), catalog, self.metadata.clone());
+            (self.operator)(builder)
+        }
     }
 }
