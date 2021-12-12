@@ -1,3 +1,10 @@
+use crate::error::OptimizerError;
+use crate::meta::MetadataRef;
+use crate::operators::relational::logical::LogicalExpr;
+use crate::properties::logical::LogicalProperties;
+
+pub mod simple;
+
 /// The number of rows returned by an operator in case when no statistics is available.
 pub const UNKNOWN_ROW_COUNT: f64 = 1000f64;
 
@@ -54,5 +61,31 @@ impl Statistics {
     /// The selectivity of a predicate.
     pub fn selectivity(&self) -> f64 {
         self.selectivity
+    }
+}
+
+/// Provide statistics
+pub trait StatisticsBuilder {
+    /// Builds statistics for the given expression.
+    fn build_statistics(
+        &self,
+        expr: &LogicalExpr,
+        logical_properties: &LogicalProperties,
+        metadata: MetadataRef,
+    ) -> Result<Option<Statistics>, OptimizerError>;
+}
+
+/// Statistics builder that provides no statistics.
+#[derive(Debug)]
+pub struct NoStatisticsBuilder;
+
+impl StatisticsBuilder for NoStatisticsBuilder {
+    fn build_statistics(
+        &self,
+        _expr: &LogicalExpr,
+        _logical_properties: &LogicalProperties,
+        _metadata: MetadataRef,
+    ) -> Result<Option<Statistics>, OptimizerError> {
+        Ok(None)
     }
 }

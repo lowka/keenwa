@@ -1,6 +1,5 @@
 use crate::meta::ColumnId;
-use crate::properties::statistics::Statistics;
-use std::fmt::Debug;
+use crate::statistics::Statistics;
 
 /// Properties that are identical across all expressions within a memo group.
 #[derive(Debug, Clone)]

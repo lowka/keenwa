@@ -13,13 +13,13 @@ use crate::memo::{ExprNodeRef, MemoExpr, MemoExprFormatter, StringMemoFormatter}
 use crate::meta::MutableMetadata;
 use crate::operators::builder::{MemoizeWithMemo, OperatorBuilder};
 use crate::operators::properties::LogicalPropertiesBuilder;
-use crate::operators::statistics::simple::{PrecomputedSelectivityStatistics, SimpleCatalogStatisticsBuilder};
 use crate::operators::{ExprMemo, Operator};
 use crate::optimizer::{Optimizer, SetPropertiesCallback};
 use crate::rules::implementation::{GetToScanRule, ProjectionRule, SelectRule};
 use crate::rules::testing::TestRuleSet;
 use crate::rules::Rule;
 use crate::rules::StaticRuleSet;
+use crate::statistics::simple::{PrecomputedSelectivityStatistics, SimpleCatalogStatisticsBuilder};
 use crate::util::{BestExprContext, BestExprRef, ResultCallback};
 
 static INIT_LOG: Once = Once::new();

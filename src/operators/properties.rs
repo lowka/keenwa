@@ -5,10 +5,10 @@ use crate::operators::relational::logical::{LogicalExpr, SetOperator};
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::ScalarNode;
-use crate::operators::statistics::StatisticsBuilder;
 use crate::operators::{Operator, OperatorExpr, Properties};
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
+use crate::statistics::StatisticsBuilder;
 use std::fmt::{Debug, Formatter};
 
 /// Provides logical properties for memo expressions.

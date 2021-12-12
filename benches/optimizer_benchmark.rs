@@ -16,7 +16,6 @@ use keenwa::operators::properties::LogicalPropertiesBuilder;
 use keenwa::operators::scalar::expr::BinaryOp;
 use keenwa::operators::scalar::value::ScalarValue;
 use keenwa::operators::scalar::ScalarExpr;
-use keenwa::operators::statistics::simple::{PrecomputedSelectivityStatistics, SimpleCatalogStatisticsBuilder};
 use keenwa::operators::*;
 use keenwa::optimizer::{Optimizer, SetPropertiesCallback};
 use keenwa::properties::physical::PhysicalProperties;
@@ -25,6 +24,7 @@ use keenwa::rules::implementation::*;
 use keenwa::rules::transformation::*;
 use keenwa::rules::StaticRuleSet;
 use keenwa::rules::*;
+use keenwa::statistics::simple::{PrecomputedSelectivityStatistics, SimpleCatalogStatisticsBuilder};
 use keenwa::util::NoOpResultCallback;
 
 fn memo_bench(c: &mut Criterion) {

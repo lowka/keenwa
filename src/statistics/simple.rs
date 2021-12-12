@@ -1,14 +1,14 @@
-use crate::catalog::{Catalog, CatalogRef};
+use crate::catalog::CatalogRef;
 use crate::error::OptimizerError;
 use crate::meta::{ColumnId, MetadataRef};
 use crate::operators::relational::join::JoinCondition;
 use crate::operators::relational::logical::{LogicalExpr, SetOperator};
 use crate::operators::relational::RelNode;
-use crate::operators::scalar::expr::{ExprRewriter};
+use crate::operators::scalar::expr::ExprRewriter;
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
-use crate::operators::statistics::StatisticsBuilder;
 use crate::properties::logical::LogicalProperties;
-use crate::properties::statistics::Statistics;
+use crate::statistics::Statistics;
+use crate::statistics::StatisticsBuilder;
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -276,16 +276,16 @@ mod test {
     use crate::catalog::mutable::MutableCatalog;
     use crate::catalog::TableBuilder;
     use crate::datatypes::DataType;
-    use crate::meta::{MutableMetadata};
+    use crate::meta::MutableMetadata;
     use crate::operators::relational::logical::LogicalExpr;
     use crate::operators::scalar::expr::AggregateFunction;
     use crate::operators::scalar::{ScalarExpr, ScalarNode};
-    use crate::operators::statistics::simple::{DefaultSelectivityStatistics, SimpleCatalogStatisticsBuilder};
-    use crate::operators::statistics::StatisticsBuilder;
     use crate::operators::{Operator, OperatorExpr, Properties};
     use crate::properties::logical::LogicalProperties;
     use crate::properties::physical::PhysicalProperties;
-    use crate::properties::statistics::Statistics;
+    use crate::statistics::simple::{DefaultSelectivityStatistics, SimpleCatalogStatisticsBuilder};
+    use crate::statistics::Statistics;
+    use crate::statistics::StatisticsBuilder;
     use std::sync::Arc;
 
     fn new_aggregate(groups: Vec<ScalarExpr>) -> LogicalExpr {

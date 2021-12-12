@@ -455,23 +455,6 @@ impl OperatorBuilder {
         self.operator = Some((operator, output_columns));
     }
 
-    fn expect_column(
-        &self,
-        description: &str,
-        column_id: &ColumnId,
-        input_properties: &Properties,
-    ) -> Result<(), OptimizerError> {
-        let input_columns = input_properties.logical().output_columns();
-        if !input_columns.contains(column_id) {
-            Err(OptimizerError::Argument(format!(
-                "{}: Unexpected column {}. input columns: {:?}",
-                description, column_id, input_columns
-            )))
-        } else {
-            Ok(())
-        }
-    }
-
     fn rel_node(&mut self) -> Result<(RelNode, OperatorScope), OptimizerError> {
         let (operator, scope) = self
             .operator
@@ -740,9 +723,9 @@ mod test {
     use crate::operators::{ExprMemo, Operator, OperatorMetadata};
 
     use crate::operators::properties::LogicalPropertiesBuilder;
-    use crate::operators::statistics::NoStatisticsBuilder;
     use crate::optimizer::SetPropertiesCallback;
     use crate::rules::testing::format_operator_tree;
+    use crate::statistics::NoStatisticsBuilder;
     use itertools::Itertools;
     use std::rc::Rc;
     use std::sync::Arc;

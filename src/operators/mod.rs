@@ -6,7 +6,7 @@ use crate::meta::MutableMetadata;
 use crate::operators::scalar::expr_with_new_inputs;
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
-use crate::properties::statistics::Statistics;
+use crate::statistics::Statistics;
 use relational::join::JoinCondition;
 use relational::logical::LogicalExpr;
 use relational::physical::PhysicalExpr;
@@ -20,7 +20,6 @@ pub mod builder;
 pub mod properties;
 pub mod relational;
 pub mod scalar;
-pub mod statistics;
 
 pub type OperatorMetadata = Rc<MutableMetadata>;
 pub type ExprMemo = crate::memo::Memo<Operator, OperatorMetadata>;
