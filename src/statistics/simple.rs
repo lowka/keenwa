@@ -173,7 +173,7 @@ pub trait SelectivityProvider {
     ) -> Option<f64>;
 }
 
-/// [SelectivityStatistics](self::SelectivityStatistics) that always returns selectivity of 1.0.
+/// [SelectivityProvider](self::SelectivityProvider) that always returns selectivity of 1.0.
 #[derive(Debug)]
 pub struct DefaultSelectivityStatistics;
 
@@ -193,7 +193,7 @@ impl SelectivityProvider for DefaultSelectivityStatistics {
     }
 }
 
-/// [SelectivityStatistics](self::SelectivityStatistics) that allows to set selectivity on per predicate basis.
+/// [SelectivityProvider](self::SelectivityProvider) that allows to set selectivity on per predicate basis.
 /// When selectivity for a predicate is not specified returns selectivity of 1.0.
 #[derive(Debug)]
 pub struct PrecomputedSelectivityStatistics {
