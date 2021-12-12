@@ -35,7 +35,7 @@ fn memo_bench(c: &mut Criterion) {
     fn add_benchmark(
         c: &mut Criterion,
         name: &str,
-        f: fn(OperatorBuilder, &PrecomputedSelectivityStatistics) -> Result<(Operator, Metadata), OptimizerError>,
+        f: fn(OperatorBuilder, &PrecomputedSelectivityStatistics) -> Result<Operator, OptimizerError>,
     ) {
         c.bench_function(format!("optimize_query_{}", name).as_str(), |b| {
             b.iter_custom(|iters| {
@@ -84,8 +84,7 @@ fn memo_bench(c: &mut Criterion) {
                     )));
                     let operator_builder = OperatorBuilder::new(memoization.clone(), catalog.clone(), metadata);
 
-                    let (query, metadata) =
-                        f(operator_builder, selectivity_provider.as_ref()).expect("Failed to build a query");
+                    let query = f(operator_builder, selectivity_provider.as_ref()).expect("Failed to build a query");
 
                     // We can retrieve the underlying memoization handler because
                     // the only user of Rc (an operator_builder) has been consumed.
@@ -112,7 +111,7 @@ fn memo_bench(c: &mut Criterion) {
     fn build_query(
         builder: OperatorBuilder,
         stats: &PrecomputedSelectivityStatistics,
-    ) -> Result<(Operator, Metadata), OptimizerError> {
+    ) -> Result<Operator, OptimizerError> {
         let from_a = builder.clone().get("A", vec!["a1"])?;
         let from_b = builder.get("B", vec!["b1"])?;
         let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
@@ -128,7 +127,7 @@ fn memo_bench(c: &mut Criterion) {
         let select = join.select(Some(filter))?;
         let order_by = select.order_by(OrderingOption::by(("a1", false)))?;
 
-        Ok(order_by.build())
+        order_by.build()
     }
 
     add_benchmark(c, "Join AxB ordered", build_query);

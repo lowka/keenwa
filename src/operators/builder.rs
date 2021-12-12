@@ -372,15 +372,12 @@ impl OperatorBuilder {
 
     /// Creates an operator tree and returns its metadata.
     /// If this builder has been created via call to [Self::sub_query_builder()] this method returns an error.
-    pub fn build(self) -> Operator {
-        //TODO: Metadata can be removed when OptimizerTester fully supports memoization.
-        // See OptimizerTester::builder() for details.
+    pub fn build(self) -> Result<Operator, OptimizerError> {
         if self.sub_query_builder {
-            //TODO: Replace this panic with an error when this method no longer returns the metadata.
-            panic!("Use to_sub_query() to create sub queries")
+            Err(OptimizerError::Internal(format!("Use to_sub_query() to create sub queries")))
         } else {
             let (operator, _) = self.operator.expect("No operator");
-            operator
+            Ok(operator)
         }
     }
 
@@ -762,7 +759,7 @@ mod test {
         let memoization = memoization(metadata.clone());
 
         let expr = build_tree(metadata.clone(), memoization.clone(), |operator_builder| {
-            Ok(operator_builder.get("A", vec!["a1"])?.build())
+            operator_builder.get("A", vec!["a1"])?.build()
         })
         .unwrap();
 
@@ -790,7 +787,7 @@ Memo:
             let ord = OrderingOption::by(("a1", false));
             let tree = operator_builder.get("A", vec!["a1"])?.order_by(ord)?;
 
-            Ok(tree.build())
+            tree.build()
         })
         .unwrap();
 
@@ -822,8 +819,7 @@ Memo:
                 rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Int32(100))),
             };
 
-            let filter = filter;
-            Ok(operator_builder.get("A", vec!["a1"])?.select(Some(filter))?.build())
+            operator_builder.get("A", vec!["a1"])?.select(Some(filter))?.build()
         })
         .unwrap();
 
@@ -855,7 +851,7 @@ Memo:
             let projection_list =
                 vec![ScalarExpr::ColumnName("a2".into()), ScalarExpr::Scalar(ScalarValue::Int32(100))];
 
-            Ok(operator_builder.get("A", vec!["a1", "a2"])?.project(projection_list)?.build())
+            operator_builder.get("A", vec!["a1", "a2"])?.project(projection_list)?.build()
         })
         .unwrap();
 
@@ -892,11 +888,11 @@ Memo:
 
             let projection_list2 = vec![ScalarExpr::ColumnName("a2".into())];
 
-            Ok(operator_builder
+            operator_builder
                 .get("A", vec!["a1", "a2"])?
                 .project(projection_list1)?
                 .project(projection_list2)?
-                .build())
+                .build()
         })
         .unwrap();
 
@@ -931,7 +927,7 @@ Memo:
             let right = operator_builder.get("B", vec!["b1", "b2"])?;
             let join = left.join_using(right, vec![("a1", "b2")])?;
 
-            Ok(join.build())
+            join.build()
         })
         .unwrap();
 
@@ -984,7 +980,7 @@ Memo:
             };
             let select = from_a.select(Some(filter))?;
 
-            Ok(select.build())
+            select.build()
         })
         .unwrap();
 
@@ -1030,18 +1026,17 @@ Memo:
             let from_b = operator_builder.get("B", vec!["b1"])?;
             let _sub_query = from_b.to_sub_query()?;
 
-            Ok(())
+            panic!("Created sub query from a non sub query build")
         });
-        assert!(err.is_err(), "Created sub query from a non sub query build");
     }
 
-    fn build_tree<F, T>(
+    fn build_tree<F>(
         metadata: OperatorMetadata,
         memoization: Rc<dyn MemoizationHandler>,
         mut f: F,
-    ) -> Result<T, OptimizerError>
+    ) -> Result<Operator, OptimizerError>
     where
-        F: FnMut(OperatorBuilder) -> Result<T, OptimizerError>,
+        F: FnMut(OperatorBuilder) -> Result<Operator, OptimizerError>,
     {
         let catalog = Arc::new(MutableCatalog::new());
         catalog.add_table(

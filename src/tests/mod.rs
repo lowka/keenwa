@@ -27,7 +27,8 @@ fn test_get() {
     tester.set_operator(|builder| {
         let from_a = builder.get("A", vec!["a1", "a2"])?;
         let projection = from_a.project_cols(vec!["a1", "a2"])?;
-        Ok(projection.build())
+
+        projection.build()
     });
 
     tester.optimize(
@@ -49,7 +50,7 @@ fn test_join() {
         let join = join.join_using(right, vec![("a1", "b1")])?;
         let project = join.project_cols(vec!["a1", "a2", "b1"])?;
 
-        Ok(project.build())
+        project.build()
     });
 
     tester.add_rules(|_| vec![Box::new(HashJoinRule)]);
@@ -74,7 +75,8 @@ fn test_select() {
     tester.set_operator(|builder| {
         let filter = filter_expr("a1", ScalarValue::Int32(10));
         let select = builder.get("A", vec!["a1", "a2"])?.select(filter)?;
-        Ok(select.build())
+
+        select.build()
     });
 
     tester.set_table_access_cost("A", 100);
@@ -101,9 +103,9 @@ fn test_select_with_a_nested_query() {
             op: BinaryOp::Gt,
             rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Int32(1))),
         };
-
         let select = from_a.select(Some(filter))?;
-        Ok(select.build())
+
+        select.build()
     });
 
     tester.set_table_access_cost("A", 100);
@@ -127,7 +129,8 @@ fn test_get_ordered_top_level_enforcer() {
         let from_a = builder.get("A", vec!["a1", "a2"])?;
         let select = from_a.select(filter_expr("a1", ScalarValue::Int32(10)))?;
         let select = select.order_by(OrderingOption::by(("a2", false)))?;
-        Ok(select.build())
+
+        select.build()
     });
 
     tester.set_table_access_cost("A", 100);
@@ -151,7 +154,8 @@ fn test_get_ordered_no_top_level_enforcer() {
         let from_a = builder.get("A", vec!["a1", "a2"])?;
         let select = from_a.select(filter_expr("a1", ScalarValue::Int32(10)))?;
         let select = select.order_by(OrderingOption::by(("a2", false)))?;
-        Ok(select.build())
+
+        select.build()
     });
 
     tester.set_table_access_cost("A", 100);
@@ -175,7 +179,8 @@ fn test_get_ordered() {
     tester.set_operator(|builder| {
         let from_a = builder.get("A", vec!["a1", "a2"])?;
         let ordered = from_a.order_by(OrderingOption::by(("a1", false)))?;
-        Ok(ordered.build())
+
+        ordered.build()
     });
 
     tester.add_rules(|_| vec![Box::new(SelectRule)]);
@@ -199,7 +204,8 @@ fn test_join_commutativity() {
 
         let join = left.join_using(right, vec![("a1", "b1")])?;
         let select = join.select(filter_expr("a1", ScalarValue::Int32(10)))?;
-        Ok(select.build())
+
+        select.build()
     });
 
     tester.add_rules(|_| vec![Box::new(HashJoinRule), Box::new(JoinCommutativityRule)]);
@@ -231,7 +237,7 @@ fn test_join_commutativity_ordered() {
         let select = join.select(filter_expr("a1", ScalarValue::Int32(10)))?;
         let ordered = select.order_by(OrderingOption::by(("a1", false)))?;
 
-        Ok(ordered.build())
+        ordered.build()
     });
 
     tester.add_rules(|_| vec![Box::new(HashJoinRule), Box::new(JoinCommutativityRule)]);
@@ -260,7 +266,8 @@ fn test_prefer_already_sorted_data() {
         let from_a = builder.get("A", vec!["a1", "a2"])?;
         let ordering = vec![OrderingOption::by(("a1", false)), OrderingOption::by(("a2", false))];
         let ordered = from_a.order_by(OrderingOptions::new(ordering))?;
-        Ok(ordered.build())
+
+        ordered.build()
     });
 
     tester.add_rules(|catalog| vec![Box::new(IndexOnlyScanRule::new(catalog))]);
@@ -293,9 +300,9 @@ fn test_merge_join_requires_sorted_inputs() {
     tester.set_operator(|builder| {
         let left = builder.clone().get("A", vec!["a1", "a2"])?;
         let right = builder.get("B", vec!["b1", "b2"])?;
-
         let join = left.join_using(right, vec![("a1", "b2")])?;
-        Ok(join.build())
+
+        join.build()
     });
 
     tester.add_rules(|_| vec![Box::new(MergeSortJoinRule)]);
@@ -324,7 +331,8 @@ fn test_merge_join_satisfies_ordering_requirements() {
 
         let join = left.join_using(right, vec![("a1", "b2")])?;
         let ordered = join.order_by(OrderingOption::by(("a1", false)))?;
-        Ok(ordered.build())
+
+        ordered.build()
     });
 
     tester.add_rules(|_| vec![Box::new(MergeSortJoinRule)]);
@@ -354,7 +362,7 @@ fn test_merge_join_does_no_satisfy_ordering_requirements() {
         let join = left.join_using(right, vec![("a1", "b2")])?;
         let ordered = join.order_by(OrderingOption::by(("b1", false)))?;
 
-        Ok(ordered.build())
+        ordered.build()
     });
 
     tester.add_rules(|_| vec![Box::new(MergeSortJoinRule)]);
@@ -384,7 +392,8 @@ fn test_self_joins() {
 
         let join = left.join_using(right, vec![("a1", "a1")])?;
         let ordered = join.order_by(OrderingOption::by(("a1", false)))?;
-        Ok(ordered.build())
+
+        ordered.build()
     });
 
     tester.add_rules(|_| vec![Box::new(HashJoinRule), Box::new(MergeSortJoinRule)]);
@@ -428,7 +437,8 @@ fn test_self_joins_inner_sort_should_be_ignored() {
         let right = builder.get("A", vec!["a1", "a2"])?;
         let join = inner.join_using(right, vec![("a1", "a1")])?;
         let ordered = join.order_by(OrderingOption::by(("a1", false)))?;
-        Ok(ordered.build())
+
+        ordered.build()
     });
 
     tester.add_rules(|_| vec![Box::new(HashJoinRule), Box::new(MergeSortJoinRule)]);
@@ -478,7 +488,8 @@ fn test_inner_sort_with_enforcer() {
         let join = left.join_using(right, vec![("a1", "a1")])?;
         let ordered = join.order_by(OrderingOption::by(("a1", false)))?;
         let select = ordered.select(filter_expr("a1", ScalarValue::Int32(10)))?;
-        Ok(select.build())
+
+        select.build()
     });
 
     tester.add_rules(|_| vec![Box::new(HashJoinRule), Box::new(SelectRule)]);
@@ -507,9 +518,9 @@ fn test_inner_sort_satisfied_by_ordering_providing_operator() {
         let right = builder.get("A", vec!["a1", "a2"])?;
         let join = left.join_using(right, vec![("a1", "a1")])?;
         let ordered = join.order_by(OrderingOption::by(("a1", false)))?;
-
         let select = ordered.select(filter_expr("a1", ScalarValue::Int32(10)))?;
-        Ok(select.build())
+
+        select.build()
     });
 
     tester.add_rules(|_| vec![Box::new(MergeSortJoinRule), Box::new(SelectRule)]);
@@ -541,9 +552,9 @@ fn test_join_associativity_ax_bxc() {
         let right = builder.clone().get("B", vec!["b1", "b2"])?;
         let from_c = builder.clone().get("C", vec!["c1", "c2"])?;
         let right = right.join_using(from_c, vec![("b1", "c2")])?;
-
         let join = left.join_using(right, vec![("a1", "b1")])?;
-        Ok(join.build())
+
+        join.build()
     });
 
     tester
@@ -604,11 +615,10 @@ fn test_join_associativity_axb_xc() {
         let left = builder.clone().get("A", vec!["a1", "a2"])?;
         let from_b = builder.clone().get("B", vec!["b1", "b2"])?;
         let left = left.join_using(from_b, vec![("a1", "b2")])?;
-
         let from_c = builder.get("C", vec!["c1", "c2"])?;
         let join = left.join_using(from_c, vec![("a1", "c2")])?;
 
-        Ok(join.build())
+        join.build()
     });
 
     tester
@@ -638,7 +648,8 @@ fn test_enforce_grouping() {
     tester.set_operator(|builder| {
         let mut from_a = builder.get("A", vec!["a1", "a2"])?;
         let aggr = from_a.aggregate_builder().add_func("count", "a1")?.group_by("a2")?.build()?;
-        Ok(aggr.build())
+
+        aggr.build()
     });
 
     tester.add_rules(|_| vec![Box::new(HashAggregateRule)]);
@@ -662,9 +673,9 @@ fn test_union() {
     tester.set_operator(|builder| {
         let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
         let from_b = builder.get("B", vec!["b1", "b2"])?;
-
         let union = from_a.clone().union(from_b.clone())?;
-        Ok(union.build())
+
+        union.build()
     });
 
     tester.set_table_access_cost("A", 100);
@@ -685,9 +696,8 @@ fn test_union() {
     tester.set_operator(|builder| {
         let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
         let from_b = builder.get("B", vec!["b1", "b2"])?;
-
         let union = from_a.union_all(from_b)?;
-        Ok(union.build())
+        union.build()
     });
 
     tester.optimize(
@@ -715,7 +725,7 @@ fn test_nested_loop_join() {
         let join = left.join_on(right, expr)?;
         let projection = join.project_cols(vec!["a1", "a2", "b1"])?;
 
-        Ok(projection.build())
+        projection.build()
     });
 
     tester.add_rules(|_| vec![Box::new(NestedLoopJoin)]);
