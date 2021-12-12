@@ -142,6 +142,8 @@ impl OperatorExpr {
 
 /// Properties of an operator.
 #[derive(Debug, Clone, Default)]
+//TODO: Split properties into relational properties and scalar properties.
+// Move (logical, required) to RelationalProperties.
 pub struct Properties {
     pub(crate) logical: LogicalProperties,
     pub(crate) required: PhysicalProperties,
