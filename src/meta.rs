@@ -12,9 +12,8 @@ pub struct Metadata {
     columns: Vec<ColumnMetadata>,
 }
 
-/// Column metadata stores information about some column. If the table property is set then this is information about
-/// a column in that database table. Otherwise this is a metadata of a synthetic column derived
-/// from a column in a projection list.
+/// Column metadata. If the table property is set then this is information about a column that belongs
+/// to a database table. Otherwise this is a metadata of a synthetic column derived from an expression in a projection list.
 #[derive(Debug, Clone)]
 pub struct ColumnMetadata {
     id: ColumnId,
@@ -105,16 +104,9 @@ impl MutableMetadata {
         }
     }
 
-    pub fn from(metadata: Metadata) -> Self {
-        let columns = metadata.columns;
-        let inner = MutableMetadataInner { columns };
-        MutableMetadata {
-            inner: RefCell::new(inner),
-        }
-    }
-
-    /// Adds a new column to this metadata.
-    // FIXME: Update docs.
+    /// Adds a new column to this metadata. When the given column belongs to a table this method first checks
+    /// if such column already exists and if so returns its identifier.
+    /// When the given column is synthetic this method always adds it as new column to this metadata.
     pub fn add_column(&self, mut column: ColumnMetadata) -> ColumnId {
         let mut inner = self.inner.borrow_mut();
         if let Some(column) = inner
