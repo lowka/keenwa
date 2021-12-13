@@ -32,7 +32,7 @@ impl Statistics {
     ///
     /// # Panics
     ///
-    /// This method panics if the `row_count` is negative or the `selectivity` lies outside `[0.0, 1.0]` bounds.
+    /// This method panics if the row_count is negative or the selectivity lies outside of `[0.0, 1.0]` bounds.
     pub fn new(row_count: f64, selectivity: f64) -> Self {
         assert!(row_count >= 0f64, "row_count must be non negative");
         assert!(
@@ -44,11 +44,19 @@ impl Statistics {
     }
 
     /// Creates a new statistics with selectivity set to the given value.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if the given selectivity lies outside of `[0.0, 1.0]` bounds.
     pub fn from_selectivity(selectivity: f64) -> Self {
         Statistics::new(0.0, selectivity)
     }
 
     /// Creates a new statistics with row_count set to the given value.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if row_count is negative.
     pub fn from_row_count(row_count: f64) -> Self {
         Statistics::new(row_count, Self::DEFAULT_SELECTIVITY)
     }

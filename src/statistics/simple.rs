@@ -13,12 +13,10 @@ use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+
 /// A simple implementation of [StatisticsBuilder](super::StatisticsBuilder) that information available in a [database catalog].
 ///
 /// [database catalog]: crate::catalog::Catalog
-// FIXME: (MemoMetadata) remove dependency on Catalog and instead add method to set statistics manually.
-//  Add method that sets the number of rows per table.
-//  Add method that specifies predicate selectivity (directly or indirectly ag. select filter selectivity = select (row count)/ input (row count) )
 #[derive(Debug)]
 pub struct SimpleCatalogStatisticsBuilder<T> {
     catalog: CatalogRef,
@@ -63,12 +61,11 @@ where
         input: &RelNode,
         filter: Option<&ScalarNode>,
     ) -> Result<Option<Statistics>, OptimizerError> {
-        let selectivity = if let Some(filter) = filter {
-            self.selectivity_provider.get_selectivity(filter.expr(), expr, logical, metadata)
-        } else {
-            Some(Statistics::DEFAULT_SELECTIVITY)
-        }
-        .unwrap();
+        let selectivity = filter
+            .map(|f| self.selectivity_provider.get_selectivity(f.expr(), expr, logical, metadata))
+            .flatten()
+            .unwrap_or_else(|| Statistics::DEFAULT_SELECTIVITY);
+
         let logical = input.props().logical();
         let input_statistics = logical.statistics().unwrap();
         let row_count = selectivity * input_statistics.row_count();
