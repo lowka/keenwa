@@ -36,7 +36,7 @@ pub struct OptimizerTester {
     rules_filter: Box<dyn Fn(&Box<dyn Rule>) -> bool>,
     shuffle_rules: bool,
     explore_with_enforcer: bool,
-    table_access_costs: HashMap<String, usize>,
+    row_count_per_table: HashMap<String, usize>,
     update_selectivity: Box<dyn Fn(&PrecomputedSelectivityStatistics)>,
     operator: Box<dyn Fn(OperatorBuilder) -> Result<Operator, OptimizerError>>,
     update_catalog: Box<dyn Fn(&MutableCatalog)>,
@@ -59,7 +59,7 @@ impl OptimizerTester {
             rules_filter: Box::new(|_r| true),
             shuffle_rules: true,
             explore_with_enforcer: true,
-            table_access_costs: HashMap::new(),
+            row_count_per_table: HashMap::new(),
             operator: Box::new(|_| panic!("operator has not been specified")),
             update_selectivity: Box::new(|_| {}),
             update_catalog: Box::new(|_| {}),
@@ -108,10 +108,12 @@ impl OptimizerTester {
         self.update_catalog = Box::new(f);
     }
 
-    pub fn set_table_access_cost(&mut self, table: &str, cost: usize) {
-        self.table_access_costs.insert(table.into(), cost);
+    /// Sets row count for the given table.
+    pub fn set_table_row_count(&mut self, table: &str, row_count: usize) {
+        self.row_count_per_table.insert(table.into(), row_count);
     }
 
+    /// Updates selectivity statistics
     //FIXME: Combine with set_table_access_cost
     pub fn update_statistics<F>(&mut self, f: F)
     where
@@ -155,7 +157,7 @@ impl OptimizerTester {
 
         let memoization = Rc::new(MemoizeOperatorCallback::new(memo));
         let mutable_catalog = self.catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();
-        tables.register_statistics(mutable_catalog, self.table_access_costs.clone());
+        tables.register_statistics(mutable_catalog, self.row_count_per_table.clone());
 
         (self.update_catalog)(mutable_catalog);
         (self.update_selectivity)(self.selectivity_provider.as_ref());

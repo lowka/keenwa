@@ -25,7 +25,7 @@ fn columns_expr(cols: Vec<impl Into<String>>) -> Vec<ScalarExpr> {
 fn test_get() {
     let mut tester = OptimizerTester::new();
 
-    tester.set_table_access_cost("A", 100);
+    tester.set_table_row_count("A", 100);
 
     tester.set_operator(|builder| {
         let from_a = builder.get("A", vec!["a1", "a2"])?;
@@ -60,8 +60,8 @@ fn test_join() {
 
     tester.add_rules(|_| vec![Box::new(HashJoinRule)]);
 
-    tester.set_table_access_cost("A", 100);
-    tester.set_table_access_cost("B", 120);
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("B", 120);
 
     tester.optimize(
         r#"
@@ -84,7 +84,7 @@ fn test_select() {
         select.build()
     });
 
-    tester.set_table_access_cost("A", 100);
+    tester.set_table_row_count("A", 100);
 
     tester.optimize(
         r#"
@@ -113,8 +113,8 @@ fn test_select_with_a_nested_query() {
         select.build()
     });
 
-    tester.set_table_access_cost("A", 100);
-    tester.set_table_access_cost("B", 100);
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("B", 100);
 
     tester.optimize(
         r#"
@@ -138,7 +138,7 @@ fn test_get_ordered_top_level_enforcer() {
         select.build()
     });
 
-    tester.set_table_access_cost("A", 100);
+    tester.set_table_row_count("A", 100);
     tester.update_statistics(|p| p.set_selectivity("col:a1 > 10", 0.1));
 
     tester.optimize(
@@ -163,7 +163,7 @@ fn test_get_ordered_no_top_level_enforcer() {
         select.build()
     });
 
-    tester.set_table_access_cost("A", 100);
+    tester.set_table_row_count("A", 100);
     tester.update_statistics(|p| p.set_selectivity("col:a1 > 10", 0.1));
 
     tester.explore_with_enforcer(false);
@@ -190,7 +190,7 @@ fn test_get_ordered() {
 
     tester.add_rules(|_| vec![Box::new(SelectRule)]);
 
-    tester.set_table_access_cost("A", 100);
+    tester.set_table_row_count("A", 100);
     tester.optimize(
         r#"
 00 Sort [00] ord=[1]
@@ -215,8 +215,8 @@ fn test_join_commutativity() {
 
     tester.add_rules(|_| vec![Box::new(HashJoinRule), Box::new(JoinCommutativityRule)]);
 
-    tester.set_table_access_cost("A", 100);
-    tester.set_table_access_cost("B", 10);
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("B", 10);
 
     tester.optimize(
         r#"
@@ -247,8 +247,8 @@ fn test_join_commutativity_ordered() {
 
     tester.add_rules(|_| vec![Box::new(HashJoinRule), Box::new(JoinCommutativityRule)]);
 
-    tester.set_table_access_cost("A", 100);
-    tester.set_table_access_cost("B", 110);
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("B", 110);
     tester.update_statistics(|p| p.set_selectivity("col:a1 > 10", 0.1));
 
     tester.optimize(
@@ -288,8 +288,8 @@ fn test_prefer_already_sorted_data() {
         catalog.add_index(DEFAULT_SCHEMA, index);
     });
 
-    tester.set_table_access_cost("A", 100);
-    tester.set_table_access_cost("Index:A", 20);
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("Index:A", 20);
 
     tester.optimize(
         r#"
@@ -312,8 +312,8 @@ fn test_merge_join_requires_sorted_inputs() {
 
     tester.add_rules(|_| vec![Box::new(MergeSortJoinRule)]);
 
-    tester.set_table_access_cost("A", 100);
-    tester.set_table_access_cost("B", 100);
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("B", 100);
 
     tester.optimize(
         r#"
@@ -342,8 +342,8 @@ fn test_merge_join_satisfies_ordering_requirements() {
 
     tester.add_rules(|_| vec![Box::new(MergeSortJoinRule)]);
 
-    tester.set_table_access_cost("A", 100);
-    tester.set_table_access_cost("B", 100);
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("B", 100);
 
     tester.optimize(
         r#"
@@ -372,8 +372,8 @@ fn test_merge_join_does_no_satisfy_ordering_requirements() {
 
     tester.add_rules(|_| vec![Box::new(MergeSortJoinRule)]);
 
-    tester.set_table_access_cost("A", 100);
-    tester.set_table_access_cost("B", 100);
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("B", 100);
 
     tester.optimize(
         r#"
@@ -403,8 +403,8 @@ fn test_self_joins() {
 
     tester.add_rules(|_| vec![Box::new(HashJoinRule), Box::new(MergeSortJoinRule)]);
 
-    tester.set_table_access_cost("A", 100);
-    tester.set_table_access_cost("B", 50);
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("B", 50);
 
     tester.optimize(
         r#"
@@ -448,8 +448,8 @@ fn test_self_joins_inner_sort_should_be_ignored() {
 
     tester.add_rules(|_| vec![Box::new(HashJoinRule), Box::new(MergeSortJoinRule)]);
 
-    tester.set_table_access_cost("A", 100);
-    tester.set_table_access_cost("B", 50);
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("B", 50);
 
     tester.disable_rules(|r| r.name() == "HashJoinRule");
 
@@ -499,8 +499,8 @@ fn test_inner_sort_with_enforcer() {
 
     tester.add_rules(|_| vec![Box::new(HashJoinRule), Box::new(SelectRule)]);
 
-    tester.set_table_access_cost("A", 100);
-    tester.set_table_access_cost("B", 50);
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("B", 50);
 
     tester.optimize(
         r#"
@@ -530,8 +530,8 @@ fn test_inner_sort_satisfied_by_ordering_providing_operator() {
 
     tester.add_rules(|_| vec![Box::new(MergeSortJoinRule), Box::new(SelectRule)]);
 
-    tester.set_table_access_cost("A", 100);
-    tester.set_table_access_cost("B", 50);
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("B", 50);
     tester.update_statistics(|p| p.set_selectivity("col:a1 > 10", 0.1));
 
     tester.optimize(
@@ -565,9 +565,9 @@ fn test_join_associativity_ax_bxc() {
     tester
         .add_rules(|_| vec![Box::new(HashJoinRule), Box::new(JoinAssociativityRule), Box::new(JoinCommutativityRule)]);
 
-    tester.set_table_access_cost("A", 100);
-    tester.set_table_access_cost("B", 200);
-    tester.set_table_access_cost("C", 500);
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("B", 200);
+    tester.set_table_row_count("C", 500);
 
     tester.disable_rules(|r| r.name() == "JoinCommutativityRule");
 
@@ -583,9 +583,9 @@ fn test_join_associativity_ax_bxc() {
 
     tester.reset_rule_filters();
 
-    tester.set_table_access_cost("A", 100);
-    tester.set_table_access_cost("B", 150);
-    tester.set_table_access_cost("C", 250);
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("B", 150);
+    tester.set_table_row_count("C", 250);
 
     tester.optimize(
         r#"query: Ax[BxC] => Ax[BxC]
@@ -597,9 +597,9 @@ fn test_join_associativity_ax_bxc() {
 "#,
     );
 
-    tester.set_table_access_cost("A", 250);
-    tester.set_table_access_cost("B", 100);
-    tester.set_table_access_cost("C", 150);
+    tester.set_table_row_count("A", 250);
+    tester.set_table_row_count("B", 100);
+    tester.set_table_row_count("C", 150);
 
     tester.optimize(
         r#"query: Ax[BxC] => [BxC]xA
@@ -629,9 +629,9 @@ fn test_join_associativity_axb_xc() {
     tester
         .add_rules(|_| vec![Box::new(HashJoinRule), Box::new(JoinAssociativityRule), Box::new(JoinCommutativityRule)]);
 
-    tester.set_table_access_cost("A", 500);
-    tester.set_table_access_cost("B", 200);
-    tester.set_table_access_cost("C", 300);
+    tester.set_table_row_count("A", 500);
+    tester.set_table_row_count("B", 200);
+    tester.set_table_row_count("C", 300);
 
     tester.disable_rules(|r| r.name() == "JoinCommutativityRule");
 
@@ -659,7 +659,7 @@ fn test_enforce_grouping() {
 
     tester.add_rules(|_| vec![Box::new(HashAggregateRule)]);
 
-    tester.set_table_access_cost("A", 100);
+    tester.set_table_row_count("A", 100);
 
     tester.optimize(
         r#"
@@ -683,8 +683,8 @@ fn test_union() {
         union.build()
     });
 
-    tester.set_table_access_cost("A", 100);
-    tester.set_table_access_cost("B", 100);
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("B", 100);
 
     tester.add_rules(|_| vec![Box::new(UnionRule)]);
 
@@ -736,8 +736,8 @@ fn test_nested_loop_join() {
 
     tester.add_rules(|_| vec![Box::new(NestedLoopJoin)]);
 
-    tester.set_table_access_cost("A", 100);
-    tester.set_table_access_cost("B", 120);
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("B", 120);
 
     tester.optimize(
         r#"
