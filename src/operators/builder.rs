@@ -105,7 +105,7 @@ impl OperatorBuilder {
     }
 
     /// Creates a new builder that shares all properties of the given builder
-    /// and uses the the given operator as a root on operator tree.
+    /// and uses the the given operator as its current on operator tree.
     fn from_builder(builder: &OperatorBuilder, operator: Operator, scope: OperatorScope) -> Self {
         OperatorBuilder {
             callback: builder.callback.clone(),
