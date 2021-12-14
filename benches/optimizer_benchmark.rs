@@ -10,7 +10,7 @@ use keenwa::cost::simple::SimpleCostEstimator;
 use keenwa::datatypes::DataType;
 use keenwa::error::OptimizerError;
 use keenwa::meta::{ColumnId, MutableMetadata};
-use keenwa::operators::builder::{MemoizeWithMemo, OperatorBuilder, OrderingOption};
+use keenwa::operators::builder::{MemoizeOperatorCallback, OperatorBuilder, OrderingOption};
 
 use keenwa::operators::properties::LogicalPropertiesBuilder;
 use keenwa::operators::scalar::expr::BinaryOp;
@@ -74,7 +74,7 @@ fn memo_bench(c: &mut Criterion) {
                         SimpleCatalogStatisticsBuilder::new(catalog.clone(), selectivity_provider.clone());
                     let properties_builder = Rc::new(LogicalPropertiesBuilder::new(statistics_builder));
 
-                    let memoization = Rc::new(MemoizeWithMemo::new(ExprMemo::with_callback(
+                    let memoization = Rc::new(MemoizeOperatorCallback::new(ExprMemo::with_callback(
                         metadata.clone(),
                         Rc::new(SetPropertiesCallback::new(properties_builder.clone())),
                     )));

@@ -11,7 +11,7 @@ use crate::datatypes::DataType;
 use crate::error::OptimizerError;
 use crate::memo::{ExprNodeRef, MemoExpr, MemoExprFormatter, StringMemoFormatter};
 use crate::meta::MutableMetadata;
-use crate::operators::builder::{MemoizeWithMemo, OperatorBuilder};
+use crate::operators::builder::{MemoizeOperatorCallback, OperatorBuilder};
 use crate::operators::properties::LogicalPropertiesBuilder;
 use crate::operators::{ExprMemo, Operator};
 use crate::optimizer::{Optimizer, SetPropertiesCallback};
@@ -153,7 +153,7 @@ impl OptimizerTester {
         let metadata = Rc::new(MutableMetadata::new());
         let memo = ExprMemo::with_callback(metadata.clone(), memo_callback);
 
-        let memoization = Rc::new(MemoizeWithMemo::new(memo));
+        let memoization = Rc::new(MemoizeOperatorCallback::new(memo));
         let mutable_catalog = self.catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();
         tables.register_statistics(mutable_catalog, self.table_access_costs.clone());
 

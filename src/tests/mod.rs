@@ -1,5 +1,5 @@
 use crate::catalog::{Catalog, IndexBuilder, DEFAULT_SCHEMA};
-use crate::operators::builder::{OrderingOption, OrderingOptions};
+use crate::operators::builder::{OperatorBuilder, OrderingOption, OrderingOptions};
 use crate::operators::scalar::expr::*;
 use crate::operators::scalar::value::ScalarValue;
 use crate::operators::scalar::ScalarExpr;
@@ -17,6 +17,10 @@ fn filter_expr(left: &str, value: ScalarValue) -> Option<ScalarExpr> {
     Some(expr)
 }
 
+fn columns_expr(cols: Vec<impl Into<String>>) -> Vec<ScalarExpr> {
+    cols.into_iter().map(|c| ScalarExpr::ColumnName(c.into())).collect()
+}
+
 #[test]
 fn test_get() {
     let mut tester = OptimizerTester::new();
@@ -25,7 +29,8 @@ fn test_get() {
 
     tester.set_operator(|builder| {
         let from_a = builder.get("A", vec!["a1", "a2"])?;
-        let projection = from_a.project_cols(vec!["a1", "a2"])?;
+        let columns = columns_expr(vec!["a1", "a2"]);
+        let projection = from_a.project(columns)?;
 
         projection.build()
     });
@@ -47,7 +52,8 @@ fn test_join() {
         let right = builder.get("B", vec!["b1", "b2"])?;
 
         let join = join.join_using(right, vec![("a1", "b1")])?;
-        let project = join.project_cols(vec!["a1", "a2", "b1"])?;
+        let columns = columns_expr(vec!["a1", "a2", "b1"]);
+        let project = join.project(columns)?;
 
         project.build()
     });
@@ -722,7 +728,8 @@ fn test_nested_loop_join() {
             rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Int32(100))),
         };
         let join = left.join_on(right, expr)?;
-        let projection = join.project_cols(vec!["a1", "a2", "b1"])?;
+        let columns = columns_expr(vec!["a1", "a2", "b1"]);
+        let projection = join.project(columns)?;
 
         projection.build()
     });

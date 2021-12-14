@@ -7,7 +7,7 @@ use crate::operators::relational::logical::{LogicalExpr, SetOperator};
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::{AggregateFunction, BinaryOp, Expr, ExprRewriter};
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
-use crate::operators::{ExprMemo, Operator, OperatorExpr, Properties};
+use crate::operators::{ExprMemo, Operator, OperatorExpr};
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::OrderingChoice;
 use itertools::Itertools;
@@ -72,20 +72,20 @@ impl From<OrderingOption> for OrderingOptions {
     }
 }
 
-/// Callback invoked when a new operator is created by an [operator builder](self::OperatorBuilder).
-//FIXME: Rename to operator callback.
-pub trait MemoizationHandler {
-    fn memoize_rel(&self, expr: Operator) -> RelNode;
+/// Callback invoked when a new operator is added to an operator tree by a [operator builder](self::OperatorBuilder).
+pub trait OperatorCallback {
+    /// Called when a new relational expression is added to an operator tree.
+    fn new_rel_expr(&self, expr: Operator) -> RelNode;
 
-    fn memoize_scalar(&self, expr: Operator) -> ScalarNode;
+    /// Called when a new scalar expression is added to an operator tree.
+    fn new_scalar_expr(&self, expr: Operator) -> ScalarNode;
 }
 
-/// Provides API to build an [operator tree](super::Operator).
-//FIXME: Method that add operators must accept &mut (allows storing in SQL syntax tree parser as a field etc)
-//FIXME: use column aliases instead of column ids in public API
-#[derive(Debug, Clone)]
+/// Provides API to build a tree of [operator tree](super::Operator).
+/// When an operator is added to the tree this builder calls an appropriate method of an [operator callback](self::OperatorCallback).
+#[derive(Clone)]
 pub struct OperatorBuilder {
-    memoization: Rc<dyn MemoizationHandler>,
+    callback: Rc<dyn OperatorCallback>,
     catalog: CatalogRef,
     metadata: Rc<MutableMetadata>,
     operator: Option<(Operator, OperatorScope)>,
@@ -93,10 +93,10 @@ pub struct OperatorBuilder {
 }
 
 impl OperatorBuilder {
-    /// Creates a new instance of operator builder that uses the given [catalog](crate::catalog::Catalog).
-    pub fn new(memoization: Rc<dyn MemoizationHandler>, catalog: CatalogRef, metadata: Rc<MutableMetadata>) -> Self {
+    /// Creates a new instance of OperatorBuilder.
+    pub fn new(callback: Rc<dyn OperatorCallback>, catalog: CatalogRef, metadata: Rc<MutableMetadata>) -> Self {
         OperatorBuilder {
-            memoization,
+            callback,
             catalog,
             metadata,
             operator: None,
@@ -104,13 +104,15 @@ impl OperatorBuilder {
         }
     }
 
-    fn with_parent(parent: &OperatorBuilder, operator: Operator, scope: OperatorScope) -> Self {
+    /// Creates a new builder that shares all properties of the given builder
+    /// and uses the the given operator as a root on operator tree.
+    fn from_builder(builder: &OperatorBuilder, operator: Operator, scope: OperatorScope) -> Self {
         OperatorBuilder {
-            memoization: parent.memoization.clone(),
-            catalog: parent.catalog.clone(),
-            metadata: parent.metadata.clone(),
+            callback: builder.callback.clone(),
+            catalog: builder.catalog.clone(),
+            metadata: builder.metadata.clone(),
             operator: Some((operator, scope)),
-            sub_query_builder: parent.sub_query_builder,
+            sub_query_builder: builder.sub_query_builder,
         }
     }
 
@@ -166,7 +168,7 @@ impl OperatorBuilder {
             rewriter.result?;
 
             let expr = OperatorExpr::Scalar(filter);
-            let expr = self.memoization.memoize_scalar(Operator::from(expr));
+            let expr = self.callback.new_scalar_expr(Operator::from(expr));
             Some(expr)
         } else {
             None
@@ -176,12 +178,6 @@ impl OperatorBuilder {
 
         self.add_operator(expr, scope);
         Ok(self)
-    }
-
-    /// Adds a projection operator to an operator tree.
-    pub fn project_cols(self, columns: Vec<impl Into<String>>) -> Result<Self, OptimizerError> {
-        let exprs = columns.into_iter().map(|name| ScalarExpr::ColumnName(name.into())).collect();
-        self.project(exprs)
     }
 
     /// Adds a projection operator to an operator tree.
@@ -359,7 +355,7 @@ impl OperatorBuilder {
     /// Creates a builder that can be used to construct a nested sub-query.
     pub fn sub_query_builder(&self) -> Self {
         OperatorBuilder {
-            memoization: self.memoization.clone(),
+            callback: self.callback.clone(),
             catalog: self.catalog.clone(),
             metadata: self.metadata.clone(),
             operator: None,
@@ -461,11 +457,32 @@ impl OperatorBuilder {
             .take()
             .ok_or_else(|| OptimizerError::Internal("No input operator".to_string()))?;
 
-        let rel_node = self.memoization.memoize_rel(operator);
+        let rel_node = self.callback.new_rel_expr(operator);
         Ok((rel_node, scope))
     }
 }
 
+impl Debug for OperatorBuilder {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        //[E0658]: trait upcasting coercion is experimental
+        let catalog = format!("{:?}", self.catalog.as_ref());
+        if let Some((operator, scope)) = self.operator.as_ref() {
+            f.debug_struct("OperatorBuilder")
+                .field("catalog", &catalog)
+                .field("metadata", self.metadata.as_ref())
+                .field("operator", operator)
+                .field("scope", scope)
+                .finish()
+        } else {
+            f.debug_struct("OperatorBuilder")
+                .field("catalog", &catalog)
+                .field("metadata", self.metadata.as_ref())
+                .finish()
+        }
+    }
+}
+
+/// Stores columns available to the current node of an operator tree.
 #[derive(Debug, Clone)]
 struct OperatorScope {
     // (alias, column_id)
@@ -508,10 +525,10 @@ impl ExprRewriter<RelNode> for RewriteExprs<'_> {
                 }
             }
             ScalarExpr::SubQuery(RelNode::Expr(_)) => {
-                // FIXME: Return the following error when Memoization will be enabled in OptimizerTester::builder()
-                // self.result = Err(OptimizerError::Internal(format!(
-                //     "Use sub_query_builder/to_sub_query to construct nested sub queries"
-                // )));
+                //FIXME: Add a method to handle nested relational expressions to OperatorCallback?
+                self.result = Err(OptimizerError::Internal(format!(
+                    "Use OperatorBuilder::sub_query_builder to build a nested sub query"
+                )));
                 expr
             }
             _ => expr,
@@ -568,8 +585,9 @@ impl AggregateBuilder<'_> {
 
                 let column_meta = ColumnMetadata::new_synthetic_column(name.clone(), data_type, Some(expr.clone()));
                 let id = metadata.add_column(column_meta);
+                let expr = self.builder.callback.new_scalar_expr(Operator::from(OperatorExpr::Scalar(expr)));
 
-                Ok((ScalarNode::from(expr), (name, id)))
+                Ok((expr, (name, id)))
             })
             .collect();
         let aggr_exprs = aggr_exprs?;
@@ -587,8 +605,9 @@ impl AggregateBuilder<'_> {
                 let expr = ScalarExpr::ColumnName(name);
                 let expr = expr.rewrite(&mut rewriter);
                 rewriter.result?;
+                let expr = self.builder.callback.new_scalar_expr(Operator::from(OperatorExpr::Scalar(expr)));
 
-                Ok(ScalarNode::from(expr))
+                Ok(expr)
             })
             .collect();
         let group_exprs = group_exprs?;
@@ -601,7 +620,7 @@ impl AggregateBuilder<'_> {
         };
         let operator = Operator::from(OperatorExpr::from(aggregate));
 
-        Ok(OperatorBuilder::with_parent(
+        Ok(OperatorBuilder::from_builder(
             self.builder,
             operator,
             OperatorScope {
@@ -611,36 +630,38 @@ impl AggregateBuilder<'_> {
     }
 }
 
-/// No memoization.
-pub struct NoMemoization;
+/// [OperatorCallback] that does nothing.
+pub struct NoOpOperatorCallback;
 
-impl MemoizationHandler for NoMemoization {
-    fn memoize_rel(&self, expr: Operator) -> RelNode {
+impl OperatorCallback for NoOpOperatorCallback {
+    fn new_rel_expr(&self, expr: Operator) -> RelNode {
+        assert!(expr.expr().is_relational(), "Not a relational expression");
         RelNode::from(expr)
     }
 
-    fn memoize_scalar(&self, expr: Operator) -> ScalarNode {
+    fn new_scalar_expr(&self, expr: Operator) -> ScalarNode {
+        assert!(expr.expr().is_scalar(), "Not a scalar expression");
         ScalarNode::Expr(Box::new(expr))
     }
 }
 
-impl Debug for dyn MemoizationHandler {
+impl Debug for dyn OperatorCallback {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "MemoizationHandler")
+        write!(f, "OperatorCallback")
     }
 }
 
 /// A callback that copies operators into a memo.
 #[derive(Debug)]
-pub struct MemoizeWithMemo {
+pub struct MemoizeOperatorCallback {
     // RefCell is necessary because the memo is shared by multiple operator builders.
     memo: RefCell<ExprMemo>,
 }
 
-impl MemoizeWithMemo {
+impl MemoizeOperatorCallback {
     /// Creates a callback that uses the given memo.
     pub fn new(memo: ExprMemo) -> Self {
-        MemoizeWithMemo {
+        MemoizeOperatorCallback {
             memo: RefCell::new(memo),
         }
     }
@@ -651,14 +672,16 @@ impl MemoizeWithMemo {
     }
 }
 
-impl MemoizationHandler for MemoizeWithMemo {
-    fn memoize_rel(&self, expr: Operator) -> RelNode {
+impl OperatorCallback for MemoizeOperatorCallback {
+    fn new_rel_expr(&self, expr: Operator) -> RelNode {
+        assert!(expr.expr().is_relational(), "Expected a relational expression but got {:?}", expr);
         let mut memo = self.memo.borrow_mut();
         let (group, _) = memo.insert_group(expr);
         RelNode::Group(group)
     }
 
-    fn memoize_scalar(&self, expr: Operator) -> ScalarNode {
+    fn new_scalar_expr(&self, expr: Operator) -> ScalarNode {
+        assert!(expr.expr().is_scalar(), "Expected a scalar expression but got {:?}", expr);
         let mut memo = self.memo.borrow_mut();
         let (group, _) = memo.insert_group(expr);
         ScalarNode::Group(group)
@@ -958,20 +981,50 @@ Memo:
             panic!("Created sub query from a non sub query build");
         });
 
-        tester.expect_error("Should have failed")
+        tester.expect_error("call to OperatorBuilder::sub_query_builder()")
+    }
+
+    #[test]
+    fn test_prohibit_non_memoized_expressions_in_nested_sub_queries() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
+
+            let expr = ScalarExpr::Aggregate {
+                func: AggregateFunction::Count,
+                args: vec![ScalarExpr::ColumnName("b1".into())],
+                filter: None,
+            };
+
+            let from_b = builder.get("B", vec!["b1"])?.build()?;
+            let expr = ScalarExpr::SubQuery(RelNode::from(from_b));
+
+            let filter = ScalarExpr::BinaryExpr {
+                lhs: Box::new(expr),
+                op: BinaryOp::Gt,
+                rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Int32(10))),
+            };
+
+            let select = from_a.select(Some(filter))?;
+
+            panic!("Non memoized expression in a nested sub query");
+        });
+
+        tester.expect_error("Use OperatorBuilder::sub_query_builder to build a nested sub query")
     }
 
     struct OperatorBuilderTester {
         operator: Box<dyn Fn(OperatorBuilder) -> Result<Operator, OptimizerError>>,
         metadata: Rc<MutableMetadata>,
-        memoization: Rc<MemoizeWithMemo>,
+        memoization: Rc<MemoizeOperatorCallback>,
     }
 
     impl OperatorBuilderTester {
         fn new() -> Self {
             let properties_builder = Rc::new(LogicalPropertiesBuilder::new(NoStatisticsBuilder));
             let metadata = Rc::new(MutableMetadata::new());
-            let memoization = Rc::new(MemoizeWithMemo::new(ExprMemo::with_callback(
+            let memoization = Rc::new(MemoizeOperatorCallback::new(ExprMemo::with_callback(
                 metadata.clone(),
                 Rc::new(SetPropertiesCallback::new(properties_builder)),
             )));
@@ -992,12 +1045,15 @@ Memo:
 
         fn expect_error(mut self, msg: &str) {
             let result = self.do_build_operator();
-            assert!(result.is_err(), "Expected an error: {}", msg)
+            let err = result.expect_err("Expected an error");
+            let actual_err_str = format!("{}", err);
+
+            assert!(actual_err_str.contains(msg), "Unexpected error message. Expected {}. Error: {}", msg, err);
         }
 
         fn expect_expr(mut self, expected: &str) {
             let result = self.do_build_operator();
-            let expr = result.expect("Build failed");
+            let expr = result.expect("Failed to build an operator");
 
             let mut buf = String::new();
             buf.push('\n');
@@ -1012,10 +1068,11 @@ Memo:
             buf.push_str(format!("  output cols: {:?}\n", expr.props().logical().output_columns()).as_str());
             buf.push_str("Metadata:\n");
 
-            let columns: Vec<(ColumnId, ColumnMetadata)> =
-                self.metadata.get_columns().into_iter().sorted_by(|a, b| a.0.cmp(&b.0)).collect();
+            let columns: Vec<ColumnMetadata> =
+                self.metadata.get_columns().into_iter().sorted_by(|a, b| a.id().cmp(b.id())).collect();
 
-            for (id, column) in columns {
+            for column in columns {
+                let id = column.id();
                 let expr = column.expr();
                 let table = column.table();
                 let column_name = if !column.name().is_empty() {

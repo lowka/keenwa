@@ -1,6 +1,8 @@
 use crate::datatypes::DataType;
 use crate::operators::scalar::ScalarExpr;
 use std::cell::{Ref, RefCell};
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 use std::ops::Deref;
 
 /// Uniquely identifies a column within a query.
@@ -49,6 +51,11 @@ impl ColumnMetadata {
             table: None,
             expr,
         }
+    }
+
+    /// Returns the identifier of this column.
+    pub fn id(&self) -> &ColumnId {
+        &self.id
     }
 
     /// Returns the name of this column.
@@ -104,25 +111,32 @@ impl MutableMetadata {
         }
     }
 
-    /// Adds a new column to this metadata. When the given column belongs to a table this method first checks
+    /// Adds a new column to this metadata and returns its metadata identifier.
+    /// When the given column belongs to a table this method first checks
     /// if such column already exists and if so returns its identifier.
     /// When the given column is synthetic this method always adds it as new column to this metadata.
     pub fn add_column(&self, mut column: ColumnMetadata) -> ColumnId {
         let mut inner = self.inner.borrow_mut();
-        if let Some(column) = inner
-            .columns
-            .iter()
-            .find(|c| c.name == column.name && c.table.as_ref() == column.table.as_ref())
-        {
-            return column.id;
-        };
         let id = inner.columns.len() + 1;
         column.id = id;
+
+        if let Some(table) = column.table.as_ref() {
+            let k = (column.name.clone(), table.clone());
+            match inner.table_columns.entry(k) {
+                Entry::Occupied(o) => {
+                    return *o.get();
+                }
+                Entry::Vacant(v) => {
+                    v.insert(id);
+                }
+            }
+        }
+
         inner.columns.push(column);
         id
     }
 
-    /// Returns column metadata for the given column id.
+    /// Returns column metadata for the given column metadata identifier.
     ///
     /// # Panics
     ///
@@ -139,9 +153,9 @@ impl MutableMetadata {
     }
 
     /// Returns an iterator over available column metadata.
-    pub fn get_columns(&self) -> Vec<(ColumnId, ColumnMetadata)> {
+    pub fn get_columns(&self) -> Vec<ColumnMetadata> {
         let inner = self.inner.borrow();
-        inner.columns.iter().enumerate().map(|(i, c)| (i + 1, c.clone())).collect()
+        inner.columns.iter().cloned().collect()
     }
 
     /// Returns a reference to a this metadata. A reference provides read-view into this metadata.
@@ -165,6 +179,7 @@ impl MutableMetadata {
 #[derive(Debug, Clone, Default)]
 struct MutableMetadataInner {
     columns: Vec<ColumnMetadata>,
+    table_columns: HashMap<(String, String), ColumnId>,
 }
 
 /// A reference to an instance of mutable metadata.
