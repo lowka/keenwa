@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::iter::FromIterator;
 
-use crate::meta::Metadata;
+use crate::meta::MetadataRef;
 use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::relational::RelNode;
@@ -87,11 +87,11 @@ pub enum RuleResult {
 #[derive(Debug)]
 pub struct RuleContext<'m> {
     required_properties: PhysicalProperties,
-    metadata: &'m Metadata,
+    metadata: MetadataRef<'m>,
 }
 
 impl<'m> RuleContext<'m> {
-    pub fn new(required_properties: PhysicalProperties, metadata: &'m Metadata) -> Self {
+    pub fn new(required_properties: PhysicalProperties, metadata: MetadataRef<'m>) -> Self {
         RuleContext {
             required_properties,
             metadata,
@@ -102,8 +102,8 @@ impl<'m> RuleContext<'m> {
         &self.required_properties
     }
 
-    pub fn metadata(&self) -> &Metadata {
-        self.metadata
+    pub fn metadata(&self) -> MetadataRef {
+        self.metadata.clone()
     }
 }
 

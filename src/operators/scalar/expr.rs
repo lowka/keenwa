@@ -4,7 +4,7 @@ use crate::meta::ColumnId;
 use crate::operators::scalar::value::ScalarValue;
 use itertools::Itertools;
 use std::convert::TryFrom;
-use std::fmt::{Debug, Display, Formatter, Write};
+use std::fmt::{Debug, Display, Formatter};
 
 /// Expressions supported by the optimizer.
 #[derive(Debug, Clone)]

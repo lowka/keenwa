@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::GroupRef;
-use crate::properties::statistics::Statistics;
+use crate::statistics::Statistics;
 
 pub mod simple;
 

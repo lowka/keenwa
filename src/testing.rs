@@ -10,17 +10,16 @@ use crate::cost::simple::SimpleCostEstimator;
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
 use crate::memo::{ExprNodeRef, MemoExpr, MemoExprFormatter, StringMemoFormatter};
-use crate::meta::{Metadata, MutableMetadata};
-use crate::operators::builder::{NoMemoization, OperatorBuilder};
-
+use crate::meta::MutableMetadata;
+use crate::operators::builder::{MemoizeOperatorCallback, OperatorBuilder};
+use crate::operators::properties::LogicalPropertiesBuilder;
 use crate::operators::{ExprMemo, Operator};
 use crate::optimizer::{Optimizer, SetPropertiesCallback};
-use crate::properties::logical::LogicalPropertiesBuilder;
-use crate::properties::statistics::CatalogStatisticsBuilder;
 use crate::rules::implementation::{GetToScanRule, ProjectionRule, SelectRule};
 use crate::rules::testing::TestRuleSet;
 use crate::rules::Rule;
 use crate::rules::StaticRuleSet;
+use crate::statistics::simple::{PrecomputedSelectivityStatistics, SimpleCatalogStatisticsBuilder};
 use crate::util::{BestExprContext, BestExprRef, ResultCallback};
 
 static INIT_LOG: Once = Once::new();
@@ -30,15 +29,17 @@ static INIT_LOG: Once = Once::new();
 /// [optimizer]: crate::optimizer::Optimizer
 pub struct OptimizerTester {
     catalog: CatalogRef,
-    properties_builder: Rc<LogicalPropertiesBuilder>,
-    mutable_metadata: Rc<MutableMetadata>,
+    selectivity_provider: Rc<PrecomputedSelectivityStatistics>,
+    properties_builder:
+        Rc<LogicalPropertiesBuilder<SimpleCatalogStatisticsBuilder<Rc<PrecomputedSelectivityStatistics>>>>,
     rules: Box<dyn Fn(CatalogRef) -> Vec<Box<dyn Rule>>>,
     rules_filter: Box<dyn Fn(&Box<dyn Rule>) -> bool>,
-    table_access_costs: HashMap<String, usize>,
     shuffle_rules: bool,
     explore_with_enforcer: bool,
+    row_count_per_table: HashMap<String, usize>,
+    update_selectivity: Box<dyn Fn(&PrecomputedSelectivityStatistics)>,
+    operator: Box<dyn Fn(OperatorBuilder) -> Result<Operator, OptimizerError>>,
     update_catalog: Box<dyn Fn(&MutableCatalog)>,
-    use_metadata: Option<Metadata>,
 }
 
 impl OptimizerTester {
@@ -46,39 +47,23 @@ impl OptimizerTester {
         INIT_LOG.call_once(pretty_env_logger::init);
 
         let catalog = Arc::new(MutableCatalog::new());
-        let statistics_builder = CatalogStatisticsBuilder::new(catalog.clone());
-        let properties_builder = Rc::new(LogicalPropertiesBuilder::new(Box::new(statistics_builder)));
-        let mutable_metadata = Rc::new(MutableMetadata::new());
+        let selectivity_provider = Rc::new(PrecomputedSelectivityStatistics::new());
+        let statistics_builder = SimpleCatalogStatisticsBuilder::new(catalog.clone(), selectivity_provider.clone());
+        let properties_builder = Rc::new(LogicalPropertiesBuilder::new(statistics_builder));
 
         OptimizerTester {
             catalog,
+            selectivity_provider,
             properties_builder,
-            mutable_metadata,
             rules: Box::new(|_| Vec::new()),
             rules_filter: Box::new(|_r| true),
-            table_access_costs: HashMap::new(),
             shuffle_rules: true,
             explore_with_enforcer: true,
+            row_count_per_table: HashMap::new(),
+            operator: Box::new(|_| panic!("operator has not been specified")),
+            update_selectivity: Box::new(|_| {}),
             update_catalog: Box::new(|_| {}),
-            use_metadata: None,
         }
-    }
-
-    /// Creates a new [operator builder](crate::operators::builder::OperatorBuilder).
-    pub fn builder(&self) -> OperatorBuilder {
-        let tables = TestTables::new();
-
-        tables.register(self.catalog.as_ref());
-
-        // Currently instances of OperatorBuilders live between calls to Tester::optimize so it is not possible
-        // to retrieve a mutable reference memo.
-        let memoization = Rc::new(NoMemoization);
-        OperatorBuilder::new(
-            memoization,
-            self.catalog.clone(),
-            self.mutable_metadata.clone(),
-            self.properties_builder.clone(),
-        )
     }
 
     /// A toggle to enable/disable rule shuffling.
@@ -102,10 +87,6 @@ impl OptimizerTester {
         self.rules = Box::new(f);
     }
 
-    pub fn set_table_access_cost(&mut self, table: &str, cost: usize) {
-        self.table_access_costs.insert(table.into(), cost);
-    }
-
     /// Rules that satisfy the given predicate won't be used by the optimizer.
     pub fn disable_rules<F>(&mut self, f: F)
     where
@@ -127,10 +108,26 @@ impl OptimizerTester {
         self.update_catalog = Box::new(f);
     }
 
-    pub fn build_query(&mut self, builder: OperatorBuilder) -> Operator {
-        let (operator, metadata) = builder.build();
-        self.use_metadata = Some(metadata);
-        operator
+    /// Sets row count for the given table.
+    pub fn set_table_row_count(&mut self, table: &str, row_count: usize) {
+        self.row_count_per_table.insert(table.into(), row_count);
+    }
+
+    /// Updates selectivity statistics
+    //FIXME: Combine with set_table_access_cost
+    pub fn update_statistics<F>(&mut self, f: F)
+    where
+        F: Fn(&PrecomputedSelectivityStatistics) + 'static,
+    {
+        self.update_selectivity = Box::new(f)
+    }
+
+    /// Set a function that produces an operator tree.
+    pub fn set_operator<F>(&mut self, f: F)
+    where
+        F: Fn(OperatorBuilder) -> Result<Operator, OptimizerError> + 'static,
+    {
+        self.operator = Box::new(f)
     }
 
     /// Optimizes the given operator tree and compares the result with expected plan.
@@ -147,25 +144,27 @@ impl OptimizerTester {
     ///     expr 1
     ///     expr 2
     ///
-    pub fn optimize(&mut self, operator: Operator, expected_plan: &str) -> Result<(), OptimizerError> {
+    pub fn optimize(&mut self, expected_plan: &str) {
         let tables = TestTables::new();
         let _columns = tables.columns.clone();
 
-        let (operator, metadata) = if let Some(metadata) = self.use_metadata.take() {
-            let mutable_catalog = self.catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();
+        tables.register(self.catalog.as_ref());
 
-            tables.register_statistics(mutable_catalog, self.table_access_costs.clone());
+        let propagate_properties = SetPropertiesCallback::new(self.properties_builder.clone());
+        let memo_callback = Rc::new(propagate_properties);
+        let metadata = Rc::new(MutableMetadata::new());
+        let memo = ExprMemo::with_callback(metadata.clone(), memo_callback);
 
-            (operator, metadata)
-        } else {
-            // let builder =
-            //     TestOperatorTreeBuilder::new(&mut memo, self.catalog.clone(), columns, self.table_access_costs.clone());
-            // builder.build_initialized(operator)
-            panic!("Use OperatorBuilder to create an operator")
-        };
-
+        let memoization = Rc::new(MemoizeOperatorCallback::new(memo));
         let mutable_catalog = self.catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();
+        tables.register_statistics(mutable_catalog, self.row_count_per_table.clone());
+
         (self.update_catalog)(mutable_catalog);
+        (self.update_selectivity)(self.selectivity_provider.as_ref());
+
+        let builder = OperatorBuilder::new(memoization.clone(), self.catalog.clone(), metadata);
+        let rs = (self.operator)(builder);
+        let operator = rs.unwrap();
 
         let mut default_rules: Vec<Box<dyn Rule>> = vec![
             Box::new(GetToScanRule::new(self.catalog.clone())),
@@ -184,13 +183,10 @@ impl OptimizerTester {
 
         let optimizer = Optimizer::new(Rc::new(rules), Rc::new(cost_estimator), Rc::new(result_callback));
 
-        let propagate_properties = SetPropertiesCallback::new(self.properties_builder.clone());
-        let memo_callback = Rc::new(propagate_properties);
-        let mut memo = ExprMemo::with_callback(memo_callback);
+        let memoization = Rc::try_unwrap(memoization).expect("More than one reference exists");
+        let mut memo = memoization.into_inner();
 
-        let _opt_expr = optimizer
-            .optimize(operator, metadata, &mut memo)
-            .expect("Failed to optimize an operator tree");
+        let _opt_expr = optimizer.optimize(operator, &mut memo).expect("Failed to optimize an operator tree");
         let expected_lines: Vec<String> = expected_plan.split('\n').map(|l| l.to_string()).collect();
         let label = if expected_plan.starts_with("query:") {
             expected_lines[0].trim()
@@ -201,7 +197,6 @@ impl OptimizerTester {
         let test_result = TestResultBuilder::result_as_string(test_result);
         let expected_plan = expected_lines.iter().skip(1).map(|s| s.as_ref()).collect::<Vec<&str>>().join("\n");
         assert_eq!(test_result, expected_plan, "{} does not match", label);
-        Ok(())
     }
 }
 

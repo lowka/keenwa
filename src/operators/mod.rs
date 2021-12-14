@@ -1,11 +1,11 @@
 use crate::memo::{
-    CopyInExprs, CopyInNestedExprs, ExprContext, ExprNode, ExprNodeRef, MemoExpr, MemoExprCallback, MemoExprFormatter,
+    CopyInExprs, CopyInNestedExprs, ExprContext, ExprNode, ExprNodeRef, MemoExpr, MemoExprFormatter, MemoGroupCallback,
     NewChildExprs,
 };
+use crate::meta::MutableMetadata;
 use crate::operators::scalar::expr_with_new_inputs;
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
-use crate::properties::statistics::Statistics;
 use relational::join::JoinCondition;
 use relational::logical::LogicalExpr;
 use relational::physical::PhysicalExpr;
@@ -13,15 +13,18 @@ use relational::{RelExpr, RelNode};
 use scalar::expr::ExprVisitor;
 use scalar::{ScalarExpr, ScalarNode};
 use std::fmt::Debug;
+use std::rc::Rc;
 
 pub mod builder;
+pub mod properties;
 pub mod relational;
 pub mod scalar;
 
-pub type ExprMemo = crate::memo::Memo<Operator>;
+pub type OperatorMetadata = Rc<MutableMetadata>;
+pub type ExprMemo = crate::memo::Memo<Operator, OperatorMetadata>;
 pub type GroupRef = crate::memo::MemoGroupRef<Operator>;
 pub type ExprRef = crate::memo::MemoExprRef<Operator>;
-pub type ExprCallback = dyn MemoExprCallback<Expr = Operator, Props = Properties>;
+pub type ExprCallback = dyn MemoGroupCallback<Expr = Operator, Props = Properties, Metadata = OperatorMetadata>;
 
 /// An operator is an expression (which can be either logical or physical) with a set of properties.
 /// A tree of operators can represent both initial (unoptimized) and optimized query plans.
@@ -43,11 +46,6 @@ impl Operator {
         &self.expr
     }
 
-    /// Logical properties shared by this expression and equivalent expressions inside the group this expression belongs to.
-    pub fn logical(&self) -> &LogicalProperties {
-        self.properties.logical()
-    }
-
     /// Physical properties required by this expression.
     pub fn required(&self) -> &PhysicalProperties {
         self.properties.required()
@@ -67,23 +65,6 @@ impl Operator {
                 logical: old_properties.logical,
                 required,
             },
-        }
-    }
-
-    /// Creates a new operator from this one but with new statistics.
-    pub fn with_statistics(self, statistics: Statistics) -> Self {
-        let Operator {
-            expr,
-            properties: old_properties,
-            ..
-        } = self;
-        let Properties { logical, required } = old_properties;
-        let columns = logical.output_columns().to_vec();
-        let logical = LogicalProperties::new(columns, Some(statistics));
-
-        Operator {
-            expr,
-            properties: Properties { logical, required },
         }
     }
 }
@@ -142,6 +123,8 @@ impl OperatorExpr {
 
 /// Properties of an operator.
 #[derive(Debug, Clone, Default)]
+//TODO: Split properties into relational properties and scalar properties.
+// Move (logical, required) to RelationalProperties.
 pub struct Properties {
     pub(crate) logical: LogicalProperties,
     pub(crate) required: PhysicalProperties,
@@ -179,7 +162,7 @@ impl MemoExpr for Operator {
         &self.properties
     }
 
-    fn copy_in(&self, visitor: &mut CopyInExprs<Self>) {
+    fn copy_in<T>(&self, visitor: &mut CopyInExprs<Self, T>) {
         let mut visitor = OperatorCopyIn { visitor };
         let mut expr_ctx = visitor.enter_expr(self);
         match self.expr() {
@@ -224,11 +207,11 @@ impl MemoExpr for Operator {
 /// Provides methods to copy an operator tree into a [memo].
 ///
 ///[memo]: crate::memo::Memo
-pub struct OperatorCopyIn<'c, 'm> {
-    visitor: &'c mut CopyInExprs<'m, Operator>,
+pub struct OperatorCopyIn<'c, 'm, T> {
+    visitor: &'c mut CopyInExprs<'m, Operator, T>,
 }
 
-impl OperatorCopyIn<'_, '_> {
+impl<T> OperatorCopyIn<'_, '_, T> {
     /// Starts traversal of the given expression `expr`.
     pub fn enter_expr(&mut self, expr: &Operator) -> ExprContext<Operator> {
         self.visitor.enter_expr(expr)
@@ -273,10 +256,10 @@ impl OperatorCopyIn<'_, '_> {
     /// Traverses the given scalar expression and all of its nested relational expressions into a memo.
     /// See [`memo`][crate::memo::CopyInExprs::visit_expr_node] for details.
     pub fn copy_in_nested(&mut self, expr_ctx: &mut ExprContext<Operator>, expr: &ScalarExpr) {
-        struct CopyNestedRelExprs<'b, 'a, 'c> {
-            collector: &'b mut CopyInNestedExprs<'a, 'c, Operator>,
+        struct CopyNestedRelExprs<'b, 'a, 'c, T> {
+            collector: &'b mut CopyInNestedExprs<'a, 'c, Operator, T>,
         }
-        impl ExprVisitor<RelNode> for CopyNestedRelExprs<'_, '_, '_> {
+        impl<T> ExprVisitor<RelNode> for CopyNestedRelExprs<'_, '_, '_, T> {
             fn post_visit(&mut self, expr: &ScalarExpr) {
                 if let ScalarExpr::SubQuery(rel_node) = expr {
                     self.collector.visit_expr(rel_node.into())
@@ -285,7 +268,7 @@ impl OperatorCopyIn<'_, '_> {
         }
 
         let nested_ctx = CopyInNestedExprs::new(self.visitor, expr_ctx);
-        nested_ctx.execute(expr, |expr, collector: &mut CopyInNestedExprs<Operator>| {
+        nested_ctx.execute(expr, |expr, collector: &mut CopyInNestedExprs<Operator, T>| {
             let mut visitor = CopyNestedRelExprs { collector };
             expr.accept(&mut visitor)
         });

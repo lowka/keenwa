@@ -1,13 +1,11 @@
 use crate::error::OptimizerError;
-use crate::memo::{ExprNodeRef, MemoExpr, MemoExprCallback, MemoExprFormatter, StringMemoFormatter};
-use crate::meta::Metadata;
+use crate::memo::{ExprNodeRef, MemoExpr, MemoExprFormatter, MemoGroupCallback, StringMemoFormatter};
+use crate::meta::MutableMetadata;
 use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::relational::RelNode;
-use crate::operators::{ExprMemo, Operator, OperatorExpr, Properties};
-use crate::properties::logical::LogicalPropertiesBuilder;
+use crate::operators::{ExprMemo, Operator, OperatorExpr, OperatorMetadata, Properties};
 use crate::properties::physical::PhysicalProperties;
-use crate::properties::statistics::{Statistics, StatisticsBuilder};
 use crate::rules::{Rule, RuleContext, RuleId, RuleIterator, RuleResult, RuleSet};
 use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
@@ -20,7 +18,7 @@ use std::rc::Rc;
 pub struct RuleTester {
     rule: Box<dyn Rule>,
     memo: ExprMemo,
-    metadata: Metadata,
+    metadata: MutableMetadata,
 }
 
 impl RuleTester {
@@ -29,23 +27,34 @@ impl RuleTester {
     where
         T: Rule + 'static,
     {
-        let props_builder = LogicalPropertiesBuilder::new(Box::new(NoStatsBuilder));
+        struct Callback;
+        impl MemoGroupCallback for Callback {
+            type Expr = Operator;
+            type Props = Properties;
+            type Metadata = OperatorMetadata;
+
+            fn new_group(
+                &self,
+                _expr: &Self::Expr,
+                provided_props: Self::Props,
+                _metadata: &Self::Metadata,
+            ) -> Self::Props {
+                provided_props
+            }
+        }
+
         RuleTester {
             rule: Box::new(rule),
-            memo: ExprMemo::with_callback(Rc::new(props_builder)),
-            metadata: Metadata::new(Vec::new()),
+            memo: ExprMemo::with_callback(Rc::new(MutableMetadata::new()), Rc::new(Callback)),
+            metadata: MutableMetadata::new(),
         }
-    }
-
-    pub fn set_metadata(&mut self, metadata: Metadata) {
-        self.metadata = metadata;
     }
 
     /// Attempts to apply the rule to the given expression and then compares the result with the expected value.
     pub fn apply(&mut self, expr: &LogicalExpr, expected: &str) {
-        let (_, expr_ref) = self.memo.insert(Operator::from(OperatorExpr::from(expr.clone())));
+        let (_, expr_ref) = self.memo.insert_group(Operator::from(OperatorExpr::from(expr.clone())));
 
-        let ctx = RuleContext::new(PhysicalProperties::none(), &self.metadata);
+        let ctx = RuleContext::new(PhysicalProperties::none(), self.metadata.get_ref());
         let rule_match = self.rule.matches(&ctx, expr);
         assert!(rule_match.is_some(), "Rule does not match: {:?}", self.rule);
 
@@ -57,7 +66,7 @@ impl RuleTester {
             Ok(None) => panic!("Rule matched but not applied: {:?}", self.rule),
             Err(e) => panic!("Failed to apply a rule. Rule: {:?}. Error: {}", self.rule, e),
         };
-        let (_, new_expr) = self.memo.insert(expr);
+        let (_, new_expr) = self.memo.insert_group(expr);
         let actual_expr = format_operator_tree(new_expr.mexpr());
 
         assert_eq!(actual_expr.trim_end(), expected.trim());
@@ -259,27 +268,5 @@ impl MemoExprFormatter for FormatExprs<'_> {
         D: Display,
     {
         // values are written by another formatter
-    }
-}
-
-#[derive(Debug)]
-struct NoStatsBuilder;
-
-impl StatisticsBuilder for NoStatsBuilder {
-    fn build_statistics(
-        &self,
-        _expr: &LogicalExpr,
-        _statistics: Option<&Statistics>,
-    ) -> Result<Option<Statistics>, OptimizerError> {
-        Ok(None)
-    }
-}
-
-impl MemoExprCallback for LogicalPropertiesBuilder {
-    type Expr = Operator;
-    type Props = Properties;
-
-    fn new_expr(&self, _expr: &Self::Expr, props: Self::Props) -> Self::Props {
-        props
     }
 }

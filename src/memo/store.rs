@@ -1,6 +1,6 @@
 use itertools::Itertools;
 use std::alloc::Layout;
-use std::fmt::{Debug, Formatter, Write};
+use std::fmt::{Debug, Formatter};
 use std::ptr::NonNull;
 
 /// Used by [memo](crate::memo::Memo) to store expressions. This data structure stores its data

@@ -4,7 +4,6 @@ use crate::meta::ColumnId;
 
 pub mod logical;
 pub mod physical;
-pub mod statistics;
 
 /// Ordering.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
