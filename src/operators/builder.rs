@@ -167,8 +167,7 @@ impl OperatorBuilder {
             let filter = filter.rewrite(&mut rewriter);
             rewriter.result?;
 
-            let expr = OperatorExpr::Scalar(filter);
-            let expr = self.callback.new_scalar_expr(Operator::from(expr));
+            let expr = self.add_scalar_node(filter);
             Some(expr)
         } else {
             None
@@ -289,7 +288,8 @@ impl OperatorBuilder {
         let expr = expr.rewrite(&mut rewriter);
         rewriter.result?;
 
-        let condition = JoinCondition::On(JoinOn::new(ScalarNode::from(expr)));
+        let expr = self.add_scalar_node(expr);
+        let condition = JoinCondition::On(JoinOn::new(expr));
         let expr = LogicalExpr::Join { left, right, condition };
 
         self.add_operator(expr, scope);
@@ -473,6 +473,11 @@ impl OperatorBuilder {
         let rel_node = self.callback.new_rel_expr(operator);
         Ok((rel_node, scope))
     }
+
+    fn add_scalar_node(&self, expr: ScalarExpr) -> ScalarNode {
+        let operator = Operator::from(OperatorExpr::from(expr));
+        self.callback.new_scalar_expr(operator)
+    }
 }
 
 impl Debug for OperatorBuilder {
@@ -598,7 +603,7 @@ impl AggregateBuilder<'_> {
 
                 let column_meta = ColumnMetadata::new_synthetic_column(name.clone(), data_type, Some(expr.clone()));
                 let id = metadata.add_column(column_meta);
-                let expr = self.builder.callback.new_scalar_expr(Operator::from(OperatorExpr::Scalar(expr)));
+                let expr = self.builder.add_scalar_node(expr);
 
                 Ok((expr, (name, id)))
             })
@@ -618,7 +623,7 @@ impl AggregateBuilder<'_> {
                 let expr = ScalarExpr::ColumnName(name);
                 let expr = expr.rewrite(&mut rewriter);
                 rewriter.result?;
-                let expr = self.builder.callback.new_scalar_expr(Operator::from(OperatorExpr::Scalar(expr)));
+                let expr = self.builder.add_scalar_node(expr);
 
                 Ok(expr)
             })
@@ -894,7 +899,7 @@ Memo:
     }
 
     #[test]
-    fn test_join() {
+    fn test_join_using() {
         let mut tester = OperatorBuilderTester::new();
 
         tester.build_operator(|builder| {
@@ -918,6 +923,43 @@ Metadata:
   col:4 B.b2 Int32
 Memo:
   02 LogicalJoin left=00 right=01 using=[(1, 4)]
+  01 LogicalGet B cols=[3, 4]
+  00 LogicalGet A cols=[1, 2]
+"#,
+        );
+    }
+
+    #[test]
+    fn test_join_on() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let left = builder.clone().get("A", vec!["a1", "a2"])?;
+            let right = builder.get("B", vec!["b1", "b2"])?;
+            let expr = ScalarExpr::BinaryExpr {
+                lhs: Box::new(ScalarExpr::ColumnName("a1".into())),
+                op: BinaryOp::Eq,
+                rhs: Box::new(ScalarExpr::ColumnName("b1".into())),
+            };
+            let join = left.join_on(right, expr)?;
+
+            join.build()
+        });
+
+        tester.expect_expr(
+            r#"
+LogicalJoin on=col:1 = col:3
+  left: LogicalGet A cols=[1, 2]
+  right: LogicalGet B cols=[3, 4]
+  output cols: [1, 2, 3, 4]
+Metadata:
+  col:1 A.a1 Int32
+  col:2 A.a2 Int32
+  col:3 B.b1 Int32
+  col:4 B.b2 Int32
+Memo:
+  03 LogicalJoin left=00 right=01 on=col:1 = col:3
+  02 Expr col:1 = col:3
   01 LogicalGet B cols=[3, 4]
   00 LogicalGet A cols=[1, 2]
 "#,
