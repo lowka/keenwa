@@ -424,6 +424,34 @@ impl Rule for HashSetOpRule {
     }
 }
 
+pub struct EmptyRule;
+
+impl Rule for EmptyRule {
+    fn name(&self) -> String {
+        "Empty".into()
+    }
+
+    fn rule_type(&self) -> RuleType {
+        RuleType::Implementation
+    }
+
+    fn matches(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Option<RuleMatch> {
+        if matches!(expr, LogicalExpr::Empty) {
+            Some(RuleMatch::Expr)
+        } else {
+            None
+        }
+    }
+
+    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
+        if matches!(expr, LogicalExpr::Empty) {
+            Ok(Some(RuleResult::Implementation(PhysicalExpr::Empty)))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -531,6 +559,18 @@ HashedSetOp intersect=false all=true
   right: LogicalGet B cols=[3, 4]
     "#,
         );
+    }
+
+    #[test]
+    fn test_empty() {
+        let mut tester = RuleTester::new(EmptyRule);
+        let expr = LogicalExpr::Empty;
+        tester.apply(
+            &expr,
+            r#"
+Empty
+        "#,
+        )
     }
 
     fn new_get(src: &str, columns: Vec<ColumnId>) -> RelNode {

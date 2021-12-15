@@ -122,6 +122,7 @@ impl CostEstimator for SimpleCostEstimator {
 
                 (rows + hashtable_cost + deduplication_cost) as usize
             }
+            PhysicalExpr::Empty => 0,
         }
     }
 }

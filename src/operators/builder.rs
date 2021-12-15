@@ -296,7 +296,7 @@ impl OperatorBuilder {
         Ok(self)
     }
 
-    /// Set ordering requirements for the root of an operator tree.
+    /// Set ordering requirements for the current node of an operator tree.
     pub fn order_by(mut self, ordering: impl Into<OrderingOptions>) -> Result<Self, OptimizerError> {
         if let Some((operator, scope)) = self.operator.take() {
             let OrderingOptions { options } = ordering.into();
@@ -340,6 +340,19 @@ impl OperatorBuilder {
     /// Adds a union all operator.
     pub fn union_all(mut self, right: OperatorBuilder) -> Result<Self, OptimizerError> {
         self.build_set_operator(SetOperator::Union, true, right)?;
+        Ok(self)
+    }
+
+    /// Adds a relation that produces no rows. An empty relation can only be added as a leaf node of an operator tree
+    /// (the first operator build created by an operator builder).
+    pub fn empty(mut self) -> Result<Self, OptimizerError> {
+        if self.operator.is_some() {
+            return Result::Err(OptimizerError::Internal(
+                "Empty relation can not be added on top of another operator".to_string(),
+            ));
+        };
+        let expr = LogicalExpr::Empty;
+        self.add_operator(expr, OperatorScope { columns: vec![] });
         Ok(self)
     }
 
@@ -912,6 +925,36 @@ Memo:
     }
 
     #[test]
+    fn test_empty() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| builder.empty()?.build());
+
+        tester.expect_expr(
+            r#"
+LogicalEmpty
+  output cols: []
+Metadata:
+Memo:
+  00 LogicalEmpty
+"#,
+        );
+    }
+
+    #[test]
+    fn test_prohibit_empty_as_an_intermediate_operator() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            builder.get("A", vec!["a1"])?.empty()?;
+
+            unreachable!()
+        });
+
+        tester.expect_error("Empty relation can not be added on top of another operator");
+    }
+
+    #[test]
     fn test_nested() {
         let mut tester = OperatorBuilderTester::new();
 
@@ -978,7 +1021,7 @@ Memo:
             let from_b = builder.get("B", vec!["b1"])?;
             let _sub_query = from_b.to_sub_query()?;
 
-            panic!("Created sub query from a non sub query build");
+            unreachable!()
         });
 
         tester.expect_error("call to OperatorBuilder::sub_query_builder()")

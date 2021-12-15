@@ -113,6 +113,10 @@ where
         //FIXME: The result of a set operation with all=false should include only non-duplicate rows.
         Ok(Some(Statistics::from_row_count(row_count)))
     }
+
+    fn build_empty(&self) -> Result<Option<Statistics>, OptimizerError> {
+        Ok(Some(Statistics::new(0f64, Statistics::DEFAULT_SELECTIVITY)))
+    }
 }
 
 impl<T> StatisticsBuilder for SimpleCatalogStatisticsBuilder<T>
@@ -151,6 +155,7 @@ where
                 all,
                 columns,
             } => self.build_set_operator(SetOperator::Except, *all, left, right, columns),
+            LogicalExpr::Empty => self.build_empty(),
         }
     }
 }
@@ -333,6 +338,13 @@ mod test {
         };
 
         tester.expect_statistics(&union, Some(Statistics::from_row_count(15.0)))
+    }
+
+    #[test]
+    fn test_emtpy_statistics() {
+        let tester = StatisticsTester::new(vec![("A", 10)]);
+
+        tester.expect_statistics(&LogicalExpr::Empty, Some(Statistics::new(0f64, Statistics::DEFAULT_SELECTIVITY)))
     }
 
     enum OperatorStatistics {

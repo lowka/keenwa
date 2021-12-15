@@ -15,7 +15,7 @@ use crate::operators::builder::{MemoizeOperatorCallback, OperatorBuilder};
 use crate::operators::properties::LogicalPropertiesBuilder;
 use crate::operators::{ExprMemo, Operator};
 use crate::optimizer::{Optimizer, SetPropertiesCallback};
-use crate::rules::implementation::{GetToScanRule, ProjectionRule, SelectRule};
+use crate::rules::implementation::{EmptyRule, GetToScanRule, ProjectionRule, SelectRule};
 use crate::rules::testing::TestRuleSet;
 use crate::rules::Rule;
 use crate::rules::StaticRuleSet;
@@ -170,6 +170,7 @@ impl OptimizerTester {
             Box::new(GetToScanRule::new(self.catalog.clone())),
             Box::new(SelectRule),
             Box::new(ProjectionRule),
+            Box::new(EmptyRule),
         ];
         default_rules.extend((self.rules)(self.catalog.clone()));
 

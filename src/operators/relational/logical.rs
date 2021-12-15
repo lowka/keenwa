@@ -58,6 +58,8 @@ pub enum LogicalExpr {
         /// Output columns produced by a set operator.
         columns: Vec<ColumnId>,
     },
+    /// Relation that produces no rows.
+    Empty,
 }
 
 impl LogicalExpr {
@@ -104,6 +106,7 @@ impl LogicalExpr {
                 visitor.visit_rel(expr_ctx, left);
                 visitor.visit_rel(expr_ctx, right);
             }
+            LogicalExpr::Empty => {}
         }
     }
 
@@ -183,6 +186,10 @@ impl LogicalExpr {
                     all: *all,
                     columns: columns.clone(),
                 }
+            }
+            LogicalExpr::Empty => {
+                inputs.expect_len(0, "LogicalEmpty");
+                LogicalExpr::Empty
             }
         }
     }
@@ -267,6 +274,9 @@ impl LogicalExpr {
                 f.write_expr("right", right);
                 f.write_value("all", all);
             }
+            LogicalExpr::Empty => {
+                f.write_name("LogicalEmpty");
+            }
         }
     }
 
@@ -338,6 +348,9 @@ impl LogicalExpr {
             | LogicalExpr::Except { left, right, .. } => {
                 left.expr().as_logical().accept(visitor);
                 right.expr().as_logical().accept(visitor);
+            }
+            LogicalExpr::Empty => {
+                // nothing to do
             }
         }
         visitor.post_visit(self);
