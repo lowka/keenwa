@@ -69,6 +69,8 @@ pub enum PhysicalExpr {
         /// If `true` this an INTERSECT ALL/EXCEPT ALL operator.
         all: bool,
     },
+    /// Relation that produces no rows.
+    Empty,
 }
 
 impl PhysicalExpr {
@@ -126,6 +128,7 @@ impl PhysicalExpr {
                 visitor.visit_rel(expr_ctx, left);
                 visitor.visit_rel(expr_ctx, right);
             }
+            PhysicalExpr::Empty => {}
         }
     }
 
@@ -241,6 +244,10 @@ impl PhysicalExpr {
                     all: *all,
                 }
             }
+            PhysicalExpr::Empty => {
+                inputs.expect_len(0, "Empty");
+                PhysicalExpr::Empty
+            }
         }
     }
 
@@ -276,6 +283,7 @@ impl PhysicalExpr {
                 Some(requirements)
             }
             PhysicalExpr::Append { .. } => None,
+            PhysicalExpr::Empty => None,
         }
     }
 
@@ -371,6 +379,7 @@ impl PhysicalExpr {
                 f.write_value("intersect", intersect);
                 f.write_value("all", all);
             }
+            PhysicalExpr::Empty => f.write_name("Empty"),
         }
     }
 }

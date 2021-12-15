@@ -1,5 +1,5 @@
 use crate::catalog::{Catalog, IndexBuilder, DEFAULT_SCHEMA};
-use crate::operators::builder::{OperatorBuilder, OrderingOption, OrderingOptions};
+use crate::operators::builder::{OrderingOption, OrderingOptions};
 use crate::operators::scalar::expr::*;
 use crate::operators::scalar::value::ScalarValue;
 use crate::operators::scalar::ScalarExpr;
@@ -746,6 +746,27 @@ fn test_nested_loop_join() {
 02 Expr col:1 > 100
 01 Scan B cols=[3, 4]
 00 Scan A cols=[1, 2]
+"#,
+    );
+}
+
+#[test]
+fn test_select_1() {
+    let mut tester = OptimizerTester::new();
+
+    tester.set_operator(|builder| {
+        let from = builder.empty()?;
+        let project = from.project(vec![ScalarExpr::Scalar(ScalarValue::Int32(1))])?;
+        let select = project.select(None)?;
+
+        select.build()
+    });
+
+    tester.optimize(
+        r#"
+02 Select [01]
+01 Projection [00] cols=[1]
+00 Empty
 "#,
     );
 }

@@ -98,6 +98,11 @@ where
         }
     }
 
+    /// Builds logical properties for an empty operator.
+    pub fn build_empty(&self) -> Result<LogicalProperties, OptimizerError> {
+        Ok(LogicalProperties::empty())
+    }
+
     fn build_union(
         &self,
         _left: &RelNode,
@@ -186,6 +191,7 @@ where
                         all,
                         columns,
                     } => self.build_except(left, right, *all, columns),
+                    LogicalExpr::Empty => self.build_empty(),
                 }?;
                 let logical = LogicalProperties::new(output_columns, None);
                 let statistics = self.statistics.build_statistics(expr, &logical, metadata)?;
