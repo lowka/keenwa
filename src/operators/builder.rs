@@ -1001,24 +1001,18 @@ Memo:
         let mut tester = OperatorBuilderTester::new();
 
         tester.build_operator(|builder| {
-            let from_a = builder.get("A", vec!["a1", "a2"])?;
+            let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
 
-            let expr = ScalarExpr::Aggregate {
-                func: AggregateFunction::Count,
-                args: vec![ScalarExpr::ColumnName("b1".into())],
-                filter: None,
-            };
-
-            let sub_query = from_a
+            let sub_query = builder
                 .sub_query_builder()
-                .get("B", vec!["b1", "b2"])?
-                .project(vec![expr])?
+                .empty()?
+                .project(vec![ScalarExpr::Scalar(ScalarValue::Bool(true))])?
                 .to_sub_query()?;
 
             let filter = ScalarExpr::BinaryExpr {
                 lhs: Box::new(sub_query),
-                op: BinaryOp::Gt,
-                rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Int32(37))),
+                op: BinaryOp::Eq,
+                rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Bool(true))),
             };
             let select = from_a.select(Some(filter))?;
 
@@ -1029,20 +1023,18 @@ Memo:
             r#"
 LogicalSelect
   input: LogicalGet A cols=[1, 2]
-  filter: Expr SubQuery 01 > 37
+  filter: Expr SubQuery 01 = true
   output cols: [1, 2]
 Metadata:
   col:1 A.a1 Int32
   col:2 A.a2 Int32
-  col:3 B.b1 Int32
-  col:4 B.b2 Int32
-  col:5 ?column? Int32, expr: count(col:3)
+  col:3 ?column? Bool, expr: true
 Memo:
   04 LogicalSelect input=02 filter=03
-  03 Expr SubQuery 01 > 37
+  03 Expr SubQuery 01 = true
   02 LogicalGet A cols=[1, 2]
-  01 LogicalProjection input=00 cols=[5]
-  00 LogicalGet B cols=[3, 4]
+  01 LogicalProjection input=00 cols=[3]
+  00 LogicalEmpty
 "#,
         );
     }
@@ -1052,14 +1044,6 @@ Memo:
         let mut tester = OperatorBuilderTester::new();
 
         tester.build_operator(|builder| {
-            let _from_a = builder.clone().get("A", vec!["a1", "a2"])?;
-
-            let _expr = ScalarExpr::Aggregate {
-                func: AggregateFunction::Count,
-                args: vec![ScalarExpr::ColumnName("b1".into())],
-                filter: None,
-            };
-
             let from_b = builder.get("B", vec!["b1"])?;
             let _sub_query = from_b.to_sub_query()?;
 
@@ -1076,24 +1060,18 @@ Memo:
         tester.build_operator(|builder| {
             let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
 
-            let expr = ScalarExpr::Aggregate {
-                func: AggregateFunction::Count,
-                args: vec![ScalarExpr::ColumnName("b1".into())],
-                filter: None,
-            };
-
-            let from_b = builder.get("B", vec!["b1"])?.build()?;
-            let expr = ScalarExpr::SubQuery(RelNode::from(from_b));
+            let sub_query = builder.empty()?.project(vec![ScalarExpr::Scalar(ScalarValue::Bool(true))])?.build()?;
+            let expr = ScalarExpr::SubQuery(RelNode::from(sub_query));
 
             let filter = ScalarExpr::BinaryExpr {
                 lhs: Box::new(expr),
-                op: BinaryOp::Gt,
-                rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Int32(10))),
+                op: BinaryOp::Eq,
+                rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Bool(true))),
             };
 
-            let select = from_a.select(Some(filter))?;
+            let _select = from_a.select(Some(filter))?;
 
-            panic!("Non memoized expression in a nested sub query");
+            unreachable!()
         });
 
         tester.expect_error("Use OperatorBuilder::sub_query_builder to build a nested sub query")
