@@ -168,6 +168,26 @@ pub trait MemoExpr: Debug + Clone {
     /// provided by the given [NewChildExprs](self::NewChildExprs).
     fn with_new_children(&self, children: NewChildExprs<Self>) -> Self;
 
+    fn new_expr(expr: &Self::Expr, inputs: NewChildExprs<Self>) -> (Self::Expr, Option<Self::Props>) {
+        unimplemented!()
+    }
+
+    fn create(expr: Self::Expr, props: Self::Props) -> Self {
+        unimplemented!()
+    }
+
+    fn is_v2() -> bool {
+        false
+    }
+
+    fn num_children(&self) -> usize {
+        unimplemented!()
+    }
+
+    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Self>> {
+        unimplemented!()
+    }
+
     /// Builds a textual representation of this expression.
     fn format_expr<F>(&self, f: &mut F)
     where
@@ -474,13 +494,82 @@ where
     }
 
     /// Returns references to child expressions of this memo expression.
-    pub fn children(&self) -> &[MemoGroupRef<E>] {
+    pub fn children(&self) -> impl ExactSizeIterator<Item = &MemoGroupRef<E>> + Debug {
+        // if E::is_v2() {
         let expr = self.get_memo_expr();
-        &expr.children
+        let num_children = expr.expr.num_children();
+        MemoExprInputsIter {
+            expr: &expr.expr,
+            position: 0,
+            num_children,
+        }
+        // } else {
+        // let expr = self.get_memo_expr();
+        // expr.children.iter()
+        // }
     }
 
     fn get_memo_expr(&self) -> &MemoExprData<E> {
         self.expr_ref.as_ref()
+    }
+}
+
+pub struct MemoExprInputsIter<'a, E> {
+    expr: &'a E,
+    position: usize,
+    num_children: usize,
+}
+
+impl<'a, E> Iterator for MemoExprInputsIter<'a, E>
+where
+    E: MemoExpr,
+{
+    type Item = &'a MemoGroupRef<E>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.position < self.num_children {
+            let expr = self.expr.get_child(self.position).unwrap();
+            self.position += 1;
+            match expr {
+                ExprNodeRef::Expr(_) => panic!(),
+                ExprNodeRef::Group(group) => Some(group),
+            }
+        } else {
+            None
+        }
+    }
+}
+
+impl<'a, E> Debug for MemoExprInputsIter<'a, E>
+where
+    E: MemoExpr,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut i = 0;
+        write!(f, "[")?;
+        while self.position + i < self.num_children {
+            let p = self.position + i;
+            let expr = self.expr.get_child(p).unwrap();
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            match expr {
+                ExprNodeRef::Expr(_) => panic!(),
+                ExprNodeRef::Group(group) => write!(f, "{:?}", group)?,
+            }
+            i += 1;
+        }
+        write!(f, "]")
+    }
+}
+
+impl<'a, E> ExactSizeIterator for MemoExprInputsIter<'a, E>
+where
+    E: MemoExpr,
+{
+    fn len(&self) -> usize {
+        self.num_children
     }
 }
 
@@ -587,7 +676,6 @@ where
 {
     expr_id: ExprId,
     expr: E,
-    children: Vec<MemoGroupRef<E>>,
     group: MemoGroupRef<E>,
 }
 
@@ -595,13 +683,8 @@ impl<E> MemoExprData<E>
 where
     E: MemoExpr,
 {
-    fn new(expr_id: ExprId, expr: E, children: Vec<MemoGroupRef<E>>, group: MemoGroupRef<E>) -> Self {
-        MemoExprData {
-            expr_id,
-            expr,
-            children,
-            group,
-        }
+    fn new(expr_id: ExprId, expr: E, group: MemoGroupRef<E>) -> Self {
+        MemoExprData { expr_id, expr, group }
     }
 }
 
@@ -684,20 +767,25 @@ where
     /// Copies the expression into the memo.
     pub fn copy_in(&mut self, expr: &E, expr_ctx: ExprContext<E>) {
         let expr_id = ExprId(self.memo.exprs.next_id());
-        let input_groups = expr_ctx
-            .children
-            .iter()
-            .map(|i| match i {
-                ExprNode::Group(g) => g.clone(),
-                ExprNode::Expr(e) => panic!("Expected a group but got an expression: {:?}", e),
-            })
-            .collect();
-
         let ExprContext { children, parent } = expr_ctx;
 
+        let mut new_child_exprs = NewChildExprs::new(children);
+        new_child_exprs.copy_in = true;
+
+        let (expr, digest) = if !E::is_v2() {
+            let expr = expr.with_new_children(new_child_exprs);
+            let digest = make_digest(&expr);
+
+            (expr, digest)
+        } else {
+            let props = expr.props();
+            let (expr, new_props) = E::new_expr(expr.expr(), new_child_exprs);
+            let expr = E::create(expr, new_props.unwrap_or_else(|| props.clone()));
+            let digest = make_digest(&expr);
+
+            (expr, digest)
+        };
         let props = expr.props();
-        let expr = expr.with_new_children(NewChildExprs::new(children));
-        let digest = make_digest(&expr);
 
         let (expr_id, added) = match self.memo.expr_cache.entry(digest) {
             Entry::Occupied(o) => {
@@ -712,7 +800,7 @@ where
 
         if added {
             let (group_ref, expr_ref) = if let Some(parent) = parent {
-                let memo_expr = MemoExprData::new(expr_id, expr, input_groups, parent.clone());
+                let memo_expr = MemoExprData::new(expr_id, expr, parent.clone());
                 let expr_ref = self.memo.add_expr(memo_expr);
 
                 self.memo.add_expr_to_group(&parent, expr_ref.clone());
@@ -720,18 +808,21 @@ where
                 (parent, expr_ref)
             } else {
                 let group_id = GroupId(self.memo.groups.next_id());
+                // println!("+: {} :: {:?} >>> {:?}", digest, expr.props(), props);
                 let props = if let Some(callback) = self.memo.callback.as_ref() {
                     callback.new_group(expr.expr(), props, &self.memo.metadata)
                 } else {
                     props.clone()
                 };
+                // println!("++ {} :: {:?} >>> {:?}", digest, expr.props(), props);
                 let memo_group = MemoGroupData::new(group_id, props);
                 let group_ref = self.memo.add_group(memo_group);
 
-                let memo_expr = MemoExprData::new(expr_id, expr, input_groups, group_ref.clone());
+                let memo_expr = MemoExprData::new(expr_id, expr, group_ref.clone());
                 let expr_ref = self.memo.add_expr(memo_expr);
 
                 self.memo.add_expr_to_group(&group_ref, expr_ref.clone());
+                // println!(".+ {} :: {:?} {:?}", digest, group_ref.props(), expr_ref.props());
 
                 (group_ref, expr_ref)
             };
@@ -763,9 +854,10 @@ pub struct NewChildExprs<E>
 where
     E: MemoExpr,
 {
-    children: VecDeque<ExprNode<E>>,
+    pub children: VecDeque<ExprNode<E>>,
     capacity: usize,
     index: usize,
+    copy_in: bool,
 }
 
 impl<E> NewChildExprs<E>
@@ -778,7 +870,12 @@ where
             capacity: children.len(),
             index: 0,
             children,
+            copy_in: false,
         }
+    }
+
+    pub fn is_copy_in(&self) -> bool {
+        self.copy_in
     }
 
     /// If the total number of expressions in the underlying stack.
@@ -1226,7 +1323,7 @@ mod test {
         fn from(expr: TestScalarExpr) -> Self {
             ScalarExpr::Expr(Box::new(TestOperator {
                 expr: TestExpr::Scalar(expr),
-                props: Default::default(),
+                props: TestProps::Scalar(ScalarProps::default()),
             }))
         }
     }
@@ -1340,23 +1437,35 @@ mod test {
         fn from(expr: TestRelExpr) -> Self {
             TestOperator {
                 expr: TestExpr::Relational(expr),
-                props: TestProps::default(),
+                props: TestProps::Rel(RelProps::default()),
             }
         }
     }
 
-    #[derive(Debug, Clone, PartialEq, Default)]
-    struct TestProps {
-        a: i32,
+    #[derive(Debug, Clone, PartialEq)]
+    enum TestProps {
+        // a: i32,
+        Rel(RelProps),
+        Scalar(ScalarProps),
     }
 
     impl Properties for TestProps {}
+
+    #[derive(Debug, Clone, Default, PartialEq)]
+    struct RelProps {
+        a: i32,
+    }
+
+    #[derive(Debug, Clone, Default, PartialEq)]
+    struct ScalarProps {
+        sub_queries: Vec<MemoGroupRef<TestOperator>>,
+    }
 
     impl TestOperator {
         fn with_props(self, a: i32) -> Self {
             TestOperator {
                 expr: self.expr,
-                props: TestProps { a },
+                props: TestProps::Rel(RelProps { a }),
             }
         }
     }
@@ -1425,6 +1534,88 @@ mod test {
             }
         }
 
+        fn new_expr(expr: &Self::Expr, mut inputs: NewChildExprs<Self>) -> (Self::Expr, Option<Self::Props>) {
+            match expr {
+                TestExpr::Relational(expr) => {
+                    let expr = match expr {
+                        TestRelExpr::Leaf(s) => TestRelExpr::Leaf(s.clone()),
+                        TestRelExpr::Node { .. } => TestRelExpr::Node {
+                            input: RelExpr::from(inputs.expr()),
+                        },
+                        TestRelExpr::Nodes { .. } => TestRelExpr::Nodes {
+                            inputs: inputs.remaining().into_iter().map(RelExpr::from).collect(),
+                        },
+                        TestRelExpr::Filter { .. } => TestRelExpr::Filter {
+                            input: RelExpr::from(inputs.expr()),
+                            filter: ScalarExpr::from(inputs.expr()),
+                        },
+                    };
+                    (TestExpr::Relational(expr), None)
+                }
+                TestExpr::Scalar(expr) => {
+                    if inputs.is_copy_in() {
+                        let nested_queries = inputs.children.clone();
+                        let expr = TestExpr::Scalar(expr.with_new_inputs(&mut inputs));
+                        let scalar_props = ScalarProps {
+                            sub_queries: nested_queries
+                                .iter()
+                                .map(|e| match e {
+                                    ExprNode::Expr(e) => panic!(),
+                                    ExprNode::Group(g) => g.clone(),
+                                })
+                                .collect(),
+                        };
+                        (expr, Some(TestProps::Scalar(scalar_props)))
+                    } else {
+                        let expr = TestExpr::Scalar(expr.with_new_inputs(&mut inputs));
+                        (expr, None)
+                    }
+                }
+            }
+        }
+
+        fn create(expr: Self::Expr, props: Self::Props) -> Self {
+            TestOperator { expr, props }
+        }
+
+        fn is_v2() -> bool {
+            true
+        }
+
+        fn num_children(&self) -> usize {
+            match self.expr() {
+                TestExpr::Relational(expr) => match expr {
+                    TestRelExpr::Leaf(_) => 0,
+                    TestRelExpr::Node { .. } => 1,
+                    TestRelExpr::Nodes { inputs } => inputs.len(),
+                    TestRelExpr::Filter { input, filter } => 2,
+                },
+                TestExpr::Scalar(_) => {
+                    if let TestProps::Scalar(props) = self.props() {
+                        props.sub_queries.len()
+                    } else {
+                        0
+                    }
+                }
+            }
+        }
+
+        fn get_child(&self, i: usize) -> Option<ExprNodeRef<Self>> {
+            match self.expr() {
+                TestExpr::Relational(expr) => match expr {
+                    TestRelExpr::Leaf(_) => None,
+                    TestRelExpr::Node { input } if i == 0 => Some(input.get_ref()),
+                    TestRelExpr::Node { input } => None,
+                    TestRelExpr::Nodes { inputs } if i < inputs.len() => Some(inputs[i].get_ref()),
+                    TestRelExpr::Nodes { inputs } => None,
+                    TestRelExpr::Filter { input, filter } if i == 0 => Some(input.get_ref()),
+                    TestRelExpr::Filter { input, filter } if i == 1 => Some(filter.get_ref()),
+                    TestRelExpr::Filter { input, filter } => None,
+                },
+                TestExpr::Scalar(_) => None,
+            }
+        }
+
         fn format_expr<F>(&self, f: &mut F)
         where
             F: MemoExprFormatter,
@@ -1465,7 +1656,7 @@ mod test {
         let expr = TestOperator::from(TestRelExpr::Leaf("aaaa")).with_props(100);
         let (group, expr) = memo.insert_group(expr);
 
-        assert_eq!(group.props(), &TestProps { a: 100 }, "group properties");
+        assert_eq!(group.props(), &TestProps::Rel(RelProps { a: 100 }), "group properties");
         assert_eq!(expr.mgroup(), &group, "expr group");
 
         let group_by_id = memo.get_group_ref(&group.id());
@@ -1519,9 +1710,10 @@ mod test {
 
         match expr.expr().as_relational() {
             TestRelExpr::Node { input } => {
+                let children: Vec<_> = expr.children().collect();
                 assert_eq!(
                     format!("{:?}", input.expr()),
-                    format!("{:?}", expr.children()[0].expr().as_relational()),
+                    format!("{:?}", children[0].expr().as_relational()),
                     "child expr"
                 );
                 assert_eq!(input.props(), leaf.props(), "input props");
@@ -1715,7 +1907,8 @@ mod test {
         );
 
         let expr = TestOperator::from(TestRelExpr::Leaf("a0"));
-        let _ = memo.insert_group_member(&group.mexpr().children()[0], expr);
+        let children: Vec<_> = group.mexpr().children().collect();
+        let _ = memo.insert_group_member(children[0], expr);
 
         expect_memo(
             &memo,
@@ -1787,7 +1980,7 @@ mod test {
         };
         let expr = TestOperator {
             expr: TestExpr::Scalar(expr),
-            props: Default::default(),
+            props: TestProps::Scalar(ScalarProps::default()),
         };
 
         let mut memo = new_memo();
@@ -1840,7 +2033,7 @@ mod test {
 "#,
         );
 
-        let children = group.mexpr().children();
+        let children: Vec<_> = group.mexpr().children().collect();
         assert_eq!(
             children.len(),
             2,
@@ -1849,7 +2042,7 @@ mod test {
         );
 
         let expr = children[1].mexpr();
-        assert_eq!(expr.children().len(), 2, "Filter expression has 2 nested expressions: {:?}", expr.children());
+        assert_eq!(children.len(), 2, "Filter expression has 2 nested expressions: {:?}", expr.children());
 
         let filter_expr = TestScalarExpr::Gt {
             lhs: Box::new(inner_filter),
@@ -1862,7 +2055,22 @@ mod test {
         });
 
         let mut memo = new_memo();
-        let (_, _) = memo.insert_group(expr);
+        let (group_ref, expr_ref) = memo.insert_group(expr);
+        let children: Vec<_> = expr_ref.children().collect();
+
+        println!("{:?} |||| {:?}", group_ref, expr_ref);
+        println!("{:?} |||| {:?}", group_ref.props(), expr_ref.expr());
+        assert_eq!(children[1].mexpr().children().len(), 2, "filter sub queries");
+        // assert_eq!(children[1].mexpr().children_().len(), 2, "filter sub queries");
+
+        // println!("MEXPR {:?}", children[1].mexpr());
+        // println!("EXPR {:?}", children[1].expr());
+        // println!("CHILDREN LEN {:?}", children[1].mexpr().children().len());
+        // println!("CHILDREN ([]) {:?}", children[1].mexpr().children_());
+        // println!("MEXPR PROPS {:?}", children[1].mexpr().props());
+        // println!("PROPS {:?}", children[1].props());
+        //
+        // println!("!!! {:?} PROPS ---> {:?}", expr_ref.expr(), expr_ref.props());
 
         expect_memo(
             &memo,
@@ -1976,8 +2184,12 @@ mod test {
                     expr.mexpr().format_expr(&mut f);
                 } else {
                     expr.mexpr().format_expr(&mut f);
-                    if include_props && group.props != TestProps::default() {
-                        f.write_value("a", &group.props.a)
+                    if include_props {
+                        if let TestProps::Rel(props) = expr.props() {
+                            if props != &RelProps::default() {
+                                f.write_value("a", props.a)
+                            }
+                        }
                     }
                 }
             }

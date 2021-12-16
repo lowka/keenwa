@@ -1,5 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use keenwa::memo::{CopyInExprs, Expr, ExprNode, Memo, MemoExpr, MemoExprFormatter, NewChildExprs, Properties};
+use keenwa::memo::{
+    CopyInExprs, Expr, ExprNode, ExprNodeRef, Memo, MemoExpr, MemoExprFormatter, NewChildExprs, Properties,
+};
 use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone)]
@@ -101,6 +103,57 @@ impl MemoExpr for TestOperator {
         TestOperator {
             expr,
             props: self.props.clone(),
+        }
+    }
+
+    fn new_expr(expr: &Self::Expr, mut inputs: NewChildExprs<Self>) -> (Self::Expr, Option<Self::Props>) {
+        let expr = match expr {
+            TestExpr::Scan { src } => {
+                assert!(inputs.is_empty(), "expects no inputs");
+                TestExpr::Scan { src: src.clone() }
+            }
+            TestExpr::Filter { filter, .. } => {
+                assert_eq!(inputs.len(), 1, "expects 1 input");
+                TestExpr::Filter {
+                    input: inputs.expr(),
+                    filter: filter.clone(),
+                }
+            }
+            TestExpr::Join { .. } => {
+                assert_eq!(inputs.len(), 2, "expects 2 inputs");
+                TestExpr::Join {
+                    left: inputs.expr(),
+                    right: inputs.expr(),
+                }
+            }
+        };
+        (expr, None)
+    }
+
+    fn create(expr: Self::Expr, props: Self::Props) -> Self {
+        TestOperator { expr, props }
+    }
+
+    fn is_v2() -> bool {
+        true
+    }
+
+    fn num_children(&self) -> usize {
+        match self.expr() {
+            TestExpr::Scan { .. } => 0,
+            TestExpr::Filter { input, filter } => 1,
+            TestExpr::Join { .. } => 2,
+        }
+    }
+
+    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Self>> {
+        match self.expr() {
+            TestExpr::Scan { .. } => None,
+            TestExpr::Filter { input, .. } if i == 0 => Some(input.into()),
+            TestExpr::Filter { .. } => None,
+            TestExpr::Join { left, .. } if i == 0 => Some(left.into()),
+            TestExpr::Join { right, .. } if i == 1 => Some(right.into()),
+            TestExpr::Join { .. } => None,
         }
     }
 

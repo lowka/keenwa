@@ -171,13 +171,24 @@ struct TestOperator {
     props: TestProps,
 }
 
-#[derive(Debug, Clone, Default)]
-struct TestProps {
-    a: i32,
+#[derive(Debug, Clone, PartialEq)]
+enum TestProps {
+    // a: i32,
+    Rel(RelProps),
+    Scalar(ScalarProps),
 }
 
 impl Properties for TestProps {}
 
+#[derive(Debug, Clone, Default, PartialEq)]
+struct RelProps {
+    a: i32,
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+struct ScalarProps {
+    sub_queries: Vec<MemoGroupRef<TestOperator>>,
+}
 impl MemoExpr for TestOperator {
     type Expr = TestExpr;
     type Props = TestProps;
@@ -243,6 +254,92 @@ impl MemoExpr for TestOperator {
         }
     }
 
+    fn new_expr(expr: &Self::Expr, mut inputs: NewChildExprs<Self>) -> (Self::Expr, Option<Self::Props>) {
+        match expr {
+            TestExpr::Relational(expr) => {
+                let expr = match expr {
+                    TestRelExpr::Scan { src } => {
+                        assert!(inputs.is_empty(), "expects no inputs");
+                        TestRelExpr::Scan { src }
+                    }
+                    TestRelExpr::Filter { .. } => {
+                        assert_eq!(inputs.len(), 2, "expects 1 input");
+                        TestRelExpr::Filter {
+                            input: RelExpr::from(inputs.expr()),
+                            filter: ScalarExpr::from(inputs.expr()),
+                        }
+                    }
+                    TestRelExpr::Join { .. } => {
+                        assert_eq!(inputs.len(), 2, "expects 2 inputs");
+                        TestRelExpr::Join {
+                            left: RelExpr::from(inputs.expr()),
+                            right: RelExpr::from(inputs.expr()),
+                        }
+                    }
+                };
+                (TestExpr::Relational(expr), None)
+            }
+            TestExpr::Scalar(expr) => {
+                if inputs.is_copy_in() {
+                    let nested_queries = inputs.children.clone();
+                    let expr = TestExpr::Scalar(expr.with_new_inputs(&mut inputs));
+                    let scalar_props = ScalarProps {
+                        sub_queries: nested_queries
+                            .iter()
+                            .map(|e| match e {
+                                ExprNode::Expr(e) => panic!(),
+                                ExprNode::Group(g) => g.clone(),
+                            })
+                            .collect(),
+                    };
+                    (expr, Some(TestProps::Scalar(scalar_props)))
+                } else {
+                    let expr = TestExpr::Scalar(expr.with_new_inputs(&mut inputs));
+                    (expr, None)
+                }
+            }
+        }
+    }
+
+    fn create(expr: Self::Expr, props: Self::Props) -> Self {
+        TestOperator { expr, props }
+    }
+
+    fn is_v2() -> bool {
+        true
+    }
+
+    fn num_children(&self) -> usize {
+        match self.expr() {
+            TestExpr::Relational(expr) => match expr {
+                TestRelExpr::Scan { .. } => 0,
+                TestRelExpr::Filter { .. } => 2,
+                TestRelExpr::Join { .. } => 2,
+            },
+            TestExpr::Scalar(_) => {
+                if let TestProps::Scalar(props) = self.props() {
+                    props.sub_queries.len()
+                } else {
+                    0
+                }
+            }
+        }
+    }
+
+    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Self>> {
+        match self.expr() {
+            TestExpr::Relational(expr) => match expr {
+                TestRelExpr::Scan { .. } => None,
+                TestRelExpr::Filter { input, .. } if i == 0 => Some(input.get_ref()),
+                TestRelExpr::Filter { filter, .. } if i == 0 => Some(filter.get_ref()),
+                TestRelExpr::Join { left, .. } if i == 0 => Some(left.get_ref()),
+                TestRelExpr::Join { right, .. } if i == 0 => Some(right.get_ref()),
+                _ => None,
+            },
+            TestExpr::Scalar(_) => None,
+        }
+    }
+
     fn format_expr<F>(&self, f: &mut F)
     where
         F: MemoExprFormatter,
@@ -276,7 +373,7 @@ impl From<TestExpr> for TestOperator {
     fn from(expr: TestExpr) -> Self {
         TestOperator {
             expr,
-            props: TestProps::default(),
+            props: TestProps::Scalar(ScalarProps::default()),
         }
     }
 }
@@ -285,7 +382,7 @@ impl From<TestRelExpr> for TestOperator {
     fn from(expr: TestRelExpr) -> Self {
         TestOperator {
             expr: TestExpr::Relational(expr),
-            props: TestProps::default(),
+            props: TestProps::Rel(RelProps::default()),
         }
     }
 }
@@ -294,7 +391,7 @@ impl From<TestScalarExpr> for TestOperator {
     fn from(expr: TestScalarExpr) -> Self {
         TestOperator {
             expr: TestExpr::Scalar(expr),
-            props: TestProps::default(),
+            props: TestProps::Scalar(ScalarProps::default()),
         }
     }
 }

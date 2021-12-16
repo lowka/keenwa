@@ -295,7 +295,7 @@ where
     if ctx.group.expr().is_scalar() {
         let expr = ctx.group.mexpr();
 
-        if expr.children().is_empty() {
+        if expr.children().len() == 0 {
             let best_expr = BestExpr::new(expr.clone(), 0, vec![]);
             state.best_expr = Some(best_expr);
         } else {
@@ -885,7 +885,6 @@ impl InputContexts {
         };
         let inputs = expr
             .children()
-            .iter()
             .zip(required_properties.into_iter())
             .map(|(group, required)| OptimizationContext {
                 group: group.clone(),
@@ -902,7 +901,6 @@ impl InputContexts {
         InputContexts {
             inputs: expr
                 .children()
-                .iter()
                 .map(|group| OptimizationContext {
                     group: group.clone(),
                     required_properties: required_properties.clone(),
@@ -927,7 +925,6 @@ impl InputContexts {
     fn from_inputs(expr: &ExprRef) -> Self {
         let inputs = expr
             .children()
-            .iter()
             .map(|group| {
                 let required_properties = group.props().required();
                 OptimizationContext {
