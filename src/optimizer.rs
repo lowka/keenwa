@@ -170,11 +170,11 @@ where
     type Props = Properties;
     type Metadata = OperatorMetadata;
 
-    fn new_group(&self, expr: &Self::Expr, provided_props: Self::Props, metadata: &Self::Metadata) -> Self::Props {
+    fn new_group(&self, expr: &Self::Expr, provided_props: &Self::Props, metadata: &Self::Metadata) -> Self::Props {
         // Every time a new expression is added into a memo we need to compute logical properties of that expression.
         let properties = self
             .properties_provider
-            .build_properties(expr, provided_props, metadata.get_ref())
+            .build_properties(expr, provided_props.clone(), metadata.get_ref())
             // If we has not been able to assemble logical properties for the given expression
             // than something has gone terribly wrong and we have no other option but to unwrap an error.
             .expect("Failed to build logical properties");

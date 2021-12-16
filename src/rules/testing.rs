@@ -36,10 +36,10 @@ impl RuleTester {
             fn new_group(
                 &self,
                 _expr: &Self::Expr,
-                provided_props: Self::Props,
+                provided_props: &Self::Props,
                 _metadata: &Self::Metadata,
             ) -> Self::Props {
-                provided_props
+                provided_props.clone()
             }
         }
 
