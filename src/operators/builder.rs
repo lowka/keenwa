@@ -3,7 +3,10 @@ use crate::datatypes::DataType;
 use crate::error::OptimizerError;
 use crate::meta::{ColumnId, ColumnMetadata, MutableMetadata};
 use crate::operators::relational::join::{JoinCondition, JoinOn};
-use crate::operators::relational::logical::{LogicalExpr, SetOperator};
+use crate::operators::relational::logical::{
+    LogicalAggregate, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin,
+    LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
+};
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::{AggregateFunction, BinaryOp, Expr, ExprRewriter};
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
@@ -147,10 +150,10 @@ impl OperatorBuilder {
         let columns = columns?;
         let column_ids: Vec<ColumnId> = columns.clone().into_iter().map(|(_, id)| id).collect();
 
-        let expr = LogicalExpr::Get {
+        let expr = LogicalExpr::Get(LogicalGet {
             source: source.into(),
             columns: column_ids,
-        };
+        });
 
         self.add_operator(expr, OperatorScope { columns });
         Ok(self)
@@ -173,7 +176,7 @@ impl OperatorBuilder {
             None
         };
 
-        let expr = LogicalExpr::Select { input, filter };
+        let expr = LogicalExpr::Select(LogicalSelect { input, filter });
 
         self.add_operator(expr, scope);
         Ok(self)
@@ -210,11 +213,11 @@ impl OperatorBuilder {
             output_columns.push((name, id))
         }
 
-        let expr = LogicalExpr::Projection {
+        let expr = LogicalExpr::Projection(LogicalProjection {
             input,
             exprs: vec![],
             columns: column_ids,
-        };
+        });
 
         self.add_operator(
             expr,
@@ -258,7 +261,7 @@ impl OperatorBuilder {
         output_columns.extend_from_slice(&right_scope.columns);
 
         let condition = JoinCondition::using(columns_ids);
-        let expr = LogicalExpr::Join { left, right, condition };
+        let expr = LogicalExpr::Join(LogicalJoin { left, right, condition });
 
         self.add_operator(
             expr,
@@ -290,7 +293,7 @@ impl OperatorBuilder {
 
         let expr = self.add_scalar_node(expr);
         let condition = JoinCondition::On(JoinOn::new(expr));
-        let expr = LogicalExpr::Join { left, right, condition };
+        let expr = LogicalExpr::Join(LogicalJoin { left, right, condition });
 
         self.add_operator(expr, scope);
         Ok(self)
@@ -351,7 +354,7 @@ impl OperatorBuilder {
                 "Empty relation can not be added on top of another operator".to_string(),
             ));
         };
-        let expr = LogicalExpr::Empty;
+        let expr = LogicalExpr::Empty(LogicalEmpty {});
         self.add_operator(expr, OperatorScope { columns: vec![] });
         Ok(self)
     }
@@ -435,24 +438,24 @@ impl OperatorBuilder {
         }
 
         let expr = match set_op {
-            SetOperator::Union => LogicalExpr::Union {
+            SetOperator::Union => LogicalExpr::Union(LogicalUnion {
                 left,
                 right,
                 all,
                 columns: column_ids,
-            },
-            SetOperator::Intersect => LogicalExpr::Intersect {
+            }),
+            SetOperator::Intersect => LogicalExpr::Intersect(LogicalIntersect {
                 left,
                 right,
                 all,
                 columns: column_ids,
-            },
-            SetOperator::Except => LogicalExpr::Except {
+            }),
+            SetOperator::Except => LogicalExpr::Except(LogicalExcept {
                 left,
                 right,
                 all,
                 columns: column_ids,
-            },
+            }),
         };
 
         self.add_operator(expr, OperatorScope { columns });
@@ -630,12 +633,12 @@ impl AggregateBuilder<'_> {
             .collect();
         let group_exprs = group_exprs?;
 
-        let aggregate = LogicalExpr::Aggregate {
+        let aggregate = LogicalExpr::Aggregate(LogicalAggregate {
             input,
             aggr_exprs,
             group_exprs,
             columns: column_ids,
-        };
+        });
         let operator = Operator::from(OperatorExpr::from(aggregate));
 
         Ok(OperatorBuilder::from_builder(

@@ -1,7 +1,7 @@
 use crate::error::OptimizerError;
 use crate::operators::relational::join::{get_join_columns_pair, JoinCondition};
 use crate::operators::relational::logical::LogicalExpr;
-use crate::operators::relational::physical::PhysicalExpr;
+use crate::operators::relational::physical::{IndexScan, MergeSortJoin, PhysicalExpr, Select, Sort};
 use crate::operators::relational::RelNode;
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::OrderingChoice;
@@ -49,10 +49,10 @@ fn create_enforcer(
     input: RelNode,
 ) -> Result<(PhysicalExpr, PhysicalProperties), OptimizerError> {
     if let Some(ordering) = properties.ordering() {
-        let sort_enforcer = PhysicalExpr::Sort {
+        let sort_enforcer = PhysicalExpr::Sort(Sort {
             input,
             ordering: ordering.clone(),
-        };
+        });
         Ok((sort_enforcer, PhysicalProperties::none()))
     } else {
         let message = format!("Unexpected physical property. Only ordering is supported: {:?}", properties);
@@ -76,22 +76,22 @@ fn evaluate_properties(
 pub fn expr_retains_property(expr: &PhysicalExpr, required: &PhysicalProperties) -> Result<bool, OptimizerError> {
     let retains = match (expr, required.as_option()) {
         (_, None) => true,
-        (PhysicalExpr::Select { .. }, Some(_)) => true,
+        (PhysicalExpr::Select(Select { .. }), Some(_)) => true,
         (
-            PhysicalExpr::MergeSortJoin {
+            PhysicalExpr::MergeSortJoin(MergeSortJoin {
                 left, right, condition, ..
-            },
+            }),
             Some(ordering),
         ) => join_provides_ordering(left, right, condition, ordering),
-        (PhysicalExpr::IndexScan { columns, .. }, Some(ordering)) => {
+        (PhysicalExpr::IndexScan(IndexScan { columns, .. }), Some(ordering)) => {
             let idx_ordering = OrderingChoice::new(columns.clone());
             ordering_is_preserved(&idx_ordering, ordering)
         }
         (
-            PhysicalExpr::Sort {
+            PhysicalExpr::Sort(Sort {
                 ordering: sort_ordering,
                 ..
-            },
+            }),
             Some(ordering),
         ) => ordering_is_preserved(sort_ordering, ordering),
         // ???: projection w/o expressions always retains required physical properties
@@ -104,20 +104,20 @@ pub fn expr_provides_property(expr: &PhysicalExpr, required: &PhysicalProperties
     let preserved = match (expr, required.as_option()) {
         (_, None) => true,
         (
-            PhysicalExpr::MergeSortJoin {
+            PhysicalExpr::MergeSortJoin(MergeSortJoin {
                 left, right, condition, ..
-            },
+            }),
             Some(ordering),
         ) => join_provides_ordering(left, right, condition, ordering),
-        (PhysicalExpr::IndexScan { columns, .. }, Some(ordering)) => {
+        (PhysicalExpr::IndexScan(IndexScan { columns, .. }), Some(ordering)) => {
             let idx_ordering = OrderingChoice::new(columns.clone());
             ordering_is_preserved(&idx_ordering, ordering)
         }
         (
-            PhysicalExpr::Sort {
+            PhysicalExpr::Sort(Sort {
                 ordering: sort_ordering,
                 ..
-            },
+            }),
             Some(ordering),
         ) => ordering_is_preserved(sort_ordering, ordering),
         (_, Some(_)) => false,

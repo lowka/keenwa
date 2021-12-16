@@ -2,7 +2,10 @@ use crate::catalog::CatalogRef;
 use crate::error::OptimizerError;
 use crate::meta::{ColumnId, MetadataRef};
 use crate::operators::relational::join::JoinCondition;
-use crate::operators::relational::logical::{LogicalExpr, SetOperator};
+use crate::operators::relational::logical::{
+    LogicalAggregate, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin, LogicalProjection,
+    LogicalSelect, LogicalUnion, SetOperator,
+};
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::ExprRewriter;
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
@@ -130,32 +133,34 @@ where
         metadata: MetadataRef,
     ) -> Result<Option<Statistics>, OptimizerError> {
         match expr {
-            LogicalExpr::Projection { input, columns, .. } => self.build_projection(input, columns),
-            LogicalExpr::Select { input, filter, .. } => {
+            LogicalExpr::Projection(LogicalProjection { input, columns, .. }) => self.build_projection(input, columns),
+            LogicalExpr::Select(LogicalSelect { input, filter, .. }) => {
                 self.build_select(expr, logical, metadata, input, filter.as_ref())
             }
-            LogicalExpr::Aggregate { input, group_exprs, .. } => self.build_aggregate(input, group_exprs, &[]),
-            LogicalExpr::Join { left, right, condition } => self.build_join(left, right, condition),
-            LogicalExpr::Get { source, .. } => self.build_get(source),
-            LogicalExpr::Union {
+            LogicalExpr::Aggregate(LogicalAggregate { input, group_exprs, .. }) => {
+                self.build_aggregate(input, group_exprs, &[])
+            }
+            LogicalExpr::Join(LogicalJoin { left, right, condition }) => self.build_join(left, right, condition),
+            LogicalExpr::Get(LogicalGet { source, .. }) => self.build_get(source),
+            LogicalExpr::Union(LogicalUnion {
                 left,
                 right,
                 all,
                 columns,
-            } => self.build_set_operator(SetOperator::Union, *all, left, right, columns),
-            LogicalExpr::Intersect {
+            }) => self.build_set_operator(SetOperator::Union, *all, left, right, columns),
+            LogicalExpr::Intersect(LogicalIntersect {
                 left,
                 right,
                 all,
                 columns,
-            } => self.build_set_operator(SetOperator::Intersect, *all, left, right, columns),
-            LogicalExpr::Except {
+            }) => self.build_set_operator(SetOperator::Intersect, *all, left, right, columns),
+            LogicalExpr::Except(LogicalExcept {
                 left,
                 right,
                 all,
                 columns,
-            } => self.build_set_operator(SetOperator::Except, *all, left, right, columns),
-            LogicalExpr::Empty => self.build_empty(),
+            }) => self.build_set_operator(SetOperator::Except, *all, left, right, columns),
+            LogicalExpr::Empty(_) => self.build_empty(),
         }
     }
 }
@@ -279,7 +284,9 @@ mod test {
     use crate::catalog::TableBuilder;
     use crate::datatypes::DataType;
     use crate::meta::MutableMetadata;
-    use crate::operators::relational::logical::LogicalExpr;
+    use crate::operators::relational::logical::{
+        LogicalAggregate, LogicalEmpty, LogicalExpr, LogicalGet, LogicalUnion,
+    };
     use crate::operators::scalar::expr::AggregateFunction;
     use crate::operators::scalar::{ScalarExpr, ScalarNode};
     use crate::operators::{Operator, OperatorExpr, Properties};
@@ -291,11 +298,11 @@ mod test {
     use std::sync::Arc;
 
     fn new_aggregate(groups: Vec<ScalarExpr>) -> LogicalExpr {
-        LogicalExpr::Aggregate {
-            input: LogicalExpr::Get {
+        LogicalExpr::Aggregate(LogicalAggregate {
+            input: LogicalExpr::Get(LogicalGet {
                 source: "A".to_string(),
                 columns: vec![1],
-            }
+            })
             .into(),
             aggr_exprs: vec![ScalarNode::from(ScalarExpr::Aggregate {
                 func: AggregateFunction::Avg,
@@ -304,7 +311,7 @@ mod test {
             })],
             group_exprs: groups.into_iter().map(ScalarNode::from).collect(),
             columns: vec![],
-        }
+        })
     }
 
     #[test]
@@ -330,21 +337,24 @@ mod test {
         let left = tester.new_operator("A", OperatorStatistics::FromTable("A"));
         let right = tester.new_operator("A", OperatorStatistics::FromTable("B"));
 
-        let union = LogicalExpr::Union {
+        let union = LogicalExpr::Union(LogicalUnion {
             left: left.into(),
             right: right.into(),
             all: false,
             columns: vec![],
-        };
+        });
 
         tester.expect_statistics(&union, Some(Statistics::from_row_count(15.0)))
     }
 
     #[test]
-    fn test_emtpy_statistics() {
+    fn test_empty_statistics() {
         let tester = StatisticsTester::new(vec![("A", 10)]);
 
-        tester.expect_statistics(&LogicalExpr::Empty, Some(Statistics::new(0f64, Statistics::DEFAULT_SELECTIVITY)))
+        tester.expect_statistics(
+            &LogicalExpr::Empty(LogicalEmpty {}),
+            Some(Statistics::new(0f64, Statistics::DEFAULT_SELECTIVITY)),
+        )
     }
 
     enum OperatorStatistics {
@@ -391,11 +401,11 @@ mod test {
                 }
             };
 
-            let expr = LogicalExpr::Get {
+            let expr = LogicalExpr::Get(LogicalGet {
                 source: table.into(),
                 // Currently is not used when statistics are computed.
                 columns: vec![],
-            };
+            });
 
             let logical = LogicalProperties::new(vec![], Some(statistics));
             let properties = Properties::new(logical, PhysicalProperties::none());

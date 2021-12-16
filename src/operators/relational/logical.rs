@@ -1,4 +1,4 @@
-use crate::memo::{ExprContext, MemoExprFormatter};
+use crate::memo::{ExprContext, ExprNodeRef, MemoExprFormatter};
 use crate::meta::ColumnId;
 use crate::operators::relational::join::{JoinCondition, JoinOn};
 use crate::operators::relational::{RelExpr, RelNode};
@@ -11,186 +11,72 @@ use crate::operators::{OperatorCopyIn, OperatorInputs};
 /// A logical expression describes a high-level operator without specifying an implementation algorithm to be used.
 #[derive(Debug, Clone)]
 pub enum LogicalExpr {
-    Projection {
-        input: RelNode,
-        // This list of expressions is converted into a list of columns.
-        exprs: Vec<ScalarExpr>,
-        columns: Vec<ColumnId>,
-    },
-    Select {
-        input: RelNode,
-        filter: Option<ScalarNode>,
-    },
-    Aggregate {
-        input: RelNode,
-        aggr_exprs: Vec<ScalarNode>,
-        group_exprs: Vec<ScalarNode>,
-        /// Output columns produced by an aggregate operator.
-        columns: Vec<ColumnId>,
-    },
-    Join {
-        left: RelNode,
-        right: RelNode,
-        condition: JoinCondition,
-    },
-    Get {
-        source: String,
-        columns: Vec<ColumnId>,
-    },
-    Union {
-        left: RelNode,
-        right: RelNode,
-        all: bool,
-        /// Output columns produced by a set operator.
-        columns: Vec<ColumnId>,
-    },
-    Intersect {
-        left: RelNode,
-        right: RelNode,
-        all: bool,
-        /// Output columns produced by a set operator.
-        columns: Vec<ColumnId>,
-    },
-    Except {
-        left: RelNode,
-        right: RelNode,
-        all: bool,
-        /// Output columns produced by a set operator.
-        columns: Vec<ColumnId>,
-    },
+    Projection(LogicalProjection),
+    Select(LogicalSelect),
+    Aggregate(LogicalAggregate),
+    Join(LogicalJoin),
+    Get(LogicalGet),
+    Union(LogicalUnion),
+    Intersect(LogicalIntersect),
+    Except(LogicalExcept),
     /// Relation that produces no rows.
-    Empty,
+    Empty(LogicalEmpty),
 }
 
 impl LogicalExpr {
-    pub(crate) fn traverse<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+    pub(crate) fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
         match self {
-            LogicalExpr::Projection { input, .. } => {
-                visitor.visit_rel(expr_ctx, input);
-            }
-            LogicalExpr::Select { input, filter } => {
-                visitor.visit_rel(expr_ctx, input);
-                visitor.visit_opt_scalar(expr_ctx, filter.as_ref());
-            }
-            LogicalExpr::Join {
-                left, right, condition, ..
-            } => {
-                visitor.visit_rel(expr_ctx, left);
-                visitor.visit_rel(expr_ctx, right);
-                visitor.visit_join_condition(expr_ctx, condition);
-            }
-            LogicalExpr::Get { .. } => {}
-            LogicalExpr::Aggregate {
-                input,
-                aggr_exprs,
-                group_exprs,
-                ..
-            } => {
-                visitor.visit_rel(expr_ctx, input);
-                for expr in aggr_exprs {
-                    visitor.visit_scalar(expr_ctx, expr);
-                }
-                for group_expr in group_exprs {
-                    visitor.visit_scalar(expr_ctx, group_expr);
-                }
-            }
-            LogicalExpr::Union { left, right, .. } => {
-                visitor.visit_rel(expr_ctx, left);
-                visitor.visit_rel(expr_ctx, right);
-            }
-            LogicalExpr::Intersect { left, right, .. } => {
-                visitor.visit_rel(expr_ctx, left);
-                visitor.visit_rel(expr_ctx, right);
-            }
-            LogicalExpr::Except { left, right, .. } => {
-                visitor.visit_rel(expr_ctx, left);
-                visitor.visit_rel(expr_ctx, right);
-            }
-            LogicalExpr::Empty => {}
+            LogicalExpr::Projection(expr) => expr.copy_in(visitor, expr_ctx),
+            LogicalExpr::Select(expr) => expr.copy_in(visitor, expr_ctx),
+            LogicalExpr::Join(expr) => expr.copy_in(visitor, expr_ctx),
+            LogicalExpr::Get(_) => {}
+            LogicalExpr::Aggregate(expr) => expr.copy_in(visitor, expr_ctx),
+            LogicalExpr::Union(expr) => expr.copy_in(visitor, expr_ctx),
+            LogicalExpr::Intersect(expr) => expr.copy_in(visitor, expr_ctx),
+            LogicalExpr::Except(expr) => expr.copy_in(visitor, expr_ctx),
+            LogicalExpr::Empty(_) => {}
         }
     }
 
-    pub fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    pub(crate) fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
         match self {
-            LogicalExpr::Projection { columns, exprs, .. } => {
-                inputs.expect_len(1, "LogicalProjection");
-                LogicalExpr::Projection {
-                    input: inputs.rel_node(),
-                    columns: columns.clone(),
-                    exprs: exprs.clone(),
-                }
-            }
-            LogicalExpr::Select { filter, .. } => {
-                let num_opt = filter.as_ref().map(|_| 1).unwrap_or_default();
-                inputs.expect_len(1 + num_opt, "LogicalSelect");
-                LogicalExpr::Select {
-                    input: inputs.rel_node(),
-                    filter: filter.as_ref().map(|_| inputs.scalar_node()),
-                }
-            }
-            LogicalExpr::Join { condition, .. } => {
-                //inputs.expect_len(2, "LogicalJoin");
-                LogicalExpr::Join {
-                    left: inputs.rel_node(),
-                    right: inputs.rel_node(),
-                    condition: match condition {
-                        JoinCondition::Using(_) => condition.clone(),
-                        JoinCondition::On(_) => JoinCondition::On(JoinOn::new(inputs.scalar_node())),
-                    },
-                }
-            }
-            LogicalExpr::Get { source, columns } => {
-                inputs.expect_len(0, "LogicalGet");
-                LogicalExpr::Get {
-                    source: source.clone(),
-                    columns: columns.clone(),
-                }
-            }
-            LogicalExpr::Aggregate {
-                aggr_exprs,
-                group_exprs,
-                columns,
-                ..
-            } => {
-                inputs.expect_len(1 + aggr_exprs.len() + group_exprs.len(), "LogicalAggregate");
-                LogicalExpr::Aggregate {
-                    input: inputs.rel_node(),
-                    aggr_exprs: inputs.scalar_nodes(aggr_exprs.len()),
-                    group_exprs: inputs.scalar_nodes(group_exprs.len()),
-                    columns: columns.clone(),
-                }
-            }
-            LogicalExpr::Union { all, columns, .. } => {
-                inputs.expect_len(2, "LogicalUnion");
-                LogicalExpr::Union {
-                    left: inputs.rel_node(),
-                    right: inputs.rel_node(),
-                    all: *all,
-                    columns: columns.clone(),
-                }
-            }
-            LogicalExpr::Intersect { all, columns, .. } => {
-                inputs.expect_len(2, "LogicalIntersect");
-                LogicalExpr::Intersect {
-                    left: inputs.rel_node(),
-                    right: inputs.rel_node(),
-                    all: *all,
-                    columns: columns.clone(),
-                }
-            }
-            LogicalExpr::Except { all, columns, .. } => {
-                inputs.expect_len(2, "LogicalExcept");
-                LogicalExpr::Except {
-                    left: inputs.rel_node(),
-                    right: inputs.rel_node(),
-                    all: *all,
-                    columns: columns.clone(),
-                }
-            }
-            LogicalExpr::Empty => {
-                inputs.expect_len(0, "LogicalEmpty");
-                LogicalExpr::Empty
-            }
+            LogicalExpr::Projection(expr) => LogicalExpr::Projection(expr.with_new_inputs(inputs)),
+            LogicalExpr::Select(expr) => LogicalExpr::Select(expr.with_new_inputs(inputs)),
+            LogicalExpr::Join(expr) => LogicalExpr::Join(expr.with_new_inputs(inputs)),
+            LogicalExpr::Get(expr) => LogicalExpr::Get(expr.with_new_inputs(inputs)),
+            LogicalExpr::Aggregate(expr) => LogicalExpr::Aggregate(expr.with_new_inputs(inputs)),
+            LogicalExpr::Union(expr) => LogicalExpr::Union(expr.with_new_inputs(inputs)),
+            LogicalExpr::Intersect(expr) => LogicalExpr::Intersect(expr.with_new_inputs(inputs)),
+            LogicalExpr::Except(expr) => LogicalExpr::Except(expr.with_new_inputs(inputs)),
+            LogicalExpr::Empty(expr) => LogicalExpr::Empty(expr.with_new_inputs(inputs)),
+        }
+    }
+
+    pub(crate) fn num_children(&self) -> usize {
+        match self {
+            LogicalExpr::Projection(expr) => expr.num_children(),
+            LogicalExpr::Select(expr) => expr.num_children(),
+            LogicalExpr::Join(expr) => expr.num_children(),
+            LogicalExpr::Get(expr) => expr.num_children(),
+            LogicalExpr::Aggregate(expr) => expr.num_children(),
+            LogicalExpr::Union(expr) => expr.num_children(),
+            LogicalExpr::Intersect(expr) => expr.num_children(),
+            LogicalExpr::Except(expr) => expr.num_children(),
+            LogicalExpr::Empty(expr) => expr.num_children(),
+        }
+    }
+
+    pub(crate) fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+        match self {
+            LogicalExpr::Projection(expr) => expr.get_child(i),
+            LogicalExpr::Select(expr) => expr.get_child(i),
+            LogicalExpr::Aggregate(expr) => expr.get_child(i),
+            LogicalExpr::Join(expr) => expr.get_child(i),
+            LogicalExpr::Get(expr) => expr.get_child(i),
+            LogicalExpr::Union(expr) => expr.get_child(i),
+            LogicalExpr::Intersect(expr) => expr.get_child(i),
+            LogicalExpr::Except(expr) => expr.get_child(i),
+            LogicalExpr::Empty(expr) => expr.get_child(i),
         }
     }
 
@@ -199,84 +85,15 @@ impl LogicalExpr {
         F: MemoExprFormatter,
     {
         match self {
-            LogicalExpr::Projection {
-                input, columns, exprs, ..
-            } => {
-                f.write_name("LogicalProjection");
-                f.write_expr("input", input);
-                f.write_values("cols", columns);
-                f.write_values("exprs", exprs);
-            }
-            LogicalExpr::Select { input, filter } => {
-                f.write_name("LogicalSelect");
-                f.write_expr("input", input);
-                f.write_expr_if_present("filter", filter.as_ref());
-            }
-            LogicalExpr::Join { left, right, condition } => {
-                f.write_name("LogicalJoin");
-                f.write_expr("left", left);
-                f.write_expr("right", right);
-                match condition {
-                    JoinCondition::Using(using) => f.write_value("using", using),
-                    JoinCondition::On(on) => f.write_value("on", on),
-                }
-            }
-            LogicalExpr::Get { source, columns } => {
-                f.write_name("LogicalGet");
-                f.write_source(source);
-                f.write_values("cols", columns);
-            }
-            LogicalExpr::Aggregate {
-                input,
-                aggr_exprs,
-                group_exprs,
-                ..
-            } => {
-                f.write_name("LogicalAggregate");
-                f.write_expr("input", input);
-                for aggr_expr in aggr_exprs {
-                    f.write_expr("", aggr_expr);
-                }
-                for group_expr in group_exprs {
-                    f.write_expr("", group_expr);
-                }
-            }
-            LogicalExpr::Union {
-                left,
-                right,
-                all,
-                columns: _columns,
-            } => {
-                f.write_name("LogicalUnion");
-                f.write_expr("left", left);
-                f.write_expr("right", right);
-                f.write_value("all", all);
-            }
-            LogicalExpr::Intersect {
-                left,
-                right,
-                all,
-                columns: _columns,
-            } => {
-                f.write_name("LogicalIntersect");
-                f.write_expr("left", left);
-                f.write_expr("right", right);
-                f.write_value("all", all);
-            }
-            LogicalExpr::Except {
-                left,
-                right,
-                all,
-                columns: _columns,
-            } => {
-                f.write_name("LogicalExcept");
-                f.write_expr("left", left);
-                f.write_expr("right", right);
-                f.write_value("all", all);
-            }
-            LogicalExpr::Empty => {
-                f.write_name("LogicalEmpty");
-            }
+            LogicalExpr::Projection(expr) => expr.format_expr(f),
+            LogicalExpr::Select(expr) => expr.format_expr(f),
+            LogicalExpr::Join(expr) => expr.format_expr(f),
+            LogicalExpr::Get(expr) => expr.format_expr(f),
+            LogicalExpr::Aggregate(expr) => expr.format_expr(f),
+            LogicalExpr::Union(expr) => expr.format_expr(f),
+            LogicalExpr::Intersect(expr) => expr.format_expr(f),
+            LogicalExpr::Except(expr) => expr.format_expr(f),
+            LogicalExpr::Empty(expr) => expr.format_expr(f),
         }
     }
 
@@ -312,24 +129,24 @@ impl LogicalExpr {
         let mut expr_visitor = VisitNestedLogicalExprs { visitor };
 
         match self {
-            LogicalExpr::Projection { input, exprs, .. } => {
+            LogicalExpr::Projection(LogicalProjection { input, exprs, .. }) => {
                 for expr in exprs {
                     expr.accept(&mut expr_visitor);
                 }
                 input.expr().as_logical().accept(visitor);
             }
-            LogicalExpr::Select { input, filter } => {
+            LogicalExpr::Select(LogicalSelect { input, filter }) => {
                 if let Some(expr) = filter.as_ref() {
                     expr.expr().accept(&mut expr_visitor);
                 }
                 input.expr().as_logical().accept(visitor);
             }
-            LogicalExpr::Aggregate {
+            LogicalExpr::Aggregate(LogicalAggregate {
                 input,
                 aggr_exprs,
                 group_exprs,
                 ..
-            } => {
+            }) => {
                 for aggr_expr in aggr_exprs {
                     aggr_expr.expr().accept(&mut expr_visitor);
                 }
@@ -338,20 +155,18 @@ impl LogicalExpr {
                 }
                 input.expr().as_logical().accept(visitor);
             }
-            LogicalExpr::Join { left, right, .. } => {
+            LogicalExpr::Join(LogicalJoin { left, right, .. }) => {
                 left.expr().as_logical().accept(visitor);
                 right.expr().as_logical().accept(visitor);
             }
-            LogicalExpr::Get { .. } => {}
-            LogicalExpr::Union { left, right, .. }
-            | LogicalExpr::Intersect { left, right, .. }
-            | LogicalExpr::Except { left, right, .. } => {
+            LogicalExpr::Get(_) => {}
+            LogicalExpr::Union(LogicalUnion { left, right, .. })
+            | LogicalExpr::Intersect(LogicalIntersect { left, right, .. })
+            | LogicalExpr::Except(LogicalExcept { left, right, .. }) => {
                 left.expr().as_logical().accept(visitor);
                 right.expr().as_logical().accept(visitor);
             }
-            LogicalExpr::Empty => {
-                // nothing to do
-            }
+            LogicalExpr::Empty(_) => {}
         }
         visitor.post_visit(self);
     }
@@ -373,4 +188,431 @@ pub enum SetOperator {
     Union,
     Intersect,
     Except,
+}
+
+#[derive(Debug, Clone)]
+pub struct LogicalProjection {
+    pub input: RelNode,
+    // This list of expressions is converted into a list of columns.
+    pub exprs: Vec<ScalarExpr>,
+    pub columns: Vec<ColumnId>,
+}
+
+impl LogicalProjection {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.input);
+    }
+
+    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        inputs.expect_len(1, "LogicalProjection");
+        LogicalProjection {
+            input: inputs.rel_node(),
+            columns: self.columns.clone(),
+            exprs: self.exprs.clone(),
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        1
+    }
+
+    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+        if i == 0 {
+            Some((&self.input).into())
+        } else {
+            None
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("LogicalProjection");
+        f.write_expr("input", &self.input);
+        f.write_values("cols", &self.columns);
+        f.write_values("exprs", &self.exprs);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LogicalSelect {
+    pub input: RelNode,
+    pub filter: Option<ScalarNode>,
+}
+
+impl LogicalSelect {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.input);
+        visitor.visit_opt_scalar(expr_ctx, self.filter.as_ref());
+    }
+
+    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        let num_opt = self.filter.as_ref().map(|_| 1).unwrap_or_default();
+        inputs.expect_len(1 + num_opt, "LogicalSelect");
+
+        LogicalSelect {
+            input: inputs.rel_node(),
+            filter: self.filter.as_ref().map(|_| inputs.scalar_node()),
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        1 + self.filter.as_ref().map(|_| 1).unwrap_or_default()
+    }
+
+    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+        match i {
+            0 => Some((&self.input).into()),
+            1 if self.filter.is_some() => {
+                let filter = self.filter.as_ref().unwrap();
+                Some(filter.into())
+            }
+            _ => None,
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("LogicalSelect");
+        f.write_expr("input", &self.input);
+        f.write_expr_if_present("filter", self.filter.as_ref())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LogicalAggregate {
+    pub input: RelNode,
+    pub aggr_exprs: Vec<ScalarNode>,
+    pub group_exprs: Vec<ScalarNode>,
+    /// Output columns produced by an aggregate operator.
+    pub columns: Vec<ColumnId>,
+}
+
+impl LogicalAggregate {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.input);
+        for expr in self.aggr_exprs.iter() {
+            visitor.visit_scalar(expr_ctx, expr);
+        }
+        for expr in self.group_exprs.iter() {
+            visitor.visit_scalar(expr_ctx, expr);
+        }
+    }
+
+    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        inputs.expect_len(1 + self.aggr_exprs.len() + self.group_exprs.len(), "LogicalAggregate");
+
+        LogicalAggregate {
+            input: inputs.rel_node(),
+            aggr_exprs: inputs.scalar_nodes(self.aggr_exprs.len()),
+            group_exprs: inputs.scalar_nodes(self.group_exprs.len()),
+            columns: self.columns.clone(),
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        1 + self.aggr_exprs.len() + self.group_exprs.len()
+    }
+
+    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+        let num_aggr_exprs = self.aggr_exprs.len();
+        let num_group_exprs = self.group_exprs.len();
+        match i {
+            0 => Some((&self.input).into()),
+            _ if i >= 1 && i < num_aggr_exprs => {
+                let expr = &self.aggr_exprs[i];
+                Some(expr.into())
+            }
+            _ if i >= num_aggr_exprs && i < 1 + num_aggr_exprs + num_group_exprs => {
+                let expr = &self.group_exprs[i];
+                Some(expr.into())
+            }
+            _ => None,
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("LogicalAggregate");
+        f.write_expr("input", &self.input);
+        for aggr_expr in self.aggr_exprs.iter() {
+            f.write_expr("", aggr_expr);
+        }
+        for group_expr in self.group_exprs.iter() {
+            f.write_expr("", group_expr);
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LogicalJoin {
+    pub left: RelNode,
+    pub right: RelNode,
+    pub condition: JoinCondition,
+}
+
+impl LogicalJoin {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.left);
+        visitor.visit_rel(expr_ctx, &self.right);
+        visitor.visit_join_condition(expr_ctx, &self.condition);
+    }
+
+    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        let num_opt = match &self.condition {
+            JoinCondition::Using(_) => 0,
+            JoinCondition::On(_) => 1,
+        };
+        inputs.expect_len(2 + num_opt, "LogicalJoin");
+
+        LogicalJoin {
+            left: inputs.rel_node(),
+            right: inputs.rel_node(),
+            condition: match &self.condition {
+                JoinCondition::Using(_) => self.condition.clone(),
+                JoinCondition::On(_) => JoinCondition::On(JoinOn::new(inputs.scalar_node())),
+            },
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        let num_opt = match &self.condition {
+            JoinCondition::Using(_) => 0,
+            JoinCondition::On(_) => 1,
+        };
+        2 + num_opt
+    }
+
+    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+        match i {
+            0 => Some((&self.left).into()),
+            1 => Some((&self.right).into()),
+            2 => match &self.condition {
+                JoinCondition::Using(_) => unreachable!(),
+                JoinCondition::On(on) => Some((&on.expr).into()),
+            },
+            _ => None,
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("LogicalJoin");
+        f.write_expr("left", &self.left);
+        f.write_expr("right", &self.right);
+        match &self.condition {
+            JoinCondition::Using(using) => f.write_value("using", using),
+            JoinCondition::On(on) => f.write_value("on", on),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LogicalGet {
+    pub source: String,
+    pub columns: Vec<ColumnId>,
+}
+
+impl LogicalGet {
+    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        inputs.expect_len(0, "LogicalGet");
+
+        LogicalGet {
+            source: self.source.clone(),
+            columns: self.columns.clone(),
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        0
+    }
+
+    fn get_child(&self, _i: usize) -> Option<ExprNodeRef<Operator>> {
+        None
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("LogicalGet");
+        f.write_source(&self.source);
+        f.write_values("cols", &self.columns);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LogicalUnion {
+    pub left: RelNode,
+    pub right: RelNode,
+    pub all: bool,
+    /// Output columns produced by a set operator.
+    pub columns: Vec<ColumnId>,
+}
+
+impl LogicalUnion {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.left);
+        visitor.visit_rel(expr_ctx, &self.right);
+    }
+
+    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        inputs.expect_len(2, "LogicalUnion");
+        LogicalUnion {
+            left: inputs.rel_node(),
+            right: inputs.rel_node(),
+            all: self.all,
+            columns: self.columns.clone(),
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        2
+    }
+
+    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+        match i {
+            0 => Some((&self.left).into()),
+            1 => Some((&self.left).into()),
+            _ => None,
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("LogicalUnion");
+        f.write_expr("left", &self.left);
+        f.write_expr("right", &self.right);
+        f.write_value("all", self.all);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LogicalIntersect {
+    pub left: RelNode,
+    pub right: RelNode,
+    pub all: bool,
+    /// Output columns produced by a set operator.
+    pub columns: Vec<ColumnId>,
+}
+
+impl LogicalIntersect {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.left);
+        visitor.visit_rel(expr_ctx, &self.right);
+    }
+
+    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        inputs.expect_len(2, "LogicalUnion");
+        LogicalIntersect {
+            left: inputs.rel_node(),
+            right: inputs.rel_node(),
+            all: self.all,
+            columns: self.columns.clone(),
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        2
+    }
+
+    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+        match i {
+            0 => Some((&self.left).into()),
+            1 => Some((&self.left).into()),
+            _ => None,
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("LogicalIntersect");
+        f.write_expr("left", &self.left);
+        f.write_expr("right", &self.right);
+        f.write_value("all", self.all);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LogicalExcept {
+    pub left: RelNode,
+    pub right: RelNode,
+    pub all: bool,
+    /// Output columns produced by a set operator.
+    pub columns: Vec<ColumnId>,
+}
+
+impl LogicalExcept {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.left);
+        visitor.visit_rel(expr_ctx, &self.right);
+    }
+
+    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        inputs.expect_len(2, "LogicalExcept");
+        LogicalExcept {
+            left: inputs.rel_node(),
+            right: inputs.rel_node(),
+            all: self.all,
+            columns: self.columns.clone(),
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        2
+    }
+
+    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+        match i {
+            0 => Some((&self.left).into()),
+            1 => Some((&self.left).into()),
+            _ => None,
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("LogicalExcept");
+        f.write_expr("left", &self.left);
+        f.write_expr("right", &self.right);
+        f.write_value("all", self.all);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LogicalEmpty {}
+
+impl LogicalEmpty {
+    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        inputs.expect_len(0, "LogicalEmpty");
+        LogicalEmpty {}
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("LogicalEmpty");
+    }
+
+    fn num_children(&self) -> usize {
+        0
+    }
+
+    fn get_child(&self, _i: usize) -> Option<ExprNodeRef<Operator>> {
+        None
+    }
 }

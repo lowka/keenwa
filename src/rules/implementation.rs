@@ -2,8 +2,14 @@ use crate::catalog::{CatalogRef, IndexRef};
 use crate::error::OptimizerError;
 use crate::meta::ColumnId;
 use crate::operators::relational::join::{get_non_empty_join_columns_pair, JoinCondition};
-use crate::operators::relational::logical::LogicalExpr;
-use crate::operators::relational::physical::PhysicalExpr;
+use crate::operators::relational::logical::{
+    LogicalAggregate, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin, LogicalProjection,
+    LogicalSelect, LogicalUnion,
+};
+use crate::operators::relational::physical::{
+    Append, Empty, HashAggregate, HashJoin, HashedSetOp, IndexScan, MergeSortJoin, NestedLoop, PhysicalExpr,
+    Projection, Scan, Select, Unique,
+};
 use crate::rules::{Rule, RuleContext, RuleMatch, RuleResult, RuleType};
 
 #[derive(Debug)]
@@ -36,14 +42,14 @@ impl Rule for GetToScanRule {
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
-            LogicalExpr::Get { source, columns } => {
+            LogicalExpr::Get(LogicalGet { source, columns }) => {
                 let table = self.catalog.get_table(source);
                 match table {
                     Some(_) => {
-                        let expr = PhysicalExpr::Scan {
+                        let expr = PhysicalExpr::Scan(Scan {
                             source: source.into(),
                             columns: columns.clone(),
-                        };
+                        });
                         Ok(Some(RuleResult::Implementation(expr)))
                     }
                     None => {
@@ -78,11 +84,11 @@ impl Rule for SelectRule {
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
-            LogicalExpr::Select { input, filter } => {
-                let expr = PhysicalExpr::Select {
+            LogicalExpr::Select(LogicalSelect { input, filter }) => {
+                let expr = PhysicalExpr::Select(Select {
                     input: input.clone(),
                     filter: filter.clone(),
-                };
+                });
                 Ok(Some(RuleResult::Implementation(expr)))
             }
             _ => Ok(None),
@@ -112,15 +118,15 @@ impl Rule for ProjectionRule {
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
-            LogicalExpr::Projection {
+            LogicalExpr::Projection(LogicalProjection {
                 input,
                 columns,
                 exprs: _exprs,
-            } => {
-                let expr = PhysicalExpr::Projection {
+            }) => {
+                let expr = PhysicalExpr::Projection(Projection {
                     input: input.clone(),
                     columns: columns.clone(),
-                };
+                });
                 Ok(Some(RuleResult::Implementation(expr)))
             }
             _ => Ok(None),
@@ -150,13 +156,13 @@ impl Rule for HashJoinRule {
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
-            LogicalExpr::Join { left, right, condition } => {
+            LogicalExpr::Join(LogicalJoin { left, right, condition }) => {
                 if get_non_empty_join_columns_pair(left, right, condition).is_some() {
-                    let expr = PhysicalExpr::HashJoin {
+                    let expr = PhysicalExpr::HashJoin(HashJoin {
                         left: left.clone(),
                         right: right.clone(),
                         condition: condition.clone(),
-                    };
+                    });
                     Ok(Some(RuleResult::Implementation(expr)))
                 } else {
                     Ok(None)
@@ -189,13 +195,13 @@ impl Rule for MergeSortJoinRule {
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
-            LogicalExpr::Join { left, right, condition } => {
+            LogicalExpr::Join(LogicalJoin { left, right, condition }) => {
                 if get_non_empty_join_columns_pair(left, right, condition).is_some() {
-                    let expr = PhysicalExpr::MergeSortJoin {
+                    let expr = PhysicalExpr::MergeSortJoin(MergeSortJoin {
                         left: left.clone(),
                         right: right.clone(),
                         condition: condition.clone(),
-                    };
+                    });
                     Ok(Some(RuleResult::Implementation(expr)))
                 } else {
                     Ok(None)
@@ -226,17 +232,17 @@ impl Rule for NestedLoopJoin {
     }
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
-        if let LogicalExpr::Join { left, right, condition } = expr {
+        if let LogicalExpr::Join(LogicalJoin { left, right, condition }) = expr {
             let condition = match condition {
                 JoinCondition::Using(using) => using.get_expr(),
                 JoinCondition::On(on) => on.expr().clone(),
             };
 
-            let expr = PhysicalExpr::NestedLoop {
+            let expr = PhysicalExpr::NestedLoop(NestedLoop {
                 left: left.clone(),
                 right: right.clone(),
                 condition: Some(condition),
-            };
+            });
             Ok(Some(RuleResult::Implementation(expr)))
         } else {
             Ok(None)
@@ -292,13 +298,13 @@ impl Rule for IndexOnlyScanRule {
 
     fn apply(&self, ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
-            LogicalExpr::Get { source, columns } => {
+            LogicalExpr::Get(LogicalGet { source, columns }) => {
                 let index = self.find_index(ctx, source, columns);
                 Ok(index.map(|_| {
-                    let expr = PhysicalExpr::IndexScan {
+                    let expr = PhysicalExpr::IndexScan(IndexScan {
                         source: source.clone(),
                         columns: columns.clone(),
-                    };
+                    });
                     RuleResult::Implementation(expr)
                 }))
             }
@@ -327,18 +333,18 @@ impl Rule for HashAggregateRule {
     }
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
-        if let LogicalExpr::Aggregate {
+        if let LogicalExpr::Aggregate(LogicalAggregate {
             input,
             aggr_exprs,
             group_exprs,
             ..
-        } = expr
+        }) = expr
         {
-            let expr = PhysicalExpr::HashAggregate {
+            let expr = PhysicalExpr::HashAggregate(HashAggregate {
                 input: input.clone(),
                 aggr_exprs: aggr_exprs.clone(),
                 group_exprs: group_exprs.clone(),
-            };
+            });
             Ok(Some(RuleResult::Implementation(expr)))
         } else {
             Ok(None)
@@ -366,17 +372,17 @@ impl Rule for UnionRule {
     }
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
-        if let LogicalExpr::Union { left, right, all, .. } = expr {
+        if let LogicalExpr::Union(LogicalUnion { left, right, all, .. }) = expr {
             let expr = if *all {
-                PhysicalExpr::Append {
+                PhysicalExpr::Append(Append {
                     left: left.clone(),
                     right: right.clone(),
-                }
+                })
             } else {
-                PhysicalExpr::Unique {
+                PhysicalExpr::Unique(Unique {
                     left: left.clone(),
                     right: right.clone(),
-                }
+                })
             };
             Ok(Some(RuleResult::Implementation(expr)))
         } else {
@@ -406,18 +412,20 @@ impl Rule for HashSetOpRule {
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         let expr = match expr {
-            LogicalExpr::Intersect { left, right, all, .. } => PhysicalExpr::HashedSetOp {
-                left: left.clone(),
-                right: right.clone(),
-                intersect: true,
-                all: *all,
-            },
-            LogicalExpr::Except { left, right, all, .. } => PhysicalExpr::HashedSetOp {
+            LogicalExpr::Intersect(LogicalIntersect { left, right, all, .. }) => {
+                PhysicalExpr::HashedSetOp(HashedSetOp {
+                    left: left.clone(),
+                    right: right.clone(),
+                    intersect: true,
+                    all: *all,
+                })
+            }
+            LogicalExpr::Except(LogicalExcept { left, right, all, .. }) => PhysicalExpr::HashedSetOp(HashedSetOp {
                 left: left.clone(),
                 right: right.clone(),
                 intersect: false,
                 all: *all,
-            },
+            }),
             _ => return Ok(None),
         };
         Ok(Some(RuleResult::Implementation(expr)))
@@ -436,7 +444,7 @@ impl Rule for EmptyRule {
     }
 
     fn matches(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Option<RuleMatch> {
-        if matches!(expr, LogicalExpr::Empty) {
+        if matches!(expr, LogicalExpr::Empty(_)) {
             Some(RuleMatch::Expr)
         } else {
             None
@@ -444,8 +452,8 @@ impl Rule for EmptyRule {
     }
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
-        if matches!(expr, LogicalExpr::Empty) {
-            Ok(Some(RuleResult::Implementation(PhysicalExpr::Empty)))
+        if matches!(expr, LogicalExpr::Empty(_)) {
+            Ok(Some(RuleResult::Implementation(PhysicalExpr::Empty(Empty {}))))
         } else {
             Ok(None)
         }
@@ -456,6 +464,7 @@ impl Rule for EmptyRule {
 mod test {
     use super::*;
     use crate::meta::ColumnId;
+    use crate::operators::relational::logical::LogicalEmpty;
     use crate::operators::relational::RelNode;
     use crate::rules::testing::RuleTester;
 
@@ -464,12 +473,12 @@ mod test {
         let mut tester = RuleTester::new(UnionRule);
 
         fn union_expr(all: bool) -> LogicalExpr {
-            LogicalExpr::Union {
+            LogicalExpr::Union(LogicalUnion {
                 left: new_get("A", vec![1, 2]),
                 right: new_get("B", vec![3, 4]),
                 all,
                 columns: vec![],
-            }
+            })
         }
 
         let union = union_expr(false);
@@ -498,12 +507,12 @@ Append
         let mut tester = RuleTester::new(HashSetOpRule);
 
         fn intersect_expr(all: bool) -> LogicalExpr {
-            LogicalExpr::Intersect {
+            LogicalExpr::Intersect(LogicalIntersect {
                 left: new_get("A", vec![1, 2]),
                 right: new_get("B", vec![3, 4]),
                 all,
                 columns: vec![],
-            }
+            })
         }
 
         let intersect = intersect_expr(false);
@@ -532,12 +541,12 @@ HashedSetOp intersect=true all=true
         let mut tester = RuleTester::new(HashSetOpRule);
 
         fn except_expr(all: bool) -> LogicalExpr {
-            LogicalExpr::Except {
+            LogicalExpr::Except(LogicalExcept {
                 left: new_get("A", vec![1, 2]),
                 right: new_get("B", vec![3, 4]),
                 all,
                 columns: vec![],
-            }
+            })
         }
 
         let expect = except_expr(false);
@@ -564,7 +573,7 @@ HashedSetOp intersect=false all=true
     #[test]
     fn test_empty() {
         let mut tester = RuleTester::new(EmptyRule);
-        let expr = LogicalExpr::Empty;
+        let expr = LogicalExpr::Empty(LogicalEmpty {});
         tester.apply(
             &expr,
             r#"
@@ -574,10 +583,10 @@ Empty
     }
 
     fn new_get(src: &str, columns: Vec<ColumnId>) -> RelNode {
-        let expr = LogicalExpr::Get {
+        let expr = LogicalExpr::Get(LogicalGet {
             source: src.into(),
             columns,
-        };
+        });
         RelNode::from(expr)
     }
 }

@@ -1,4 +1,4 @@
-use crate::memo::{ExprContext, MemoExprFormatter};
+use crate::memo::{ExprContext, ExprNodeRef, MemoExprFormatter};
 use crate::meta::ColumnId;
 use crate::operators::relational::join::{get_join_columns_pair, JoinCondition, JoinOn};
 use crate::operators::relational::RelNode;
@@ -13,267 +13,118 @@ use crate::properties::OrderingChoice;
 /// [logical expression]: crate::operators::relational::logical::LogicalExpr
 #[derive(Debug, Clone)]
 pub enum PhysicalExpr {
-    Projection {
-        input: RelNode,
-        columns: Vec<ColumnId>,
-    },
-    Select {
-        input: RelNode,
-        filter: Option<ScalarNode>,
-    },
-    HashAggregate {
-        input: RelNode,
-        aggr_exprs: Vec<ScalarNode>,
-        group_exprs: Vec<ScalarNode>,
-    },
-    HashJoin {
-        left: RelNode,
-        right: RelNode,
-        condition: JoinCondition,
-    },
-    MergeSortJoin {
-        left: RelNode,
-        right: RelNode,
-        condition: JoinCondition,
-    },
-    NestedLoop {
-        left: RelNode,
-        right: RelNode,
-        condition: Option<ScalarNode>,
-    },
-    Scan {
-        source: String,
-        columns: Vec<ColumnId>,
-    },
-    IndexScan {
-        source: String,
-        columns: Vec<ColumnId>,
-    },
-    Sort {
-        input: RelNode,
-        ordering: OrderingChoice,
-    },
-    Append {
-        left: RelNode,
-        right: RelNode,
-    },
-    Unique {
-        left: RelNode,
-        right: RelNode,
-    },
-    HashedSetOp {
-        left: RelNode,
-        right: RelNode,
-        /// Whether this is an INTERSECT or EXCEPT operator.
-        intersect: bool,
-        /// If `true` this an INTERSECT ALL/EXCEPT ALL operator.
-        all: bool,
-    },
+    Projection(Projection),
+    Select(Select),
+    HashAggregate(HashAggregate),
+    HashJoin(HashJoin),
+    MergeSortJoin(MergeSortJoin),
+    NestedLoop(NestedLoop),
+    Scan(Scan),
+    IndexScan(IndexScan),
+    Sort(Sort),
+    Append(Append),
+    Unique(Unique),
+    HashedSetOp(HashedSetOp),
     /// Relation that produces no rows.
-    Empty,
+    Empty(Empty),
 }
 
 impl PhysicalExpr {
-    pub(crate) fn traverse<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+    pub(crate) fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
         match self {
-            PhysicalExpr::Projection { input, .. } => {
-                visitor.visit_rel(expr_ctx, input);
-            }
-            PhysicalExpr::Select { input, filter } => {
-                visitor.visit_rel(expr_ctx, input);
-                visitor.visit_opt_scalar(expr_ctx, filter.as_ref());
-            }
-            PhysicalExpr::HashAggregate {
-                input,
-                aggr_exprs,
-                group_exprs,
-            } => {
-                visitor.visit_rel(expr_ctx, input);
-                for aggr_expr in aggr_exprs {
-                    visitor.visit_scalar(expr_ctx, aggr_expr);
-                }
-                for group_expr in group_exprs {
-                    visitor.visit_scalar(expr_ctx, group_expr)
-                }
-            }
-            PhysicalExpr::HashJoin { left, right, condition } => {
-                visitor.visit_rel(expr_ctx, left);
-                visitor.visit_rel(expr_ctx, right);
-                visitor.visit_join_condition(expr_ctx, condition);
-            }
-            PhysicalExpr::MergeSortJoin { left, right, condition } => {
-                visitor.visit_rel(expr_ctx, left);
-                visitor.visit_rel(expr_ctx, right);
-                visitor.visit_join_condition(expr_ctx, condition);
-            }
-            PhysicalExpr::NestedLoop { left, right, condition } => {
-                visitor.visit_rel(expr_ctx, left);
-                visitor.visit_rel(expr_ctx, right);
-                visitor.visit_opt_scalar(expr_ctx, condition.as_ref())
-            }
-            PhysicalExpr::Scan { .. } => {}
-            PhysicalExpr::IndexScan { .. } => {}
-            PhysicalExpr::Sort { input, .. } => {
-                visitor.visit_rel(expr_ctx, input);
-            }
-            PhysicalExpr::Unique { left, right, .. } => {
-                visitor.visit_rel(expr_ctx, left);
-                visitor.visit_rel(expr_ctx, right);
-            }
-            PhysicalExpr::Append { left, right } => {
-                visitor.visit_rel(expr_ctx, left);
-                visitor.visit_rel(expr_ctx, right);
-            }
-            PhysicalExpr::HashedSetOp { left, right, .. } => {
-                visitor.visit_rel(expr_ctx, left);
-                visitor.visit_rel(expr_ctx, right);
-            }
-            PhysicalExpr::Empty => {}
+            PhysicalExpr::Projection(expr) => expr.copy_in(visitor, expr_ctx),
+            PhysicalExpr::Select(expr) => expr.copy_in(visitor, expr_ctx),
+            PhysicalExpr::HashAggregate(expr) => expr.copy_in(visitor, expr_ctx),
+            PhysicalExpr::HashJoin(expr) => expr.copy_in(visitor, expr_ctx),
+            PhysicalExpr::MergeSortJoin(expr) => expr.copy_in(visitor, expr_ctx),
+            PhysicalExpr::NestedLoop(expr) => expr.copy_in(visitor, expr_ctx),
+            PhysicalExpr::Scan(_) => {}
+            PhysicalExpr::IndexScan(_) => {}
+            PhysicalExpr::Sort(expr) => expr.copy_in(visitor, expr_ctx),
+            PhysicalExpr::Unique(expr) => expr.copy_in(visitor, expr_ctx),
+            PhysicalExpr::Append(expr) => expr.copy_in(visitor, expr_ctx),
+            PhysicalExpr::HashedSetOp(expr) => expr.copy_in(visitor, expr_ctx),
+            PhysicalExpr::Empty(_) => {}
         }
     }
 
     pub fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
         match self {
-            PhysicalExpr::Projection { columns, .. } => {
-                inputs.expect_len(1, "Projection");
-                PhysicalExpr::Projection {
-                    input: inputs.rel_node(),
-                    columns: columns.clone(),
-                }
-            }
-            PhysicalExpr::Select { filter, .. } => {
-                let num_opt = filter.as_ref().map(|_| 1).unwrap_or_default();
-                inputs.expect_len(1 + num_opt, "Select");
-                PhysicalExpr::Select {
-                    input: inputs.rel_node(),
-                    filter: filter.as_ref().map(|_| inputs.scalar_node()),
-                }
-            }
-            PhysicalExpr::HashAggregate {
-                aggr_exprs,
-                group_exprs,
-                ..
-            } => {
-                inputs.expect_len(1 + aggr_exprs.len() + group_exprs.len(), "HashAggregate");
-                PhysicalExpr::HashAggregate {
-                    input: inputs.rel_node(),
-                    aggr_exprs: inputs.scalar_nodes(aggr_exprs.len()),
-                    group_exprs: inputs.scalar_nodes(group_exprs.len()),
-                }
-            }
-            PhysicalExpr::HashJoin { condition, .. } => {
-                let num_opt = match condition {
-                    JoinCondition::Using(_) => 0,
-                    JoinCondition::On(_) => 1,
-                };
-                inputs.expect_len(2 + num_opt, "HashJoin");
-                PhysicalExpr::HashJoin {
-                    left: inputs.rel_node(),
-                    right: inputs.rel_node(),
-                    condition: match condition {
-                        JoinCondition::Using(_) => condition.clone(),
-                        JoinCondition::On(_) => JoinCondition::On(JoinOn::new(inputs.scalar_node())),
-                    },
-                }
-            }
-            PhysicalExpr::MergeSortJoin { condition, .. } => {
-                let num_opt = match condition {
-                    JoinCondition::Using(_) => 0,
-                    JoinCondition::On(_) => 1,
-                };
-                inputs.expect_len(2 + num_opt, "MergeSortJoin");
-                PhysicalExpr::MergeSortJoin {
-                    left: inputs.rel_node(),
-                    right: inputs.rel_node(),
-                    condition: match condition {
-                        JoinCondition::Using(_) => condition.clone(),
-                        JoinCondition::On(_) => JoinCondition::On(JoinOn::new(inputs.scalar_node())),
-                    },
-                }
-            }
-            PhysicalExpr::NestedLoop { condition, .. } => {
-                let num_opt = condition.as_ref().map(|_| 1).unwrap_or_default();
-                inputs.expect_len(2 + num_opt, "NestedLoop");
-                PhysicalExpr::NestedLoop {
-                    left: inputs.rel_node(),
-                    right: inputs.rel_node(),
-                    condition: condition.as_ref().map(|_| inputs.scalar_node()),
-                }
-            }
-            PhysicalExpr::Scan { source, columns } => {
-                inputs.expect_len(0, "Scan");
-                PhysicalExpr::Scan {
-                    source: source.clone(),
-                    columns: columns.clone(),
-                }
-            }
-            PhysicalExpr::IndexScan { source, columns } => {
-                inputs.expect_len(0, "IndexScan");
-                PhysicalExpr::IndexScan {
-                    source: source.clone(),
-                    columns: columns.clone(),
-                }
-            }
-            PhysicalExpr::Sort { ordering, .. } => {
-                inputs.expect_len(1, "Sort");
-                PhysicalExpr::Sort {
-                    input: inputs.rel_node(),
-                    ordering: ordering.clone(),
-                }
-            }
-            PhysicalExpr::Unique { .. } => {
-                inputs.expect_len(2, "Unique");
-                PhysicalExpr::Unique {
-                    left: inputs.rel_node(),
-                    right: inputs.rel_node(),
-                }
-            }
-            PhysicalExpr::Append { .. } => {
-                inputs.expect_len(2, "Append");
-                PhysicalExpr::Append {
-                    left: inputs.rel_node(),
-                    right: inputs.rel_node(),
-                }
-            }
-            PhysicalExpr::HashedSetOp { intersect, all, .. } => {
-                inputs.expect_len(2, "SortedSetOp");
-                PhysicalExpr::HashedSetOp {
-                    left: inputs.rel_node(),
-                    intersect: *intersect,
-                    right: inputs.rel_node(),
-                    all: *all,
-                }
-            }
-            PhysicalExpr::Empty => {
-                inputs.expect_len(0, "Empty");
-                PhysicalExpr::Empty
-            }
+            PhysicalExpr::Projection(expr) => PhysicalExpr::Projection(expr.with_new_inputs(inputs)),
+            PhysicalExpr::Select(expr) => PhysicalExpr::Select(expr.with_new_inputs(inputs)),
+            PhysicalExpr::HashAggregate(expr) => PhysicalExpr::HashAggregate(expr.with_new_inputs(inputs)),
+            PhysicalExpr::HashJoin(expr) => PhysicalExpr::HashJoin(expr.with_new_inputs(inputs)),
+            PhysicalExpr::MergeSortJoin(expr) => PhysicalExpr::MergeSortJoin(expr.with_new_inputs(inputs)),
+            PhysicalExpr::NestedLoop(expr) => PhysicalExpr::NestedLoop(expr.with_new_inputs(inputs)),
+            PhysicalExpr::Scan(expr) => PhysicalExpr::Scan(expr.with_new_inputs(inputs)),
+            PhysicalExpr::IndexScan(expr) => PhysicalExpr::IndexScan(expr.with_new_inputs(inputs)),
+            PhysicalExpr::Sort(expr) => PhysicalExpr::Sort(expr.with_new_inputs(inputs)),
+            PhysicalExpr::Unique(expr) => PhysicalExpr::Unique(expr.with_new_inputs(inputs)),
+            PhysicalExpr::Append(expr) => PhysicalExpr::Append(expr.with_new_inputs(inputs)),
+            PhysicalExpr::HashedSetOp(expr) => PhysicalExpr::HashedSetOp(expr.with_new_inputs(inputs)),
+            PhysicalExpr::Empty(expr) => PhysicalExpr::Empty(expr.with_new_inputs(inputs)),
+        }
+    }
+
+    pub fn num_children(&self) -> usize {
+        match self {
+            PhysicalExpr::Projection(expr) => expr.num_children(),
+            PhysicalExpr::Select(expr) => expr.num_children(),
+            PhysicalExpr::HashAggregate(expr) => expr.num_children(),
+            PhysicalExpr::HashJoin(expr) => expr.num_children(),
+            PhysicalExpr::MergeSortJoin(expr) => expr.num_children(),
+            PhysicalExpr::NestedLoop(expr) => expr.num_children(),
+            PhysicalExpr::Scan(expr) => expr.num_children(),
+            PhysicalExpr::IndexScan(expr) => expr.num_children(),
+            PhysicalExpr::Sort(expr) => expr.num_children(),
+            PhysicalExpr::Unique(expr) => expr.num_children(),
+            PhysicalExpr::Append(expr) => expr.num_children(),
+            PhysicalExpr::HashedSetOp(expr) => expr.num_children(),
+            PhysicalExpr::Empty(expr) => expr.num_children(),
+        }
+    }
+
+    pub fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+        match self {
+            PhysicalExpr::Projection(expr) => expr.get_child(i),
+            PhysicalExpr::Select(expr) => expr.get_child(i),
+            PhysicalExpr::HashAggregate(expr) => expr.get_child(i),
+            PhysicalExpr::HashJoin(expr) => expr.get_child(i),
+            PhysicalExpr::MergeSortJoin(expr) => expr.get_child(i),
+            PhysicalExpr::NestedLoop(expr) => expr.get_child(i),
+            PhysicalExpr::Scan(expr) => expr.get_child(i),
+            PhysicalExpr::IndexScan(expr) => expr.get_child(i),
+            PhysicalExpr::Sort(expr) => expr.get_child(i),
+            PhysicalExpr::Unique(expr) => expr.get_child(i),
+            PhysicalExpr::Append(expr) => expr.get_child(i),
+            PhysicalExpr::HashedSetOp(expr) => expr.get_child(i),
+            PhysicalExpr::Empty(expr) => expr.get_child(i),
         }
     }
 
     pub fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
         match self {
-            PhysicalExpr::Projection { .. } => None,
-            PhysicalExpr::Select { .. } => None,
-            PhysicalExpr::HashJoin { .. } => None,
-            PhysicalExpr::MergeSortJoin {
+            PhysicalExpr::Projection(_) => None,
+            PhysicalExpr::Select(_) => None,
+            PhysicalExpr::HashJoin(_) => None,
+            PhysicalExpr::MergeSortJoin(MergeSortJoin {
                 left, right, condition, ..
-            } => match get_join_columns_pair(left, right, condition) {
+            }) => match get_join_columns_pair(left, right, condition) {
                 Some((left, right)) if !left.is_empty() && !right.is_empty() => {
                     let left_ordering = PhysicalProperties::new(OrderingChoice::new(left));
                     let right_ordering = PhysicalProperties::new(OrderingChoice::new(right));
 
-                    let requirements = vec![left_ordering, right_ordering];
-                    Some(requirements)
+                    Some(vec![left_ordering, right_ordering])
                 }
                 _ => None,
             },
-            PhysicalExpr::NestedLoop { .. } => None,
-            PhysicalExpr::Scan { .. } => None,
-            PhysicalExpr::IndexScan { .. } => None,
-            PhysicalExpr::Sort { .. } => None,
-            PhysicalExpr::HashAggregate { .. } => None,
-            PhysicalExpr::Unique { left, right, .. } | PhysicalExpr::HashedSetOp { left, right, .. } => {
+            PhysicalExpr::NestedLoop(_) => None,
+            PhysicalExpr::Scan(_) => None,
+            PhysicalExpr::IndexScan(_) => None,
+            PhysicalExpr::Sort(_) => None,
+            PhysicalExpr::HashAggregate(HashAggregate { .. }) => None,
+            PhysicalExpr::Unique(Unique { left, right, .. })
+            | PhysicalExpr::HashedSetOp(HashedSetOp { left, right, .. }) => {
                 let left = left.props().logical().output_columns().iter().copied().collect();
                 let right = right.props().logical().output_columns().iter().copied().collect();
                 let left_ordering = PhysicalProperties::new(OrderingChoice::new(left));
@@ -282,8 +133,8 @@ impl PhysicalExpr {
                 let requirements = vec![left_ordering, right_ordering];
                 Some(requirements)
             }
-            PhysicalExpr::Append { .. } => None,
-            PhysicalExpr::Empty => None,
+            PhysicalExpr::Append(_) => None,
+            PhysicalExpr::Empty(_) => None,
         }
     }
 
@@ -292,94 +143,627 @@ impl PhysicalExpr {
         F: MemoExprFormatter,
     {
         match self {
-            PhysicalExpr::Projection { input, columns } => {
-                f.write_name("Projection");
-                f.write_expr("input", input);
-                f.write_values("cols", columns)
-            }
-            PhysicalExpr::Select { input, filter } => {
-                f.write_name("Select");
-                f.write_expr("input", input);
-                f.write_expr_if_present("filter", filter.as_ref())
-            }
-            PhysicalExpr::HashJoin { left, right, condition } => {
-                f.write_name("HashJoin");
-                f.write_expr("left", left);
-                f.write_expr("right", right);
-                match condition {
-                    JoinCondition::Using(using) => f.write_value("using", using),
-                    JoinCondition::On(on) => f.write_value("on", on),
-                };
-            }
-            PhysicalExpr::MergeSortJoin { left, right, condition } => {
-                f.write_name("MergeSortJoin");
-                f.write_expr("left", left);
-                f.write_expr("right", right);
-                match condition {
-                    JoinCondition::Using(using) => f.write_value("using", using),
-                    JoinCondition::On(on) => f.write_value("on", on),
-                }
-            }
-            PhysicalExpr::NestedLoop { left, right, condition } => {
-                f.write_name("NestedLoopJoin");
-                f.write_expr("left", left);
-                f.write_expr("right", right);
-                if let Some(condition) = condition {
-                    f.write_expr("condition", condition);
-                }
-            }
-            PhysicalExpr::Scan { source, columns } => {
-                f.write_name("Scan");
-                f.write_source(source);
-                f.write_values("cols", columns)
-            }
-            PhysicalExpr::IndexScan { source, columns } => {
-                f.write_name("IndexScan");
-                f.write_source(source);
-                f.write_values("cols", columns)
-            }
-            PhysicalExpr::Sort { input, ordering } => {
-                f.write_name("Sort");
-                f.write_expr("input", input);
-                f.write_value("ord", format!("{:?}", ordering.columns()).as_str())
-            }
-            PhysicalExpr::HashAggregate {
-                input,
-                aggr_exprs,
-                group_exprs,
-            } => {
-                f.write_name("HashAggregate");
-                f.write_expr("input", input);
-                for aggr_expr in aggr_exprs {
-                    f.write_expr("", aggr_expr);
-                }
-                for group_expr in group_exprs {
-                    f.write_expr("", group_expr);
-                }
-            }
-            PhysicalExpr::Unique { left, right } => {
-                f.write_name("Unique");
-                f.write_expr("left", left);
-                f.write_expr("right", right);
-            }
-            PhysicalExpr::Append { left, right } => {
-                f.write_name("Append");
-                f.write_expr("left", left);
-                f.write_expr("right", right);
-            }
-            PhysicalExpr::HashedSetOp {
-                left,
-                right,
-                intersect,
-                all,
-            } => {
-                f.write_name("HashedSetOp");
-                f.write_expr("left", left);
-                f.write_expr("right", right);
-                f.write_value("intersect", intersect);
-                f.write_value("all", all);
-            }
-            PhysicalExpr::Empty => f.write_name("Empty"),
+            PhysicalExpr::Projection(expr) => expr.format_expr(f),
+            PhysicalExpr::Select(expr) => expr.format_expr(f),
+            PhysicalExpr::HashJoin(expr) => expr.format_expr(f),
+            PhysicalExpr::MergeSortJoin(expr) => expr.format_expr(f),
+            PhysicalExpr::NestedLoop(expr) => expr.format_expr(f),
+            PhysicalExpr::Scan(expr) => expr.format_expr(f),
+            PhysicalExpr::IndexScan(expr) => expr.format_expr(f),
+            PhysicalExpr::Sort(expr) => expr.format_expr(f),
+            PhysicalExpr::HashAggregate(expr) => expr.format_expr(f),
+            PhysicalExpr::Unique(expr) => expr.format_expr(f),
+            PhysicalExpr::Append(expr) => expr.format_expr(f),
+            PhysicalExpr::HashedSetOp(expr) => expr.format_expr(f),
+            PhysicalExpr::Empty(expr) => expr.format_expr(f),
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Projection {
+    pub input: RelNode,
+    pub columns: Vec<ColumnId>,
+}
+
+impl Projection {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.input);
+    }
+
+    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        inputs.expect_len(1, "LogicalProjection");
+        Projection {
+            input: inputs.rel_node(),
+            columns: self.columns.clone(),
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        1
+    }
+
+    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+        if i == 0 {
+            Some((&self.input).into())
+        } else {
+            None
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("Projection");
+        f.write_expr("input", &self.input);
+        f.write_values("cols", &self.columns);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Select {
+    pub input: RelNode,
+    pub filter: Option<ScalarNode>,
+}
+
+impl Select {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.input);
+        visitor.visit_opt_scalar(expr_ctx, self.filter.as_ref());
+    }
+
+    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        let num_opt = self.filter.as_ref().map(|_| 1).unwrap_or_default();
+        inputs.expect_len(1 + num_opt, "Select");
+
+        Select {
+            input: inputs.rel_node(),
+            filter: self.filter.as_ref().map(|_| inputs.scalar_node()),
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        1 + self.filter.as_ref().map(|_| 1).unwrap_or_default()
+    }
+
+    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+        match i {
+            0 => Some((&self.input).into()),
+            1 if self.filter.is_some() => {
+                let filter = self.filter.as_ref().unwrap();
+                Some(filter.into())
+            }
+            _ => None,
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("Select");
+        f.write_expr("input", &self.input);
+        f.write_expr_if_present("filter", self.filter.as_ref())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HashAggregate {
+    pub input: RelNode,
+    pub aggr_exprs: Vec<ScalarNode>,
+    pub group_exprs: Vec<ScalarNode>,
+}
+
+impl HashAggregate {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.input);
+        for expr in self.aggr_exprs.iter() {
+            visitor.visit_scalar(expr_ctx, expr);
+        }
+        for expr in self.group_exprs.iter() {
+            visitor.visit_scalar(expr_ctx, expr);
+        }
+    }
+
+    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        inputs.expect_len(1 + self.aggr_exprs.len() + self.group_exprs.len(), "HashAggregate");
+
+        HashAggregate {
+            input: inputs.rel_node(),
+            aggr_exprs: inputs.scalar_nodes(self.aggr_exprs.len()),
+            group_exprs: inputs.scalar_nodes(self.group_exprs.len()),
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        1 + self.aggr_exprs.len() + self.group_exprs.len()
+    }
+
+    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+        let num_aggr_exprs = self.aggr_exprs.len();
+        let num_group_exprs = self.group_exprs.len();
+        match i {
+            0 => Some((&self.input).into()),
+            _ if i >= 1 && i < 1 + num_aggr_exprs => {
+                let expr = &self.aggr_exprs[i - 1];
+                Some(expr.into())
+            }
+            _ if i >= num_aggr_exprs && i < 1 + num_aggr_exprs + num_group_exprs => {
+                let expr = &self.group_exprs[i - num_aggr_exprs - 1];
+                Some(expr.into())
+            }
+            _ => None,
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("HashAggregate");
+        f.write_expr("input", &self.input);
+        for aggr_expr in self.aggr_exprs.iter() {
+            f.write_expr("", aggr_expr);
+        }
+        for group_expr in self.group_exprs.iter() {
+            f.write_expr("", group_expr);
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HashJoin {
+    pub left: RelNode,
+    pub right: RelNode,
+    pub condition: JoinCondition,
+}
+
+impl HashJoin {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.left);
+        visitor.visit_rel(expr_ctx, &self.right);
+        visitor.visit_join_condition(expr_ctx, &self.condition);
+    }
+
+    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        let num_opt = match &self.condition {
+            JoinCondition::Using(_) => 0,
+            JoinCondition::On(_) => 1,
+        };
+        inputs.expect_len(2 + num_opt, "HashJoin");
+
+        HashJoin {
+            left: inputs.rel_node(),
+            right: inputs.rel_node(),
+            condition: match &self.condition {
+                JoinCondition::Using(_) => self.condition.clone(),
+                JoinCondition::On(_) => JoinCondition::On(JoinOn::new(inputs.scalar_node())),
+            },
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        let num_opt = match &self.condition {
+            JoinCondition::Using(_) => 0,
+            JoinCondition::On(_) => 1,
+        };
+        2 + num_opt
+    }
+
+    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+        match i {
+            0 => Some((&self.left).into()),
+            1 => Some((&self.right).into()),
+            2 => match &self.condition {
+                JoinCondition::Using(_) => unreachable!(),
+                JoinCondition::On(on) => Some((&on.expr).into()),
+            },
+            _ => None,
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("HashJoin");
+        f.write_expr("left", &self.left);
+        f.write_expr("right", &self.right);
+        match &self.condition {
+            JoinCondition::Using(using) => f.write_value("using", using),
+            JoinCondition::On(on) => f.write_value("on", on),
+        };
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct MergeSortJoin {
+    pub left: RelNode,
+    pub right: RelNode,
+    pub condition: JoinCondition,
+}
+
+impl MergeSortJoin {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.left);
+        visitor.visit_rel(expr_ctx, &self.right);
+        visitor.visit_join_condition(expr_ctx, &self.condition);
+    }
+
+    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        let num_opt = match &self.condition {
+            JoinCondition::Using(_) => 0,
+            JoinCondition::On(_) => 1,
+        };
+        inputs.expect_len(2 + num_opt, "MergeSortJoin");
+
+        MergeSortJoin {
+            left: inputs.rel_node(),
+            right: inputs.rel_node(),
+            condition: match &self.condition {
+                JoinCondition::Using(_) => self.condition.clone(),
+                JoinCondition::On(_) => JoinCondition::On(JoinOn::new(inputs.scalar_node())),
+            },
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        let num_opt = match &self.condition {
+            JoinCondition::Using(_) => 0,
+            JoinCondition::On(_) => 1,
+        };
+        2 + num_opt
+    }
+
+    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+        match i {
+            0 => Some((&self.left).into()),
+            1 => Some((&self.right).into()),
+            2 => match &self.condition {
+                JoinCondition::Using(_) => None,
+                JoinCondition::On(on) => Some((&on.expr).into()),
+            },
+            _ => None,
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("MergeSortJoin");
+        f.write_expr("left", &self.left);
+        f.write_expr("right", &self.right);
+        match &self.condition {
+            JoinCondition::Using(using) => f.write_value("using", using),
+            JoinCondition::On(on) => f.write_value("on", on),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct NestedLoop {
+    pub left: RelNode,
+    pub right: RelNode,
+    pub condition: Option<ScalarNode>,
+}
+
+impl NestedLoop {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.left);
+        visitor.visit_rel(expr_ctx, &self.right);
+        visitor.visit_opt_scalar(expr_ctx, self.condition.as_ref());
+    }
+
+    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        let num_opt = self.condition.as_ref().map(|_| 1).unwrap_or_default();
+        inputs.expect_len(2 + num_opt, "NestedLoop");
+
+        NestedLoop {
+            left: inputs.rel_node(),
+            right: inputs.rel_node(),
+            condition: self.condition.as_ref().map(|_| inputs.scalar_node()),
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        2 + self.condition.as_ref().map(|_| 1).unwrap_or_default()
+    }
+
+    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+        match i {
+            0 => Some((&self.left).into()),
+            1 => Some((&self.right).into()),
+            2 if self.condition.is_some() => {
+                let condition = self.condition.as_ref().unwrap();
+                Some(condition.into())
+            }
+            _ => None,
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("NestedLoopJoin");
+        f.write_expr("left", &self.left);
+        f.write_expr("right", &self.right);
+        if let Some(condition) = self.condition.as_ref() {
+            f.write_expr("condition", condition);
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Scan {
+    pub source: String,
+    pub columns: Vec<ColumnId>,
+}
+
+impl Scan {
+    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        inputs.expect_len(0, "Scan");
+
+        Scan {
+            source: self.source.clone(),
+            columns: self.columns.clone(),
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        0
+    }
+
+    fn get_child(&self, _i: usize) -> Option<ExprNodeRef<Operator>> {
+        None
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("Scan");
+        f.write_source(self.source.as_ref());
+        f.write_values("cols", self.columns.as_slice())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct IndexScan {
+    pub source: String,
+    pub columns: Vec<ColumnId>,
+}
+
+impl IndexScan {
+    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        inputs.expect_len(0, "IndexScan");
+
+        IndexScan {
+            source: self.source.clone(),
+            columns: self.columns.clone(),
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        0
+    }
+
+    fn get_child(&self, _i: usize) -> Option<ExprNodeRef<Operator>> {
+        None
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("IndexScan");
+        f.write_source(self.source.as_ref());
+        f.write_values("cols", self.columns.as_slice())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Sort {
+    pub input: RelNode,
+    pub ordering: OrderingChoice,
+}
+
+impl Sort {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.input);
+    }
+
+    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        inputs.expect_len(1, "Sort");
+
+        Sort {
+            input: inputs.rel_node(),
+            ordering: self.ordering.clone(),
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        1
+    }
+
+    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+        if i == 0 {
+            Some((&self.input).into())
+        } else {
+            None
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("Sort");
+        f.write_expr("input", &self.input);
+        f.write_value("ord", format!("{:?}", self.ordering.columns()).as_str())
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Append {
+    pub left: RelNode,
+    pub right: RelNode,
+}
+
+impl Append {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.left);
+        visitor.visit_rel(expr_ctx, &self.right);
+    }
+
+    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        inputs.expect_len(2, "Append");
+
+        Append {
+            left: inputs.rel_node(),
+            right: inputs.rel_node(),
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        2
+    }
+
+    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+        match i {
+            0 => Some((&self.left).into()),
+            1 => Some((&self.right).into()),
+            _ => None,
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("Append");
+        f.write_expr("left", &self.left);
+        f.write_expr("right", &self.right);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Unique {
+    pub left: RelNode,
+    pub right: RelNode,
+}
+
+impl Unique {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.left);
+        visitor.visit_rel(expr_ctx, &self.right);
+    }
+
+    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        inputs.expect_len(2, "Unique");
+
+        Unique {
+            left: inputs.rel_node(),
+            right: inputs.rel_node(),
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        2
+    }
+
+    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+        match i {
+            0 => Some((&self.left).into()),
+            1 => Some((&self.right).into()),
+            _ => None,
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("Unique");
+        f.write_expr("left", &self.left);
+        f.write_expr("right", &self.right);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HashedSetOp {
+    pub left: RelNode,
+    pub right: RelNode,
+    /// Whether this is an INTERSECT or EXCEPT operator.
+    pub intersect: bool,
+    /// If `true` this an INTERSECT ALL/EXCEPT ALL operator.
+    pub all: bool,
+}
+
+impl HashedSetOp {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.left);
+        visitor.visit_rel(expr_ctx, &self.right);
+    }
+
+    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        inputs.expect_len(2, "Unique");
+
+        HashedSetOp {
+            left: inputs.rel_node(),
+            right: inputs.rel_node(),
+            intersect: self.intersect,
+            all: self.all,
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        2
+    }
+
+    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+        match i {
+            0 => Some((&self.left).into()),
+            1 => Some((&self.right).into()),
+            _ => None,
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("HashedSetOp");
+        f.write_expr("left", &self.left);
+        f.write_expr("right", &self.right);
+        f.write_value("intersect", &self.intersect);
+        f.write_value("all", self.all);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Empty {}
+
+impl Empty {
+    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+        inputs.expect_len(0, "LogicalEmpty");
+        Empty {}
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("Empty");
+    }
+
+    fn num_children(&self) -> usize {
+        0
+    }
+
+    fn get_child(&self, _i: usize) -> Option<ExprNodeRef<Operator>> {
+        None
     }
 }
