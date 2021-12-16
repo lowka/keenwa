@@ -193,7 +193,7 @@ pub trait MemoGroupCallback {
     /// Called when a new memo group is added to memo and returns properties to be shared among all expressions in this group.
     /// Where `expr` is the expression that created the memo group and `provided_props` are properties provided with the expression.
     //FIXME: should accept a context to pass extra stuff.
-    fn new_group(&self, expr: &Self::Expr, provided_props: Self::Props, metadata: &Self::Metadata) -> Self::Props;
+    fn new_group(&self, expr: &Self::Expr, provided_props: &Self::Props, metadata: &Self::Metadata) -> Self::Props;
 }
 
 /// `ExprNode` represents an expression in within an expression tree. A node can be an expression or a memo group.
@@ -621,13 +621,11 @@ where
     }
 
     /// Initialises data structures required to traverse child expressions of the given expression `expr`.
-    pub fn enter_expr(&mut self, expr: &E) -> ExprContext<E> {
+    pub fn enter_expr(&mut self, _expr: &E) -> ExprContext<E> {
+        // Although expr is no longer used we leave just in case.
         ExprContext {
             children: VecDeque::new(),
             parent: self.parent.clone(),
-            // TODO: Add a method that splits MemoExpr into Self::Expr and Self::Props
-            //  this will allow to remove the clone() call below .
-            props: expr.props().clone(),
         }
     }
 
@@ -686,12 +684,9 @@ where
             })
             .collect();
 
-        let ExprContext {
-            children,
-            props,
-            parent,
-        } = expr_ctx;
+        let ExprContext { children, parent } = expr_ctx;
 
+        let props = expr.props();
         let expr = expr.with_new_children(NewChildExprs::new(children));
         let digest = make_digest(&expr);
 
@@ -719,7 +714,7 @@ where
                 let props = if let Some(callback) = self.memo.callback.as_ref() {
                     callback.new_group(&expr, props, &self.memo.metadata)
                 } else {
-                    props
+                    props.clone()
                 };
                 let memo_group = MemoGroupData::new(group_id, props);
                 let group_ref = self.memo.add_group(memo_group);
@@ -750,7 +745,6 @@ where
 {
     children: VecDeque<ExprNode<E>>,
     parent: Option<MemoGroupRef<E>>,
-    props: E::Props,
 }
 
 /// A stack-like data structure used by [MemoExpr::with_new_children].
@@ -1885,13 +1879,13 @@ mod test {
             type Props = TestProps;
             type Metadata = ();
 
-            fn new_group(&self, expr: &Self::Expr, props: Self::Props, _metadata: &Self::Metadata) -> Self::Props {
+            fn new_group(&self, expr: &Self::Expr, props: &Self::Props, _metadata: &Self::Metadata) -> Self::Props {
                 let mut added = self.added.borrow_mut();
                 let mut buf = String::new();
                 let mut fmt = StringMemoFormatter::new(&mut buf);
                 expr.format_expr(&mut fmt);
                 added.push(buf);
-                props
+                props.clone()
             }
         }
 
