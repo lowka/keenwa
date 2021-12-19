@@ -18,7 +18,6 @@ pub mod transformation;
 
 /// An optimization rule used by the optimizer. An optimization rule either transform one logical expression into another or
 /// provides an implementation of the given logical expression.
-/// TODO: Require Debug trait.
 pub trait Rule {
     /// The name of this rule.
     fn name(&self) -> String;
@@ -111,7 +110,7 @@ impl<'m> RuleContext<'m> {
 pub type RuleId = usize;
 
 /// Provides access to optimization rules used by the optimizer.
-pub trait RuleSet: Debug {
+pub trait RuleSet {
     /// Returns an iterator over available optimization rules.
     fn get_rules(&self) -> RuleIterator;
 

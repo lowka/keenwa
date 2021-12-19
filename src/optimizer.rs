@@ -136,9 +136,9 @@ where
 
 impl<R, T, C> Debug for Optimizer<R, T, C>
 where
-    R: RuleSet,
-    T: CostEstimator,
-    C: ResultCallback,
+    R: RuleSet + Debug,
+    T: CostEstimator + Debug,
+    C: ResultCallback + Debug,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Optimizer")
@@ -983,7 +983,6 @@ fn new_cost_estimation_ctx(inputs: &InputContexts, state: &State) -> (CostEstima
     (CostEstimationContext { input_groups }, input_cost)
 }
 
-#[derive(Debug)]
 struct OptimizerResultCallbackContext<'o> {
     ctx: &'o OptimizationContext,
     best_expr: &'o BestExpr,

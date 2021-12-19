@@ -16,7 +16,7 @@ pub enum BestExprRef<'a> {
 }
 
 /// A callback called by the optimizer when an optimized plan is being built.
-pub trait ResultCallback: Debug {
+pub trait ResultCallback {
     /// Called for each expression in the optimized plan.
     fn on_best_expr<C>(&self, expr: BestExprRef, ctx: &C)
     where
@@ -24,7 +24,7 @@ pub trait ResultCallback: Debug {
 }
 
 /// Provides additional information about an expression chosen by the optimizer as the best expression.
-pub trait BestExprContext: Debug {
+pub trait BestExprContext {
     /// Returns the cost of the expression.
     fn cost(&self) -> Cost;
 
