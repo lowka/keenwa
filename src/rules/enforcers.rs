@@ -5,9 +5,8 @@ use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::relational::RelNode;
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::OrderingChoice;
-use std::fmt::Debug;
 
-pub trait EnforcerRules: Debug {
+pub trait EnforcerRules {
     fn evaluate_properties(
         &self,
         expr: &PhysicalExpr,
