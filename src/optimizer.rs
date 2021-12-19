@@ -166,7 +166,7 @@ impl<P> MemoGroupCallback for SetPropertiesCallback<P>
 where
     P: PropertiesProvider,
 {
-    type Expr = Operator;
+    type Expr = OperatorExpr;
     type Props = Properties;
     type Metadata = OperatorMetadata;
 

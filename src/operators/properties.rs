@@ -5,7 +5,7 @@ use crate::operators::relational::logical::{LogicalExpr, SetOperator};
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::ScalarNode;
-use crate::operators::{Operator, OperatorExpr, Properties};
+use crate::operators::{OperatorExpr, Properties};
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
 use crate::statistics::StatisticsBuilder;
@@ -17,7 +17,7 @@ pub trait PropertiesProvider {
     /// has been added by hand to modify statistics or other properties of the given expression to simplify testing.  
     fn build_properties(
         &self,
-        expr: &Operator,
+        expr: &OperatorExpr,
         manual_props: Properties,
         metadata: MetadataRef,
     ) -> Result<Properties, OptimizerError>;
@@ -155,13 +155,13 @@ where
 {
     fn build_properties(
         &self,
-        expr: &Operator,
+        expr: &OperatorExpr,
         manual_props: Properties,
         metadata: MetadataRef,
     ) -> Result<Properties, OptimizerError> {
         let Properties { logical, required } = manual_props;
         let statistics = logical.statistics;
-        match expr.expr() {
+        match expr {
             OperatorExpr::Relational(RelExpr::Logical(expr)) => {
                 let LogicalProperties {
                     output_columns,

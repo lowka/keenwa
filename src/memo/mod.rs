@@ -29,7 +29,7 @@ where
     expr_cache: HashMap<String, ExprId>,
     expr_to_group: HashMap<ExprId, GroupId>,
     metadata: T,
-    callback: Option<Rc<dyn MemoGroupCallback<Expr = E, Props = E::Props, Metadata = T>>>,
+    callback: Option<Rc<dyn MemoGroupCallback<Expr = E::Expr, Props = E::Props, Metadata = T>>>,
 }
 
 /// The number of elements per store page.
@@ -55,7 +55,7 @@ where
     /// Creates a new memo with the given metadata and the callback.
     pub fn with_callback(
         metadata: T,
-        callback: Rc<dyn MemoGroupCallback<Expr = E, Props = E::Props, Metadata = T>>,
+        callback: Rc<dyn MemoGroupCallback<Expr = E::Expr, Props = E::Props, Metadata = T>>,
     ) -> Self {
         Memo {
             groups: Store::new(PAGE_SIZE),
@@ -184,7 +184,7 @@ pub trait Properties: Debug + Clone {}
 //FIXME: rename to MemoGroupCallback
 pub trait MemoGroupCallback {
     /// The type of expression.
-    type Expr: MemoExpr;
+    type Expr: Expr;
     /// The type of properties of the expression.
     type Props: Properties;
     /// The type of metadata stored by the memo.
@@ -323,7 +323,10 @@ where
     /// Returns an iterator over the memo expressions that belong to this memo group.
     pub fn mexprs(&self) -> MemoGroupIter<E> {
         let group = self.get_memo_group();
-        MemoGroupIter { group, position: 0 }
+        MemoGroupIter {
+            group: Some(group),
+            position: 0,
+        }
     }
 
     /// Returns properties shared by all expressions in this memo group.
@@ -380,7 +383,7 @@ pub struct MemoGroupIter<'m, E>
 where
     E: MemoExpr,
 {
-    group: &'m MemoGroupData<E>,
+    group: Option<&'m MemoGroupData<E>>,
     position: usize,
 }
 
@@ -391,10 +394,14 @@ where
     type Item = &'m MemoExprRef<E>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.position < self.group.exprs.len() {
-            let expr = &self.group.exprs[self.position];
-            self.position += 1;
-            Some(expr)
+        if let Some(group) = self.group {
+            if self.position < group.exprs.len() {
+                let expr = &group.exprs[self.position];
+                self.position += 1;
+                Some(expr)
+            } else {
+                None
+            }
         } else {
             None
         }
@@ -407,8 +414,10 @@ where
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "MemoGroupIter([")?;
-        for i in self.position..self.group.exprs.len() {
-            write!(f, "{:?}", self.group.exprs[i])?;
+        if let Some(group) = self.group {
+            for i in self.position..group.exprs.len() {
+                write!(f, "{:?}", group.exprs[i])?;
+            }
         }
         write!(f, "])")
     }
@@ -712,7 +721,7 @@ where
             } else {
                 let group_id = GroupId(self.memo.groups.next_id());
                 let props = if let Some(callback) = self.memo.callback.as_ref() {
-                    callback.new_group(&expr, props, &self.memo.metadata)
+                    callback.new_group(expr.expr(), props, &self.memo.metadata)
                 } else {
                     props.clone()
                 };
@@ -1875,7 +1884,7 @@ mod test {
             added: Rc<RefCell<Vec<String>>>,
         }
         impl MemoGroupCallback for Callback {
-            type Expr = TestOperator;
+            type Expr = TestExpr;
             type Props = TestProps;
             type Metadata = ();
 
@@ -1883,6 +1892,10 @@ mod test {
                 let mut added = self.added.borrow_mut();
                 let mut buf = String::new();
                 let mut fmt = StringMemoFormatter::new(&mut buf);
+                let expr = TestOperator {
+                    expr: expr.clone(),
+                    props: props.clone(),
+                };
                 expr.format_expr(&mut fmt);
                 added.push(buf);
                 props.clone()
