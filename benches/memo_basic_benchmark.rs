@@ -79,10 +79,6 @@ impl MemoExpr for TestOperator {
         ctx.copy_in(self, expr_ctx);
     }
 
-    fn create(expr: Self::Expr, props: Self::Props) -> Self {
-        TestOperator { expr, props }
-    }
-
     fn new_expr(expr: &Self::Expr, mut inputs: NewChildExprs<Self>) -> (Self::Expr, Option<Self::Props>) {
         let expr = match expr {
             TestExpr::Scan { src } => {
@@ -107,6 +103,10 @@ impl MemoExpr for TestOperator {
         (expr, None)
     }
 
+    fn create(expr: Self::Expr, props: Self::Props) -> Self {
+        TestOperator { expr, props }
+    }
+
     fn num_children(&self) -> usize {
         match self.expr() {
             TestExpr::Scan { .. } => 0,
@@ -115,7 +115,7 @@ impl MemoExpr for TestOperator {
         }
     }
 
-    fn get_child<'a>(&'a self, i: usize, _props: &'a Self::Props) -> Option<ExprNodeRef<'a, Self>> {
+    fn get_child(&self, i: usize, _props: &Self::Props) -> Option<ExprNodeRef<Self>> {
         match self.expr() {
             TestExpr::Scan { .. } => None,
             TestExpr::Filter { input, .. } if i == 0 => Some(input.into()),

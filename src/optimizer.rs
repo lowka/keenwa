@@ -136,9 +136,9 @@ where
 
 impl<R, T, C> Debug for Optimizer<R, T, C>
 where
-    R: RuleSet,
-    T: CostEstimator,
-    C: ResultCallback,
+    R: RuleSet + Debug,
+    T: CostEstimator + Debug,
+    C: ResultCallback + Debug,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Optimizer")
@@ -166,7 +166,7 @@ impl<P> MemoGroupCallback for SetPropertiesCallback<P>
 where
     P: PropertiesProvider,
 {
-    type Expr = Operator;
+    type Expr = OperatorExpr;
     type Props = Properties;
     type Metadata = OperatorMetadata;
 
@@ -890,7 +890,7 @@ impl InputContexts {
             .children()
             .zip(required_properties.into_iter())
             .map(|(group, required)| OptimizationContext {
-                group: group.clone(),
+                group,
                 required_properties: required,
             })
             .collect();
@@ -931,7 +931,7 @@ impl InputContexts {
             .map(|group| {
                 let required_properties = group.props().required();
                 OptimizationContext {
-                    group: group.clone(),
+                    group,
                     required_properties: required_properties.clone(),
                 }
             })
@@ -983,7 +983,6 @@ fn new_cost_estimation_ctx(inputs: &InputContexts, state: &State) -> (CostEstima
     (CostEstimationContext { input_groups }, input_cost)
 }
 
-#[derive(Debug)]
 struct OptimizerResultCallbackContext<'o> {
     ctx: &'o OptimizationContext,
     best_expr: &'o BestExpr,
