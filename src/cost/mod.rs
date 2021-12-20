@@ -1,5 +1,3 @@
-use std::fmt::Debug;
-
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::GroupRef;
 use crate::statistics::Statistics;
@@ -11,7 +9,7 @@ pub mod simple;
 pub type Cost = usize;
 
 /// Estimates a cost of a physical expression.
-pub trait CostEstimator: Debug {
+pub trait CostEstimator {
     /// Estimates the cost of the given physical expression.
     fn estimate_cost(&self, expr: &PhysicalExpr, ctx: &CostEstimationContext, statistics: Option<&Statistics>) -> Cost;
 }

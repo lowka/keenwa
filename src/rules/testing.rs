@@ -29,7 +29,7 @@ impl RuleTester {
     {
         struct Callback;
         impl MemoGroupCallback for Callback {
-            type Expr = Operator;
+            type Expr = OperatorExpr;
             type Props = Properties;
             type Metadata = OperatorMetadata;
 

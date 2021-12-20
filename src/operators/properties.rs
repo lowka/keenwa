@@ -8,7 +8,7 @@ use crate::operators::relational::logical::{
 use crate::operators::relational::physical::{PhysicalExpr, Sort};
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::ScalarNode;
-use crate::operators::{Operator, OperatorExpr, Properties};
+use crate::operators::{OperatorExpr, Properties};
 use crate::properties::logical::LogicalProperties;
 use crate::statistics::StatisticsBuilder;
 use std::fmt::{Debug, Formatter};
@@ -19,7 +19,7 @@ pub trait PropertiesProvider {
     /// has been added by hand to modify statistics or other properties of the given expression to simplify testing.  
     fn build_properties(
         &self,
-        expr: &Operator,
+        expr: &OperatorExpr,
         manual_props: Properties,
         metadata: MetadataRef,
     ) -> Result<Properties, OptimizerError>;
@@ -157,7 +157,7 @@ where
 {
     fn build_properties(
         &self,
-        expr: &Operator,
+        expr: &OperatorExpr,
         manual_props: Properties,
         metadata: MetadataRef,
     ) -> Result<Properties, OptimizerError> {
@@ -167,7 +167,7 @@ where
             nested_sub_queries,
         } = manual_props;
         let statistics = logical.statistics;
-        match expr.expr() {
+        match expr {
             OperatorExpr::Relational(RelExpr::Logical(expr)) => {
                 let LogicalProperties {
                     output_columns,
