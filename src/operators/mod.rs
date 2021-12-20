@@ -1,6 +1,6 @@
 use crate::memo::{
     CopyInExprs, CopyInNestedExprs, ExprContext, ExprNode, ExprNodeRef, MemoExpr, MemoExprFormatter, MemoGroupCallback,
-    NewChildExprs,
+    MemoGroupRef, NewChildExprs,
 };
 use crate::meta::MutableMetadata;
 use crate::operators::scalar::expr_with_new_inputs;
@@ -64,6 +64,7 @@ impl Operator {
             properties: Properties {
                 logical: old_properties.logical,
                 required,
+                nested_sub_queries: Vec::new(),
             },
         }
     }
@@ -128,11 +129,24 @@ impl OperatorExpr {
 pub struct Properties {
     pub(crate) logical: LogicalProperties,
     pub(crate) required: PhysicalProperties,
+    pub(crate) nested_sub_queries: Vec<MemoGroupRef<Operator>>,
 }
 
 impl Properties {
     pub fn new(logical: LogicalProperties, required: PhysicalProperties) -> Self {
-        Properties { logical, required }
+        Properties {
+            logical,
+            required,
+            nested_sub_queries: Vec::new(),
+        }
+    }
+
+    pub fn scalar(logical: LogicalProperties, nested_sub_queries: Vec<MemoGroupRef<Operator>>) -> Self {
+        Properties {
+            logical,
+            required: PhysicalProperties::default(),
+            nested_sub_queries,
+        }
     }
 
     /// Logical properties shared by an expression and equivalent expressions inside a group the expression belongs to.
@@ -167,8 +181,8 @@ impl MemoExpr for Operator {
         let mut expr_ctx = visitor.enter_expr(self);
         match self.expr() {
             OperatorExpr::Relational(expr) => match expr {
-                RelExpr::Logical(expr) => expr.traverse(&mut visitor, &mut expr_ctx),
-                RelExpr::Physical(expr) => expr.traverse(&mut visitor, &mut expr_ctx),
+                RelExpr::Logical(expr) => expr.copy_in(&mut visitor, &mut expr_ctx),
+                RelExpr::Physical(expr) => expr.copy_in(&mut visitor, &mut expr_ctx),
             },
             OperatorExpr::Scalar(expr) => {
                 visitor.copy_in_nested(&mut expr_ctx, expr);
@@ -177,17 +191,52 @@ impl MemoExpr for Operator {
         visitor.copy_in(self, expr_ctx);
     }
 
-    fn with_new_children(&self, children: NewChildExprs<Self>) -> Self {
-        let mut inputs = OperatorInputs::from(children);
-        let expr = match self.expr() {
+    fn new_expr(expr: &Self::Expr, inputs: NewChildExprs<Self>) -> (Self::Expr, Option<Self::Props>) {
+        let copy_in = inputs.is_copy_in();
+        let mut inputs = OperatorInputs::from(inputs);
+        match expr {
             OperatorExpr::Relational(expr) => match expr {
-                RelExpr::Logical(expr) => OperatorExpr::from(expr.with_new_inputs(&mut inputs)),
-                RelExpr::Physical(expr) => OperatorExpr::from(expr.with_new_inputs(&mut inputs)),
+                RelExpr::Logical(expr) => (OperatorExpr::from(expr.with_new_inputs(&mut inputs)), None),
+                RelExpr::Physical(expr) => (OperatorExpr::from(expr.with_new_inputs(&mut inputs)), None),
             },
-            OperatorExpr::Scalar(expr) => OperatorExpr::from(expr_with_new_inputs(expr, &mut inputs)),
-        };
-        let properties = self.properties.clone();
-        Operator::new(expr, properties)
+            OperatorExpr::Scalar(expr) => {
+                if copy_in {
+                    let input_groups = inputs.get_input_groups();
+                    let props = Properties::scalar(LogicalProperties::default(), input_groups);
+                    let expr = OperatorExpr::from(expr_with_new_inputs(expr, &mut inputs));
+                    (expr, Some(props))
+                } else {
+                    let expr = OperatorExpr::from(expr_with_new_inputs(expr, &mut inputs));
+                    (expr, None)
+                }
+            }
+        }
+    }
+
+    fn create(expr: Self::Expr, props: Self::Props) -> Self {
+        Operator {
+            expr,
+            properties: props,
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        match self.expr() {
+            OperatorExpr::Relational(RelExpr::Logical(e)) => e.num_children(),
+            OperatorExpr::Relational(RelExpr::Physical(e)) => e.num_children(),
+            OperatorExpr::Scalar(_) => self.properties.nested_sub_queries.len(),
+        }
+    }
+
+    fn get_child<'a>(&'a self, i: usize, props: &'a Self::Props) -> Option<ExprNodeRef<'a, Self>> {
+        match self.expr() {
+            OperatorExpr::Relational(RelExpr::Logical(e)) => e.get_child(i),
+            OperatorExpr::Relational(RelExpr::Physical(e)) => e.get_child(i),
+            OperatorExpr::Scalar(_) if i < props.nested_sub_queries.len() => {
+                props.nested_sub_queries.get(i).map(|g| ExprNodeRef::Group(g))
+            }
+            OperatorExpr::Scalar(_) => None,
+        }
     }
 
     fn format_expr<F>(&self, f: &mut F)
@@ -348,6 +397,20 @@ impl OperatorInputs {
             .map(|i| {
                 Self::expect_scalar(&i);
                 ScalarNode::from(i)
+            })
+            .collect()
+    }
+
+    pub fn get_input_groups(&self) -> Vec<MemoGroupRef<Operator>> {
+        self.inputs
+            .children
+            .iter()
+            .map(|i| {
+                Self::expect_relational(i);
+                match i {
+                    ExprNode::Expr(_) => panic!(),
+                    ExprNode::Group(g) => g.clone(),
+                }
             })
             .collect()
     }
