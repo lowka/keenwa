@@ -221,36 +221,8 @@ impl MemoExpr for TestOperator {
         ctx.copy_in(self, expr_ctx)
     }
 
-    fn num_children(&self) -> usize {
-        match self.expr() {
-            TestExpr::Relational(expr) => match expr {
-                TestRelExpr::Scan { .. } => 0,
-                TestRelExpr::Filter { .. } => 2,
-                TestRelExpr::Join { .. } => 2,
-            },
-            TestExpr::Scalar(_) => {
-                if let TestProps::Scalar(props) = self.props() {
-                    props.sub_queries.len()
-                } else {
-                    0
-                }
-            }
-        }
-    }
-
-    fn get_child<'a>(&'a self, i: usize, _props: &'a Self::Props) -> Option<ExprNodeRef<'a, Self>> {
-        match self.expr() {
-            TestExpr::Relational(expr) => match expr {
-                TestRelExpr::Scan { .. } => None,
-                TestRelExpr::Filter { input, .. } if i == 0 => Some(input.get_ref()),
-                TestRelExpr::Filter { filter, .. } if i == 1 => Some(filter.get_ref()),
-                TestRelExpr::Filter { .. } => None,
-                TestRelExpr::Join { left, .. } if i == 0 => Some(left.get_ref()),
-                TestRelExpr::Join { right, .. } if i == 1 => Some(right.get_ref()),
-                TestRelExpr::Join { .. } => None,
-            },
-            TestExpr::Scalar(_) => None,
-        }
+    fn create(expr: Self::Expr, props: Self::Props) -> Self {
+        TestOperator { expr, props }
     }
 
     fn new_expr(expr: &Self::Expr, mut inputs: NewChildExprs<Self>) -> (Self::Expr, Option<Self::Props>) {
@@ -300,8 +272,36 @@ impl MemoExpr for TestOperator {
         }
     }
 
-    fn create(expr: Self::Expr, props: Self::Props) -> Self {
-        TestOperator { expr, props }
+    fn num_children(&self) -> usize {
+        match self.expr() {
+            TestExpr::Relational(expr) => match expr {
+                TestRelExpr::Scan { .. } => 0,
+                TestRelExpr::Filter { .. } => 2,
+                TestRelExpr::Join { .. } => 2,
+            },
+            TestExpr::Scalar(_) => {
+                if let TestProps::Scalar(props) = self.props() {
+                    props.sub_queries.len()
+                } else {
+                    0
+                }
+            }
+        }
+    }
+
+    fn get_child<'a>(&'a self, i: usize, _props: &'a Self::Props) -> Option<ExprNodeRef<'a, Self>> {
+        match self.expr() {
+            TestExpr::Relational(expr) => match expr {
+                TestRelExpr::Scan { .. } => None,
+                TestRelExpr::Filter { input, .. } if i == 0 => Some(input.get_ref()),
+                TestRelExpr::Filter { filter, .. } if i == 1 => Some(filter.get_ref()),
+                TestRelExpr::Filter { .. } => None,
+                TestRelExpr::Join { left, .. } if i == 0 => Some(left.get_ref()),
+                TestRelExpr::Join { right, .. } if i == 1 => Some(right.get_ref()),
+                TestRelExpr::Join { .. } => None,
+            },
+            TestExpr::Scalar(_) => None,
+        }
     }
 
     fn format_expr<F>(&self, f: &mut F)

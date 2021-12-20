@@ -931,7 +931,7 @@ impl InputContexts {
             .map(|group| {
                 let required_properties = group.props().required();
                 OptimizationContext {
-                    group,
+                    group: group.clone(),
                     required_properties: required_properties.clone(),
                 }
             })
