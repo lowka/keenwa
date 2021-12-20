@@ -1,6 +1,6 @@
 use crate::error::OptimizerError;
 use crate::operators::relational::join::{get_non_empty_join_columns_pair, JoinCondition};
-use crate::operators::relational::logical::LogicalExpr;
+use crate::operators::relational::logical::{LogicalExpr, LogicalJoin};
 use crate::rules::{Rule, RuleContext, RuleMatch, RuleResult, RuleType};
 
 #[derive(Debug)]
@@ -25,15 +25,15 @@ impl Rule for JoinCommutativityRule {
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
-            LogicalExpr::Join { left, right, condition } => {
+            LogicalExpr::Join(LogicalJoin { left, right, condition }) => {
                 if let Some((left_columns, right_columns)) = get_non_empty_join_columns_pair(left, right, condition) {
-                    let expr = LogicalExpr::Join {
+                    let expr = LogicalExpr::Join(LogicalJoin {
                         left: right.clone(),
                         right: left.clone(),
                         condition: JoinCondition::using(
                             right_columns.into_iter().zip(left_columns.into_iter()).collect(),
                         ),
-                    };
+                    });
 
                     Ok(Some(RuleResult::Substitute(expr)))
                 } else {
@@ -111,10 +111,10 @@ impl Rule for JoinAssociativityRule {
     fn matches(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Option<RuleMatch> {
         if matches!(
             expr,
-            LogicalExpr::Join {
+            LogicalExpr::Join(LogicalJoin {
                 condition: JoinCondition::Using(..),
                 ..
-            }
+            })
         ) {
             Some(RuleMatch::Group)
         } else {
@@ -124,59 +124,59 @@ impl Rule for JoinAssociativityRule {
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
-            LogicalExpr::Join {
+            LogicalExpr::Join(LogicalJoin {
                 left: top_left,
                 right: top_right,
                 condition: top_condition,
-            } => {
+            }) => {
                 match (top_left.expr().as_logical(), top_right.expr().as_logical()) {
                     // [AxB]xC -> Ax[BxC]
                     (
-                        LogicalExpr::Join {
+                        LogicalExpr::Join(LogicalJoin {
                             left: inner_left,
                             right: inner_right,
                             condition: inner_condition,
-                        },
+                        }),
                         _,
                     ) => {
                         if let Some((new_top_condition, new_inner_condition)) =
                             Self::left_side_condition(top_condition, inner_condition)
                         {
-                            let expr = LogicalExpr::Join {
+                            let expr = LogicalExpr::Join(LogicalJoin {
                                 left: inner_left.clone(),
-                                right: LogicalExpr::Join {
+                                right: LogicalExpr::Join(LogicalJoin {
                                     left: inner_right.clone(),
                                     right: top_right.clone(),
                                     condition: new_inner_condition,
-                                }
+                                })
                                 .into(),
                                 condition: new_top_condition,
-                            };
+                            });
                             return Ok(Some(RuleResult::Substitute(expr)));
                         }
                     }
                     // Ax[BxC] -> [AxB]xC
                     (
                         _,
-                        LogicalExpr::Join {
+                        LogicalExpr::Join(LogicalJoin {
                             left: inner_left,
                             right: inner_right,
                             condition: inner_condition,
-                        },
+                        }),
                     ) => {
                         if let Some((new_top_condition, new_inner_condition)) =
                             Self::right_side_condition(top_condition, inner_condition)
                         {
-                            let expr = LogicalExpr::Join {
-                                left: LogicalExpr::Join {
+                            let expr = LogicalExpr::Join(LogicalJoin {
+                                left: LogicalExpr::Join(LogicalJoin {
                                     left: top_left.clone(),
                                     right: inner_left.clone(),
                                     condition: new_inner_condition,
-                                }
+                                })
                                 .into(),
                                 right: inner_right.clone(),
                                 condition: new_top_condition,
-                            };
+                            });
 
                             return Ok(Some(RuleResult::Substitute(expr)));
                         }
@@ -193,23 +193,24 @@ impl Rule for JoinAssociativityRule {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::operators::relational::logical::LogicalGet;
     use crate::rules::testing::RuleTester;
 
     #[test]
     fn test_join_commutativity_rule() {
-        let expr = LogicalExpr::Join {
-            left: LogicalExpr::Get {
+        let expr = LogicalExpr::Join(LogicalJoin {
+            left: LogicalExpr::Get(LogicalGet {
                 source: "A".into(),
                 columns: vec![1, 2],
-            }
+            })
             .into(),
-            right: LogicalExpr::Get {
+            right: LogicalExpr::Get(LogicalGet {
                 source: "B".into(),
                 columns: vec![3, 4],
-            }
+            })
             .into(),
             condition: JoinCondition::using(vec![(1, 3)]),
-        };
+        });
 
         let mut tester = RuleTester::new(JoinCommutativityRule);
         tester.apply(
@@ -224,28 +225,28 @@ LogicalJoin using=[(3, 1)]
 
     #[test]
     fn test_join_associativity_rule1() {
-        let expr = LogicalExpr::Join {
-            left: LogicalExpr::Join {
-                left: LogicalExpr::Get {
+        let expr = LogicalExpr::Join(LogicalJoin {
+            left: LogicalExpr::Join(LogicalJoin {
+                left: LogicalExpr::Get(LogicalGet {
                     source: "A".into(),
                     columns: vec![1, 2],
-                }
+                })
                 .into(),
-                right: LogicalExpr::Get {
+                right: LogicalExpr::Get(LogicalGet {
                     source: "B".into(),
                     columns: vec![3, 4],
-                }
+                })
                 .into(),
                 condition: JoinCondition::using(vec![(1, 4)]),
-            }
+            })
             .into(),
-            right: LogicalExpr::Get {
+            right: LogicalExpr::Get(LogicalGet {
                 source: "C".into(),
                 columns: vec![5, 6],
-            }
+            })
             .into(),
             condition: JoinCondition::using(vec![(1, 6)]),
-        };
+        });
         // [AxB(1,4)]xC(1,6) => A(1,6)x[BxC(4,6)]
 
         let mut tester = RuleTester::new(JoinAssociativityRule);
@@ -263,28 +264,28 @@ LogicalJoin using=[(1, 4)]
 
     #[test]
     fn test_join_associativity_rule2() {
-        let expr = LogicalExpr::Join {
-            left: LogicalExpr::Get {
+        let expr = LogicalExpr::Join(LogicalJoin {
+            left: LogicalExpr::Get(LogicalGet {
                 source: "A".into(),
                 columns: vec![1, 2],
-            }
+            })
             .into(),
-            right: LogicalExpr::Join {
-                left: LogicalExpr::Get {
+            right: LogicalExpr::Join(LogicalJoin {
+                left: LogicalExpr::Get(LogicalGet {
                     source: "B".into(),
                     columns: vec![3, 4],
-                }
+                })
                 .into(),
-                right: LogicalExpr::Get {
+                right: LogicalExpr::Get(LogicalGet {
                     source: "C".into(),
                     columns: vec![5, 6],
-                }
+                })
                 .into(),
                 condition: JoinCondition::using(vec![(3, 6)]),
-            }
+            })
             .into(),
             condition: JoinCondition::using(vec![(1, 3)]),
-        };
+        });
         // A(1,3)x[BxC(3,6)] => [AxB(1,3)]xC(1,6)
 
         let mut tester = RuleTester::new(JoinAssociativityRule);

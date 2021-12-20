@@ -1,13 +1,15 @@
 use crate::error::OptimizerError;
 use crate::meta::{ColumnId, MetadataRef};
 use crate::operators::relational::join::JoinCondition;
-use crate::operators::relational::logical::{LogicalExpr, SetOperator};
-use crate::operators::relational::physical::PhysicalExpr;
+use crate::operators::relational::logical::{
+    LogicalAggregate, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin,
+    LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
+};
+use crate::operators::relational::physical::{PhysicalExpr, Sort};
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::ScalarNode;
 use crate::operators::{OperatorExpr, Properties};
 use crate::properties::logical::LogicalProperties;
-use crate::properties::physical::PhysicalProperties;
 use crate::statistics::StatisticsBuilder;
 use std::fmt::{Debug, Formatter};
 
@@ -159,7 +161,11 @@ where
         manual_props: Properties,
         metadata: MetadataRef,
     ) -> Result<Properties, OptimizerError> {
-        let Properties { logical, required } = manual_props;
+        let Properties {
+            logical,
+            required,
+            nested_sub_queries,
+        } = manual_props;
         let statistics = logical.statistics;
         match expr {
             OperatorExpr::Relational(RelExpr::Logical(expr)) => {
@@ -168,30 +174,36 @@ where
                     // build_xxx methods return logical properties without statistics.
                     statistics: _statistics,
                 } = match &**expr {
-                    LogicalExpr::Projection { input, columns, .. } => self.build_projection(input, columns),
-                    LogicalExpr::Select { input, filter } => self.build_select(input, filter.as_ref()),
-                    LogicalExpr::Aggregate { input, columns, .. } => self.build_aggregate(input, columns),
-                    LogicalExpr::Join { left, right, condition } => self.build_join(left, right, condition),
-                    LogicalExpr::Get { source, columns } => self.build_get(source, columns),
-                    LogicalExpr::Union {
+                    LogicalExpr::Projection(LogicalProjection { input, columns, .. }) => {
+                        self.build_projection(input, columns)
+                    }
+                    LogicalExpr::Select(LogicalSelect { input, filter }) => self.build_select(input, filter.as_ref()),
+                    LogicalExpr::Aggregate(LogicalAggregate { input, columns, .. }) => {
+                        self.build_aggregate(input, columns)
+                    }
+                    LogicalExpr::Join(LogicalJoin { left, right, condition }) => {
+                        self.build_join(left, right, condition)
+                    }
+                    LogicalExpr::Get(LogicalGet { source, columns }) => self.build_get(source, columns),
+                    LogicalExpr::Union(LogicalUnion {
                         left,
                         right,
                         all,
                         columns,
-                    } => self.build_union(left, right, *all, columns),
-                    LogicalExpr::Intersect {
+                    }) => self.build_union(left, right, *all, columns),
+                    LogicalExpr::Intersect(LogicalIntersect {
                         left,
                         right,
                         all,
                         columns,
-                    } => self.build_intersect(left, right, *all, columns),
-                    LogicalExpr::Except {
+                    }) => self.build_intersect(left, right, *all, columns),
+                    LogicalExpr::Except(LogicalExcept {
                         left,
                         right,
                         all,
                         columns,
-                    } => self.build_except(left, right, *all, columns),
-                    LogicalExpr::Empty => self.build_empty(),
+                    }) => self.build_except(left, right, *all, columns),
+                    LogicalExpr::Empty(LogicalEmpty { .. }) => self.build_empty(),
                 }?;
                 let logical = LogicalProperties::new(output_columns, None);
                 let statistics = self.statistics.build_statistics(expr, &logical, metadata)?;
@@ -205,7 +217,7 @@ where
             OperatorExpr::Relational(RelExpr::Physical(expr)) => {
                 // Only enforcer operators are copied into a memo as groups.
                 // Other physical expressions are copied as members of existing groups.
-                if let PhysicalExpr::Sort { input, .. } = &**expr {
+                if let PhysicalExpr::Sort(Sort { input, .. }) = &**expr {
                     // Enforcer returns the same logical properties as its input
                     let logical = input.props().logical().clone();
                     // Sort operator does not have any ordering requirements
@@ -221,7 +233,7 @@ where
             OperatorExpr::Scalar(_) => {
                 assert!(required.is_empty(), "Physical properties can not be set for scalar expressions");
                 let logical = LogicalProperties::new(Vec::new(), statistics);
-                Ok(Properties::new(logical, PhysicalProperties::none()))
+                Ok(Properties::scalar(logical, nested_sub_queries))
             }
         }
     }
