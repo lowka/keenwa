@@ -104,37 +104,19 @@ impl PhysicalExpr {
 
     pub fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
         match self {
-            PhysicalExpr::Projection(_) => None,
-            PhysicalExpr::Select(_) => None,
-            PhysicalExpr::HashJoin(_) => None,
-            PhysicalExpr::MergeSortJoin(MergeSortJoin {
-                left, right, condition, ..
-            }) => match get_join_columns_pair(left, right, condition) {
-                Some((left, right)) if !left.is_empty() && !right.is_empty() => {
-                    let left_ordering = PhysicalProperties::new(OrderingChoice::new(left));
-                    let right_ordering = PhysicalProperties::new(OrderingChoice::new(right));
-
-                    Some(vec![left_ordering, right_ordering])
-                }
-                _ => None,
-            },
-            PhysicalExpr::NestedLoop(_) => None,
-            PhysicalExpr::Scan(_) => None,
-            PhysicalExpr::IndexScan(_) => None,
-            PhysicalExpr::Sort(_) => None,
-            PhysicalExpr::HashAggregate(HashAggregate { .. }) => None,
-            PhysicalExpr::Unique(Unique { left, right, .. })
-            | PhysicalExpr::HashedSetOp(HashedSetOp { left, right, .. }) => {
-                let left = left.props().logical().output_columns().iter().copied().collect();
-                let right = right.props().logical().output_columns().iter().copied().collect();
-                let left_ordering = PhysicalProperties::new(OrderingChoice::new(left));
-                let right_ordering = PhysicalProperties::new(OrderingChoice::new(right));
-
-                let requirements = vec![left_ordering, right_ordering];
-                Some(requirements)
-            }
-            PhysicalExpr::Append(_) => None,
-            PhysicalExpr::Empty(_) => None,
+            PhysicalExpr::Projection(expr) => expr.build_required_properties(),
+            PhysicalExpr::Select(expr) => expr.build_required_properties(),
+            PhysicalExpr::HashAggregate(expr) => expr.build_required_properties(),
+            PhysicalExpr::HashJoin(expr) => expr.build_required_properties(),
+            PhysicalExpr::MergeSortJoin(expr) => expr.build_required_properties(),
+            PhysicalExpr::NestedLoop(expr) => expr.build_required_properties(),
+            PhysicalExpr::Scan(expr) => expr.build_required_properties(),
+            PhysicalExpr::IndexScan(expr) => expr.build_required_properties(),
+            PhysicalExpr::Sort(expr) => expr.build_required_properties(),
+            PhysicalExpr::Unique(expr) => expr.build_required_properties(),
+            PhysicalExpr::Append(expr) => expr.build_required_properties(),
+            PhysicalExpr::HashedSetOp(expr) => expr.build_required_properties(),
+            PhysicalExpr::Empty(expr) => expr.build_required_properties(),
         }
     }
 
@@ -179,6 +161,10 @@ impl Projection {
         }
     }
 
+    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+        None
+    }
+
     fn num_children(&self) -> usize {
         1
     }
@@ -221,6 +207,10 @@ impl Select {
             input: inputs.rel_node(),
             filter: self.filter.as_ref().map(|_| inputs.scalar_node()),
         }
+    }
+
+    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+        None
     }
 
     fn num_children(&self) -> usize {
@@ -274,6 +264,10 @@ impl HashAggregate {
             aggr_exprs: inputs.scalar_nodes(self.aggr_exprs.len()),
             group_exprs: inputs.scalar_nodes(self.group_exprs.len()),
         }
+    }
+
+    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+        None
     }
 
     fn num_children(&self) -> usize {
@@ -343,6 +337,10 @@ impl HashJoin {
         }
     }
 
+    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+        None
+    }
+
     fn num_children(&self) -> usize {
         let num_opt = match &self.condition {
             JoinCondition::Using(_) => 0,
@@ -408,6 +406,18 @@ impl MergeSortJoin {
         }
     }
 
+    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+        match get_join_columns_pair(&self.left, &self.right, &self.condition) {
+            Some((left, right)) if !left.is_empty() && !right.is_empty() => {
+                let left_ordering = PhysicalProperties::new(OrderingChoice::new(left));
+                let right_ordering = PhysicalProperties::new(OrderingChoice::new(right));
+
+                Some(vec![left_ordering, right_ordering])
+            }
+            _ => None,
+        }
+    }
+
     fn num_children(&self) -> usize {
         let num_opt = match &self.condition {
             JoinCondition::Using(_) => 0,
@@ -467,6 +477,10 @@ impl NestedLoop {
         }
     }
 
+    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+        None
+    }
+
     fn num_children(&self) -> usize {
         2 + self.condition.as_ref().map(|_| 1).unwrap_or_default()
     }
@@ -512,6 +526,10 @@ impl Scan {
         }
     }
 
+    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+        None
+    }
+
     fn num_children(&self) -> usize {
         0
     }
@@ -544,6 +562,10 @@ impl IndexScan {
             source: self.source.clone(),
             columns: self.columns.clone(),
         }
+    }
+
+    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+        None
     }
 
     fn num_children(&self) -> usize {
@@ -582,6 +604,10 @@ impl Sort {
             input: inputs.rel_node(),
             ordering: self.ordering.clone(),
         }
+    }
+
+    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+        None
     }
 
     fn num_children(&self) -> usize {
@@ -627,6 +653,10 @@ impl Append {
         }
     }
 
+    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+        None
+    }
+
     fn num_children(&self) -> usize {
         2
     }
@@ -668,6 +698,16 @@ impl Unique {
             left: inputs.rel_node(),
             right: inputs.rel_node(),
         }
+    }
+
+    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+        let left = self.left.props().logical().output_columns().iter().copied().collect();
+        let right = self.right.props().logical().output_columns().iter().copied().collect();
+        let left_ordering = PhysicalProperties::new(OrderingChoice::new(left));
+        let right_ordering = PhysicalProperties::new(OrderingChoice::new(right));
+
+        let requirements = vec![left_ordering, right_ordering];
+        Some(requirements)
     }
 
     fn num_children(&self) -> usize {
@@ -719,6 +759,10 @@ impl HashedSetOp {
         }
     }
 
+    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+        None
+    }
+
     fn num_children(&self) -> usize {
         2
     }
@@ -752,11 +796,8 @@ impl Empty {
         Empty {}
     }
 
-    fn format_expr<F>(&self, f: &mut F)
-    where
-        F: MemoExprFormatter,
-    {
-        f.write_name("Empty");
+    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+        None
     }
 
     fn num_children(&self) -> usize {
@@ -765,5 +806,12 @@ impl Empty {
 
     fn get_child(&self, _i: usize) -> Option<MemoExprNodeRef<Operator>> {
         None
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("Empty");
     }
 }
