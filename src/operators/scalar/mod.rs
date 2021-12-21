@@ -7,7 +7,7 @@ pub mod value;
 
 /// The type of scalar expressions supported by the optimizer.
 pub type ScalarExpr = self::expr::Expr<RelNode>;
-/// The type of the relational nodes used by the optimizer.
+/// The type of the scalar nodes used by [operators](crate::operators::Operator).
 pub type ScalarNode = crate::memo::ScalarNode<Operator>;
 
 /// Replaces all relational expressions in of this expression tree with
