@@ -1,6 +1,6 @@
 use crate::memo::{
-    CopyInExprs, CopyInNestedExprs, ExprContext, ExprNode, ExprNodeRef, MemoExpr, MemoExprFormatter, MemoGroupCallback,
-    MemoGroupRef, NewChildExprs,
+    CopyInExprs, CopyInNestedExprs, ExprContext, ExprGroupRef, MemoExpr, MemoExprFormatter, MemoExprNode,
+    MemoExprNodeRef, MemoGroupCallback, MemoGroupRef, NewChildExprs, SubQueries,
 };
 use crate::meta::MutableMetadata;
 use crate::operators::scalar::expr_with_new_inputs;
@@ -31,41 +31,42 @@ pub type ExprCallback = dyn MemoGroupCallback<Expr = Operator, Props = Propertie
 // TODO: Docs
 #[derive(Debug, Clone)]
 pub struct Operator {
-    pub(crate) expr: OperatorExpr,
-    pub(crate) properties: Properties,
+    pub(crate) expr: crate::memo::ExprRef<Operator>,
+    pub(crate) group: crate::memo::ExprGroupRef<Operator>,
 }
 
 impl Operator {
     /// Creates a new operator from the given expression and properties.
     pub fn new(expr: OperatorExpr, properties: Properties) -> Self {
-        Operator { expr, properties }
+        Operator {
+            expr: crate::memo::ExprRef::Detached(Box::new(expr)),
+            group: crate::memo::ExprGroupRef::Detached(Box::new(properties)),
+        }
     }
 
     /// Returns an expression associated with this operator.
     pub fn expr(&self) -> &OperatorExpr {
-        &self.expr
+        self.expr.expr()
     }
 
     /// Physical properties required by this expression.
     pub fn required(&self) -> &PhysicalProperties {
-        self.properties.required()
+        self.group.props().required()
     }
 
     /// Creates a new operator from this one but with new required properties.
     pub fn with_required(self, required: PhysicalProperties) -> Self {
-        let Operator {
-            expr,
-            properties: old_properties,
-            ..
-        } = self;
-        assert!(expr.is_relational(), "Scalar expressions do not support physical properties: {:?}", expr);
+        let Operator { expr, group, .. } = self;
+        assert!(expr.expr().is_relational(), "Scalar expressions do not support physical properties: {:?}", expr);
+        let old_properties = group.props().clone();
+        let props = Properties {
+            logical: old_properties.logical,
+            required,
+            nested_sub_queries: Vec::new(),
+        };
         Operator {
             expr,
-            properties: Properties {
-                logical: old_properties.logical,
-                required,
-                nested_sub_queries: Vec::new(),
-            },
+            group: crate::memo::ExprGroupRef::Detached(Box::new(props)),
         }
     }
 }
@@ -160,21 +161,64 @@ impl Properties {
     }
 }
 
-impl crate::memo::Properties for Properties {}
+impl crate::memo::Properties for Properties {
+    type RelProps = Properties;
+    type ScalarProps = Properties;
 
-impl crate::memo::Expr for OperatorExpr {}
+    fn new_rel(props: Self::RelProps) -> Self {
+        props
+    }
+
+    fn new_scalar(props: Self::ScalarProps) -> Self {
+        props
+    }
+
+    fn as_relational(&self) -> &Self::RelProps {
+        self
+    }
+
+    fn as_scalar(&self) -> &Self::ScalarProps {
+        self
+    }
+}
+
+impl crate::memo::Expr for OperatorExpr {
+    type RelExpr = crate::operators::relational::RelExpr;
+    type ScalarExpr = crate::operators::scalar::ScalarExpr;
+
+    fn new_rel(expr: Self::RelExpr) -> Self {
+        OperatorExpr::Relational(expr)
+    }
+
+    fn new_scalar(expr: Self::ScalarExpr) -> Self {
+        OperatorExpr::Scalar(expr)
+    }
+
+    fn as_relational(&self) -> &Self::RelExpr {
+        match self {
+            OperatorExpr::Relational(expr) => expr,
+            OperatorExpr::Scalar(_) => panic!("Expected a relational expression"),
+        }
+    }
+
+    fn as_scalar(&self) -> &Self::ScalarExpr {
+        match self {
+            OperatorExpr::Relational(_) => panic!("Expected a scalar expression"),
+            OperatorExpr::Scalar(expr) => expr,
+        }
+    }
+
+    fn is_scalar(&self) -> bool {
+        match self {
+            OperatorExpr::Relational(_) => false,
+            OperatorExpr::Scalar(_) => true,
+        }
+    }
+}
 
 impl MemoExpr for Operator {
     type Expr = OperatorExpr;
     type Props = Properties;
-
-    fn expr(&self) -> &Self::Expr {
-        &self.expr
-    }
-
-    fn props(&self) -> &Self::Props {
-        &self.properties
-    }
 
     fn copy_in<T>(&self, visitor: &mut CopyInExprs<Self, T>) {
         let mut visitor = OperatorCopyIn { visitor };
@@ -191,65 +235,85 @@ impl MemoExpr for Operator {
         visitor.copy_in(self, expr_ctx);
     }
 
-    fn new_expr(expr: &Self::Expr, inputs: NewChildExprs<Self>) -> (Self::Expr, Option<Self::Props>) {
-        let copy_in = inputs.is_copy_in();
+    fn with_new_children(expr: &Self::Expr, inputs: NewChildExprs<Self>) -> Self::Expr {
         let mut inputs = OperatorInputs::from(inputs);
         match expr {
             OperatorExpr::Relational(expr) => match expr {
-                RelExpr::Logical(expr) => (OperatorExpr::from(expr.with_new_inputs(&mut inputs)), None),
-                RelExpr::Physical(expr) => (OperatorExpr::from(expr.with_new_inputs(&mut inputs)), None),
+                RelExpr::Logical(expr) => OperatorExpr::from(expr.with_new_inputs(&mut inputs)),
+                RelExpr::Physical(expr) => OperatorExpr::from(expr.with_new_inputs(&mut inputs)),
             },
-            OperatorExpr::Scalar(expr) => {
-                if copy_in {
-                    let input_groups = inputs.get_input_groups();
-                    let props = Properties::scalar(LogicalProperties::default(), input_groups);
-                    let expr = OperatorExpr::from(expr_with_new_inputs(expr, &mut inputs));
-                    (expr, Some(props))
-                } else {
-                    let expr = OperatorExpr::from(expr_with_new_inputs(expr, &mut inputs));
-                    (expr, None)
-                }
-            }
+            OperatorExpr::Scalar(expr) => OperatorExpr::from(expr_with_new_inputs(expr, &mut inputs)),
         }
     }
 
-    fn create(expr: Self::Expr, props: Self::Props) -> Self {
-        Operator {
-            expr,
-            properties: props,
-        }
+    fn create(expr: crate::memo::ExprRef<Self>, group: crate::memo::ExprGroupRef<Self>) -> Self {
+        Operator { expr, group }
     }
 
     fn num_children(&self) -> usize {
         match self.expr() {
             OperatorExpr::Relational(RelExpr::Logical(e)) => e.num_children(),
             OperatorExpr::Relational(RelExpr::Physical(e)) => e.num_children(),
-            OperatorExpr::Scalar(_) => self.properties.nested_sub_queries.len(),
+            OperatorExpr::Scalar(_) => self.props().nested_sub_queries.len(),
         }
     }
 
-    fn get_child<'a>(&'a self, i: usize, props: &'a Self::Props) -> Option<ExprNodeRef<'a, Self>> {
+    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Self>> {
         match self.expr() {
             OperatorExpr::Relational(RelExpr::Logical(e)) => e.get_child(i),
             OperatorExpr::Relational(RelExpr::Physical(e)) => e.get_child(i),
-            OperatorExpr::Scalar(_) if i < props.nested_sub_queries.len() => {
-                props.nested_sub_queries.get(i).map(|g| ExprNodeRef::Group(g))
+            OperatorExpr::Scalar(_) if i < self.props().nested_sub_queries.len() => {
+                self.props().nested_sub_queries.get(i).map(MemoExprNodeRef::Group)
             }
             OperatorExpr::Scalar(_) => None,
         }
     }
 
-    fn format_expr<F>(&self, f: &mut F)
+    fn format_expr<F>(expr: &Self::Expr, _props: &Self::Props, f: &mut F)
     where
         F: MemoExprFormatter,
     {
-        match self.expr() {
+        match expr {
             OperatorExpr::Relational(expr) => match expr {
                 RelExpr::Logical(expr) => expr.format_expr(f),
                 RelExpr::Physical(expr) => expr.format_expr(f),
             },
             OperatorExpr::Scalar(expr) => expr.format_expr(f),
         }
+    }
+
+    fn expr_ref(&self) -> &crate::memo::ExprRef<Self> {
+        &self.expr
+    }
+
+    fn group_ref(&self) -> &ExprGroupRef<Self> {
+        &self.group
+    }
+
+    fn get_sub_queries(&self) -> Option<SubQueries<Self>> {
+        if !self.props().nested_sub_queries.is_empty() {
+            Some(SubQueries::new(&self.props().nested_sub_queries))
+        } else {
+            None
+        }
+    }
+
+    fn new_properties_with_nested_sub_queries<'a>(
+        props: Self::Props,
+        sub_queries: impl Iterator<Item = &'a MemoExprNode<Self>>,
+    ) -> Self::Props {
+        let sub_queries: Vec<_> = sub_queries.enumerate()
+            .map(|(i, e)| {
+                assert!(e.expr().is_relational(),
+                        "MemoExpr::with_new_children has been called with invalid arguments: A non relational sub query expression at index: {}", i);
+                match e {
+                    MemoExprNode::Expr(_) => panic!(),
+                    MemoExprNode::Group(group) => group.clone(),
+                }
+            })
+            .collect();
+
+        Properties::scalar(props.logical, sub_queries)
     }
 }
 
@@ -350,9 +414,7 @@ impl OperatorInputs {
     /// This method panics if there is no relational expressions left or the retrieved expression is
     /// not a relational expression.
     pub fn rel_node(&mut self) -> RelNode {
-        let expr = self.inputs.expr();
-        Self::expect_relational(&expr);
-        RelNode::from(expr)
+        self.inputs.rel_node()
     }
 
     /// Retrieves the next `n` relational expressions.
@@ -362,14 +424,7 @@ impl OperatorInputs {
     /// This method panics if there is not enough expressions left or some of the retrieved expressions are
     /// not relational expressions.
     pub fn rel_nodes(&mut self, n: usize) -> Vec<RelNode> {
-        self.inputs
-            .exprs(n)
-            .into_iter()
-            .map(|i| {
-                Self::expect_relational(&i);
-                RelNode::from(i)
-            })
-            .collect()
+        self.inputs.rel_nodes(n)
     }
 
     /// Retrieves the next scalar expression.
@@ -379,9 +434,7 @@ impl OperatorInputs {
     /// This method panics if there is no expressions left or the retrieved expression is
     /// not a scalar expression.
     pub fn scalar_node(&mut self) -> ScalarNode {
-        let expr = self.inputs.expr();
-        Self::expect_scalar(&expr);
-        ScalarNode::from(expr)
+        self.inputs.scalar_node()
     }
 
     /// Retrieves the next `n` scalar expressions.
@@ -391,36 +444,7 @@ impl OperatorInputs {
     /// This method panics if there is not enough expressions left or some of the retrieved expressions are
     /// not scalar expressions.
     pub fn scalar_nodes(&mut self, n: usize) -> Vec<ScalarNode> {
-        self.inputs
-            .exprs(n)
-            .into_iter()
-            .map(|i| {
-                Self::expect_scalar(&i);
-                ScalarNode::from(i)
-            })
-            .collect()
-    }
-
-    pub fn get_input_groups(&self) -> Vec<MemoGroupRef<Operator>> {
-        self.inputs
-            .children
-            .iter()
-            .map(|i| {
-                Self::expect_relational(i);
-                match i {
-                    ExprNode::Expr(_) => panic!(),
-                    ExprNode::Group(g) => g.clone(),
-                }
-            })
-            .collect()
-    }
-
-    fn expect_relational(expr: &ExprNode<Operator>) {
-        assert!(expr.expr().is_relational(), "expected a relational expression");
-    }
-
-    fn expect_scalar(expr: &ExprNode<Operator>) {
-        assert!(expr.expr().is_scalar(), "expected a scalar expression");
+        self.inputs.scalar_nodes(n)
     }
 }
 
@@ -433,8 +457,8 @@ impl From<NewChildExprs<Operator>> for OperatorInputs {
 impl From<OperatorExpr> for Operator {
     fn from(expr: OperatorExpr) -> Self {
         Operator {
-            expr,
-            properties: Default::default(),
+            expr: crate::memo::ExprRef::Detached(Box::new(expr)),
+            group: crate::memo::ExprGroupRef::Detached(Box::new(Properties::default())),
         }
     }
 }
@@ -458,50 +482,14 @@ impl From<LogicalExpr> for RelNode {
     fn from(expr: LogicalExpr) -> Self {
         let expr = RelExpr::Logical(Box::new(expr));
         let expr = OperatorExpr::Relational(expr);
-        RelNode::Expr(Box::new(Operator::from(expr)))
-    }
-}
-
-impl<'a> From<&'a RelNode> for ExprNodeRef<'a, Operator> {
-    fn from(expr: &'a RelNode) -> Self {
-        match expr {
-            RelNode::Expr(expr) => ExprNodeRef::Expr(expr),
-            RelNode::Group(group) => ExprNodeRef::Group(group),
-        }
-    }
-}
-
-impl From<ExprNode<Operator>> for RelNode {
-    fn from(expr: ExprNode<Operator>) -> Self {
-        match expr {
-            ExprNode::Expr(expr) => RelNode::Expr(expr),
-            ExprNode::Group(group) => RelNode::Group(group),
-        }
+        RelNode::from_mexpr(Operator::from(expr))
     }
 }
 
 // For testing
 impl From<Operator> for RelNode {
     fn from(expr: Operator) -> Self {
-        RelNode::Expr(Box::new(expr))
-    }
-}
-
-impl<'a> From<&'a ScalarNode> for ExprNodeRef<'a, Operator> {
-    fn from(expr: &'a ScalarNode) -> Self {
-        match expr {
-            ScalarNode::Expr(expr) => ExprNodeRef::Expr(expr),
-            ScalarNode::Group(group) => ExprNodeRef::Group(group),
-        }
-    }
-}
-
-impl From<ExprNode<Operator>> for ScalarNode {
-    fn from(expr: ExprNode<Operator>) -> Self {
-        match expr {
-            ExprNode::Expr(expr) => ScalarNode::Expr(expr),
-            ExprNode::Group(group) => ScalarNode::Group(group),
-        }
+        RelNode::from_mexpr(expr)
     }
 }
 
@@ -509,7 +497,7 @@ impl From<ExprNode<Operator>> for ScalarNode {
 impl From<ScalarExpr> for ScalarNode {
     fn from(expr: ScalarExpr) -> Self {
         let expr = OperatorExpr::Scalar(expr);
-        ScalarNode::Expr(Box::new(Operator::from(expr)))
+        ScalarNode::from_mexpr(Operator::from(expr))
     }
 }
 

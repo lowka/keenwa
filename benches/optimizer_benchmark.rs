@@ -9,7 +9,7 @@ use keenwa::catalog::{CatalogRef, TableBuilder, DEFAULT_SCHEMA};
 use keenwa::cost::simple::SimpleCostEstimator;
 use keenwa::datatypes::DataType;
 use keenwa::error::OptimizerError;
-use keenwa::meta::{ColumnId, MutableMetadata};
+use keenwa::meta::MutableMetadata;
 use keenwa::operators::builder::{MemoizeOperatorCallback, OperatorBuilder, OrderingOption};
 
 use keenwa::operators::properties::LogicalPropertiesBuilder;
@@ -18,8 +18,6 @@ use keenwa::operators::scalar::value::ScalarValue;
 use keenwa::operators::scalar::ScalarExpr;
 use keenwa::operators::*;
 use keenwa::optimizer::{Optimizer, SetPropertiesCallback};
-use keenwa::properties::physical::PhysicalProperties;
-use keenwa::properties::OrderingChoice;
 use keenwa::rules::implementation::*;
 use keenwa::rules::transformation::*;
 use keenwa::rules::StaticRuleSet;

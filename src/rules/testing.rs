@@ -1,5 +1,5 @@
 use crate::error::OptimizerError;
-use crate::memo::{ExprNodeRef, MemoExpr, MemoExprFormatter, MemoGroupCallback, StringMemoFormatter};
+use crate::memo::{MemoExpr, MemoExprFormatter, MemoExprNodeRef, MemoGroupCallback, StringMemoFormatter};
 use crate::meta::MutableMetadata;
 use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::physical::PhysicalExpr;
@@ -158,13 +158,13 @@ pub fn format_operator_tree(expr: &Operator) -> String {
     let mut buf = String::new();
     let fmt = StringMemoFormatter::new(&mut buf);
     let mut fmt = FormatHeader { fmt };
-    expr.format_expr(&mut fmt);
+    Operator::format_expr(expr.expr(), expr.props(), &mut fmt);
 
     let mut fmt = FormatExprs {
         buf: &mut buf,
         depth: 0,
     };
-    expr.format_expr(&mut fmt);
+    Operator::format_expr(expr.expr(), expr.props(), &mut fmt);
 
     buf
 }
@@ -182,7 +182,7 @@ impl MemoExprFormatter for FormatHeader<'_> {
         self.fmt.write_source(source);
     }
 
-    fn write_expr<'e, T>(&mut self, _name: &str, _input: impl Into<ExprNodeRef<'e, T>>)
+    fn write_expr<'e, T>(&mut self, _name: &str, _input: impl Into<MemoExprNodeRef<'e, T>>)
     where
         T: MemoExpr + 'e,
     {
@@ -228,7 +228,7 @@ impl MemoExprFormatter for FormatExprs<'_> {
         // source is written by another formatter
     }
 
-    fn write_expr<'e, T>(&mut self, name: &str, input: impl Into<ExprNodeRef<'e, T>>)
+    fn write_expr<'e, T>(&mut self, name: &str, input: impl Into<MemoExprNodeRef<'e, T>>)
     where
         T: MemoExpr + 'e,
     {
@@ -237,22 +237,18 @@ impl MemoExprFormatter for FormatExprs<'_> {
         self.pad_depth(' ');
         self.buf.push_str(name);
         self.buf.push_str(": ");
-        let input: ExprNodeRef<T> = input.into();
-        match input {
-            ExprNodeRef::Expr(expr) => {
-                let fmt = StringMemoFormatter::new(self.buf);
-                let mut header = FormatHeader { fmt };
-                expr.format_expr(&mut header);
-                expr.format_expr(self);
-            }
-            ExprNodeRef::Group(group) => {
-                let expr = group.mexpr().mexpr();
-                let fmt = StringMemoFormatter::new(self.buf);
-                let mut header = FormatHeader { fmt };
-                expr.format_expr(&mut header);
-                expr.format_expr(self);
-            }
-        }
+
+        let input: MemoExprNodeRef<T> = input.into();
+        let fmt = StringMemoFormatter::new(self.buf);
+        let mut header = FormatHeader { fmt };
+
+        let (expr, props) = match input {
+            MemoExprNodeRef::Expr(expr) => (expr.expr(), expr.props()),
+            MemoExprNodeRef::Group(group) => (group.expr(), group.props()),
+        };
+        T::format_expr(expr, props, &mut header);
+        T::format_expr(expr, props, self);
+
         self.depth -= 1;
     }
 

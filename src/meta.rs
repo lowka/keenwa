@@ -155,7 +155,7 @@ impl MutableMetadata {
     /// Returns an iterator over available column metadata.
     pub fn get_columns(&self) -> Vec<ColumnMetadata> {
         let inner = self.inner.borrow();
-        inner.columns.iter().cloned().collect()
+        inner.columns.to_vec()
     }
 
     /// Returns a reference to a this metadata. A reference provides read-view into this metadata.

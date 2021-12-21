@@ -1,4 +1,4 @@
-use crate::memo::{ExprContext, ExprNodeRef, MemoExprFormatter};
+use crate::memo::{ExprContext, MemoExprFormatter, MemoExprNodeRef};
 use crate::meta::ColumnId;
 use crate::operators::relational::join::{JoinCondition, JoinOn};
 use crate::operators::relational::{RelExpr, RelNode};
@@ -66,7 +66,7 @@ impl LogicalExpr {
         }
     }
 
-    pub(crate) fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+    pub(crate) fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
         match self {
             LogicalExpr::Projection(expr) => expr.get_child(i),
             LogicalExpr::Select(expr) => expr.get_child(i),
@@ -216,7 +216,7 @@ impl LogicalProjection {
         1
     }
 
-    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
         if i == 0 {
             Some((&self.input).into())
         } else {
@@ -261,7 +261,7 @@ impl LogicalSelect {
         1 + self.filter.as_ref().map(|_| 1).unwrap_or_default()
     }
 
-    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
         match i {
             0 => Some((&self.input).into()),
             1 if self.filter.is_some() => {
@@ -317,7 +317,7 @@ impl LogicalAggregate {
         1 + self.aggr_exprs.len() + self.group_exprs.len()
     }
 
-    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
         let num_aggr_exprs = self.aggr_exprs.len();
         let num_group_exprs = self.group_exprs.len();
         match i {
@@ -388,7 +388,7 @@ impl LogicalJoin {
         2 + num_opt
     }
 
-    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
         match i {
             0 => Some((&self.left).into()),
             1 => Some((&self.right).into()),
@@ -434,7 +434,7 @@ impl LogicalGet {
         0
     }
 
-    fn get_child(&self, _i: usize) -> Option<ExprNodeRef<Operator>> {
+    fn get_child(&self, _i: usize) -> Option<MemoExprNodeRef<Operator>> {
         None
     }
 
@@ -477,7 +477,7 @@ impl LogicalUnion {
         2
     }
 
-    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
         match i {
             0 => Some((&self.left).into()),
             1 => Some((&self.left).into()),
@@ -525,7 +525,7 @@ impl LogicalIntersect {
         2
     }
 
-    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
         match i {
             0 => Some((&self.left).into()),
             1 => Some((&self.left).into()),
@@ -573,7 +573,7 @@ impl LogicalExcept {
         2
     }
 
-    fn get_child(&self, i: usize) -> Option<ExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
         match i {
             0 => Some((&self.left).into()),
             1 => Some((&self.left).into()),
@@ -612,7 +612,7 @@ impl LogicalEmpty {
         0
     }
 
-    fn get_child(&self, _i: usize) -> Option<ExprNodeRef<Operator>> {
+    fn get_child(&self, _i: usize) -> Option<MemoExprNodeRef<Operator>> {
         None
     }
 }

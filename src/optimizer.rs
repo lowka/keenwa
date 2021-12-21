@@ -6,7 +6,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::cost::{Cost, CostEstimationContext, CostEstimator};
-use crate::memo::{format_memo, ExprId, ExprNode, GroupId, MemoGroupCallback, NewChildExprs};
+use crate::memo::{format_memo, ExprId, GroupId, MemoExprNode, MemoGroupCallback, NewChildExprs};
 use crate::meta::MetadataRef;
 use crate::operators::properties::PropertiesProvider;
 use crate::operators::relational::{RelExpr, RelNode};
@@ -487,7 +487,7 @@ fn enforce_properties<R>(
     );
 
     let (enforcer_expr, remaining_properties) = {
-        let input = RelNode::Group(ctx.group.clone());
+        let input = RelNode::from_group(ctx.group.clone());
 
         let (enforcer_expr, remaining_properties) = rule_set
             .create_enforcer(&ctx.required_properties, input)
@@ -585,9 +585,6 @@ fn optimize_inputs<T>(
 }
 
 fn get_optimize_scalar_inputs_task(ctx: &OptimizationContext, expr: &ExprRef) -> Task {
-    println!("SCALAR EXPR: {:#?}", expr.expr());
-    println!("SCALAR PROPS: {:#?}", expr.mgroup().props());
-
     let inputs = InputContexts::new(expr, ctx.required_properties.clone());
     Task::OptimizeInputs {
         ctx: ctx.clone(),
@@ -905,7 +902,7 @@ impl InputContexts {
             inputs: expr
                 .children()
                 .map(|group| OptimizationContext {
-                    group: group.clone(),
+                    group,
                     required_properties: required_properties.clone(),
                 })
                 .collect(),
@@ -1046,7 +1043,7 @@ where
 
             for input_ctx in &best_expr.inputs {
                 let out = copy_out_best_expr(result_callback, state, memo, input_ctx)?;
-                new_inputs.push_back(ExprNode::from(out));
+                new_inputs.push_back(MemoExprNode::from(out));
             }
 
             let best_expr_ctx = OptimizerResultCallbackContext { ctx, best_expr, inputs };

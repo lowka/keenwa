@@ -67,7 +67,7 @@ where
         let selectivity = filter
             .map(|f| self.selectivity_provider.get_selectivity(f.expr(), expr, logical, metadata))
             .flatten()
-            .unwrap_or_else(|| Statistics::DEFAULT_SELECTIVITY);
+            .unwrap_or(Statistics::DEFAULT_SELECTIVITY);
 
         let logical = input.props().logical();
         let input_statistics = logical.statistics().unwrap();
