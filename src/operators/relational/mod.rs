@@ -9,10 +9,13 @@ pub mod join;
 pub mod logical;
 pub mod physical;
 
-/// The type of the relational nodes used by the optimizer.
+/// The type of the relational nodes used by [operators](crate::operators::Operator).
 pub type RelNode = crate::memo::RelNode<Operator>;
 
 /// A relational expression. Relational expressions can be either [logical] or [physical].
+///
+/// [logical]: crate::operators::relational::logical::LogicalExpr
+/// [physical]: crate::operators::relational::physical::PhysicalExpr
 #[derive(Debug, Clone)]
 pub enum RelExpr {
     Logical(Box<LogicalExpr>),
