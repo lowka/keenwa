@@ -1,6 +1,7 @@
 use crate::catalog::CatalogRef;
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
+use crate::memo::ExprRef;
 use crate::meta::{ColumnId, ColumnMetadata, MutableMetadata};
 use crate::operators::relational::join::{JoinCondition, JoinOn};
 use crate::operators::relational::logical::{
@@ -545,11 +546,16 @@ impl ExprRewriter<RelNode> for RewriteExprs<'_> {
                     }
                 }
             }
-            ScalarExpr::SubQuery(RelNode::Expr(_)) => {
-                //FIXME: Add a method to handle nested relational expressions to OperatorCallback?
-                self.result = Err(OptimizerError::Internal(format!(
-                    "Use OperatorBuilder::sub_query_builder to build a nested sub query"
-                )));
+            ScalarExpr::SubQuery(ref rel_node) => {
+                match rel_node.expr_ref() {
+                    ExprRef::Detached(_) => {
+                        //FIXME: Add a method to handle nested relational expressions to OperatorCallback?
+                        self.result = Err(OptimizerError::Internal(
+                            "Use OperatorBuilder::sub_query_builder to build a nested sub query".to_string(),
+                        ));
+                    }
+                    ExprRef::Memo(_) => {}
+                }
                 expr
             }
             _ => expr,
@@ -662,7 +668,7 @@ impl OperatorCallback for NoOpOperatorCallback {
 
     fn new_scalar_expr(&self, expr: Operator) -> ScalarNode {
         assert!(expr.expr().is_scalar(), "Not a scalar expression");
-        ScalarNode::Expr(Box::new(expr))
+        ScalarNode::from_mexpr(expr)
     }
 }
 
@@ -698,14 +704,14 @@ impl OperatorCallback for MemoizeOperatorCallback {
         assert!(expr.expr().is_relational(), "Expected a relational expression but got {:?}", expr);
         let mut memo = self.memo.borrow_mut();
         let (group, _) = memo.insert_group(expr);
-        RelNode::Group(group)
+        RelNode::from_group(group)
     }
 
     fn new_scalar_expr(&self, expr: Operator) -> ScalarNode {
         assert!(expr.expr().is_scalar(), "Expected a scalar expression but got {:?}", expr);
         let mut memo = self.memo.borrow_mut();
         let (group, _) = memo.insert_group(expr);
-        ScalarNode::Group(group)
+        ScalarNode::from_group(group)
     }
 }
 

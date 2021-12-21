@@ -1,22 +1,17 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use keenwa::memo::{
-    CopyInExprs, Expr, ExprNode, ExprNodeRef, Memo, MemoExpr, MemoExprFormatter, NewChildExprs, Properties,
+    CopyInExprs, Expr, ExprGroupRef, ExprRef, Memo, MemoExpr, MemoExprFormatter, MemoExprNode, MemoExprNodeRef,
+    NewChildExprs, Properties, SubQueries,
 };
 use std::fmt::{Display, Formatter};
 
+type RelNode = keenwa::memo::RelNode<TestOperator>;
+
 #[derive(Debug, Clone)]
 enum TestExpr {
-    Scan {
-        src: &'static str,
-    },
-    Filter {
-        input: ExprNode<TestOperator>,
-        filter: TestScalarExpr,
-    },
-    Join {
-        left: ExprNode<TestOperator>,
-        right: ExprNode<TestOperator>,
-    },
+    Scan { src: &'static str },
+    Filter { input: RelNode, filter: TestScalarExpr },
+    Join { left: RelNode, right: RelNode },
 }
 
 #[derive(Debug, Clone)]
@@ -42,26 +37,72 @@ struct TestProps {
     a: i32,
 }
 
-impl Properties for TestProps {}
+impl Properties for TestProps {
+    type RelProps = TestProps;
+    type ScalarProps = TestProps;
 
-impl Expr for TestExpr {}
+    fn new_rel(props: Self::RelProps) -> Self {
+        props
+    }
+
+    fn new_scalar(props: Self::ScalarProps) -> Self {
+        props
+    }
+
+    fn as_relational(&self) -> &Self::RelProps {
+        self
+    }
+
+    fn as_scalar(&self) -> &Self::ScalarProps {
+        self
+    }
+}
+
+impl Expr for TestExpr {
+    type RelExpr = TestExpr;
+    type ScalarExpr = TestExpr;
+
+    fn new_rel(expr: Self::RelExpr) -> Self {
+        expr
+    }
+
+    fn new_scalar(expr: Self::ScalarExpr) -> Self {
+        expr
+    }
+
+    fn as_relational(&self) -> &Self::RelExpr {
+        unreachable!()
+    }
+
+    fn as_scalar(&self) -> &Self::ScalarExpr {
+        unreachable!()
+    }
+
+    fn is_scalar(&self) -> bool {
+        false
+    }
+}
 
 #[derive(Debug, Clone)]
 struct TestOperator {
-    expr: TestExpr,
-    props: TestProps,
+    expr: ExprRef<TestOperator>,
+    group: ExprGroupRef<TestOperator>,
 }
 
 impl MemoExpr for TestOperator {
     type Expr = TestExpr;
     type Props = TestProps;
 
-    fn expr(&self) -> &Self::Expr {
+    fn create(expr: ExprRef<Self>, group: ExprGroupRef<Self>) -> Self {
+        TestOperator { expr, group }
+    }
+
+    fn expr_ref(&self) -> &ExprRef<Self> {
         &self.expr
     }
 
-    fn props(&self) -> &Self::Props {
-        &self.props
+    fn group_ref(&self) -> &ExprGroupRef<Self> {
+        &self.group
     }
 
     fn copy_in<T>(&self, ctx: &mut CopyInExprs<Self, T>) {
@@ -79,12 +120,8 @@ impl MemoExpr for TestOperator {
         ctx.copy_in(self, expr_ctx);
     }
 
-    fn create(expr: Self::Expr, props: Self::Props) -> Self {
-        TestOperator { expr, props }
-    }
-
-    fn new_expr(expr: &Self::Expr, mut inputs: NewChildExprs<Self>) -> (Self::Expr, Option<Self::Props>) {
-        let expr = match expr {
+    fn with_new_children(expr: &Self::Expr, mut inputs: NewChildExprs<Self>) -> Self::Expr {
+        match expr {
             TestExpr::Scan { src } => {
                 assert!(inputs.is_empty(), "expects no inputs");
                 TestExpr::Scan { src: src.clone() }
@@ -92,19 +129,25 @@ impl MemoExpr for TestOperator {
             TestExpr::Filter { filter, .. } => {
                 assert_eq!(inputs.len(), 1, "expects 1 input");
                 TestExpr::Filter {
-                    input: inputs.expr(),
+                    input: inputs.rel_node(),
                     filter: filter.clone(),
                 }
             }
             TestExpr::Join { .. } => {
                 assert_eq!(inputs.len(), 2, "expects 2 inputs");
                 TestExpr::Join {
-                    left: inputs.expr(),
-                    right: inputs.expr(),
+                    left: inputs.rel_node(),
+                    right: inputs.rel_node(),
                 }
             }
-        };
-        (expr, None)
+        }
+    }
+
+    fn new_properties_with_nested_sub_queries<'a>(
+        _props: Self::Props,
+        _sub_queries: impl Iterator<Item = &'a MemoExprNode<Self>>,
+    ) -> Self::Props {
+        unimplemented!()
     }
 
     fn num_children(&self) -> usize {
@@ -115,7 +158,7 @@ impl MemoExpr for TestOperator {
         }
     }
 
-    fn get_child(&self, i: usize, _props: &Self::Props) -> Option<ExprNodeRef<Self>> {
+    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Self>> {
         match self.expr() {
             TestExpr::Scan { .. } => None,
             TestExpr::Filter { input, .. } if i == 0 => Some(input.into()),
@@ -126,11 +169,15 @@ impl MemoExpr for TestOperator {
         }
     }
 
-    fn format_expr<F>(&self, f: &mut F)
+    fn get_sub_queries(&self) -> Option<SubQueries<Self>> {
+        unreachable!()
+    }
+
+    fn format_expr<F>(expr: &Self::Expr, _props: &Self::Props, f: &mut F)
     where
         F: MemoExprFormatter,
     {
-        match self.expr() {
+        match expr {
             TestExpr::Scan { src } => {
                 f.write_name("Scan");
                 f.write_source(src);
@@ -152,9 +199,15 @@ impl MemoExpr for TestOperator {
 impl From<TestExpr> for TestOperator {
     fn from(expr: TestExpr) -> Self {
         TestOperator {
-            expr,
-            props: TestProps::default(),
+            expr: ExprRef::Detached(Box::new(expr)),
+            group: ExprGroupRef::Detached(Box::new(TestProps::default())),
         }
+    }
+}
+
+impl From<TestOperator> for RelNode {
+    fn from(expr: TestOperator) -> Self {
+        RelNode::from_mexpr(expr)
     }
 }
 

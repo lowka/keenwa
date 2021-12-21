@@ -1,47 +1,14 @@
-use crate::memo::{MemoExpr, MemoGroupRef};
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::ExprRewriter;
-use crate::operators::{Operator, OperatorInputs, Properties};
+use crate::operators::{Operator, OperatorInputs};
 
 pub mod expr;
 pub mod value;
 
 /// The type of scalar expressions supported by the optimizer.
 pub type ScalarExpr = self::expr::Expr<RelNode>;
-
-/// A scalar node of an operator tree.
-///
-/// Should not be created directly and it is responsibility of the caller to provide a instance of `Operator`
-/// which is a valid scalar expression.
-#[derive(Debug, Clone)]
-pub enum ScalarNode {
-    /// A node is an expression.
-    Expr(Box<Operator>),
-    /// A node is a memo-group.
-    Group(MemoGroupRef<Operator>),
-}
-
-impl ScalarNode {
-    /// Returns a reference to a scalar expression stored inside this node:
-    /// * if this node is an expression returns a reference to the underlying expression.
-    /// * If this node is a memo group returns a reference to the first expression of this memo group.
-    pub fn expr(&self) -> &ScalarExpr {
-        match self {
-            ScalarNode::Expr(expr) => expr.expr().as_scalar(),
-            ScalarNode::Group(group) => group.expr().as_scalar(),
-        }
-    }
-
-    /// Returns a reference to properties of the underlying expression.
-    /// * If this is an expression returns a references to the properties of that expression.
-    /// * If this is a memo-group returns a reference to the properties of the first expression in that group.
-    pub fn props(&self) -> &Properties {
-        match self {
-            ScalarNode::Expr(expr) => expr.props(),
-            ScalarNode::Group(group) => group.props(),
-        }
-    }
-}
+/// The type of the relational nodes used by the optimizer.
+pub type ScalarNode = crate::memo::ScalarNode<Operator>;
 
 /// Replaces all relational expressions in of this expression tree with
 /// relational expressions provided by `inputs` object. if this expression tree does not
