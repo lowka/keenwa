@@ -2,6 +2,7 @@ use crate::error::OptimizerError;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::iter::FromIterator;
+use std::rc::Rc;
 
 use crate::meta::MetadataRef;
 use crate::operators::relational::logical::LogicalExpr;
@@ -89,12 +90,12 @@ pub enum RuleResult {
 
 #[derive(Debug)]
 pub struct RuleContext<'m> {
-    required_properties: PhysicalProperties,
+    required_properties: Rc<PhysicalProperties>,
     metadata: MetadataRef<'m>,
 }
 
 impl<'m> RuleContext<'m> {
-    pub fn new(required_properties: PhysicalProperties, metadata: MetadataRef<'m>) -> Self {
+    pub fn new(required_properties: Rc<PhysicalProperties>, metadata: MetadataRef<'m>) -> Self {
         RuleContext {
             required_properties,
             metadata,
@@ -102,7 +103,7 @@ impl<'m> RuleContext<'m> {
     }
 
     pub fn required_properties(&self) -> &PhysicalProperties {
-        &self.required_properties
+        self.required_properties.as_ref()
     }
 
     pub fn metadata(&self) -> MetadataRef {

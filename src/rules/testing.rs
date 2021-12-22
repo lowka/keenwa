@@ -54,7 +54,7 @@ impl RuleTester {
     pub fn apply(&mut self, expr: &LogicalExpr, expected: &str) {
         let (_, expr_ref) = self.memo.insert_group(Operator::from(OperatorExpr::from(expr.clone())));
 
-        let ctx = RuleContext::new(PhysicalProperties::none(), self.metadata.get_ref());
+        let ctx = RuleContext::new(Rc::new(PhysicalProperties::none()), self.metadata.get_ref());
         let rule_match = self.rule.matches(&ctx, expr);
         assert!(rule_match.is_some(), "Rule does not match: {:?}", self.rule);
 

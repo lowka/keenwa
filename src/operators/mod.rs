@@ -461,3 +461,25 @@ impl From<ScalarExpr> for OperatorExpr {
         OperatorExpr::Scalar(expr)
     }
 }
+
+#[cfg(test)]
+mod test {
+    use crate::operators::scalar::ScalarExpr;
+    use crate::operators::{Operator, OperatorExpr, Properties, ScalarProperties};
+
+    #[test]
+    fn test_operator_must_be_sync_and_send() {
+        let expr = OperatorExpr::Scalar(ScalarExpr::Column(0));
+        let props = Properties::Scalar(ScalarProperties::default());
+        let expr = Operator::new(expr, props);
+
+        ensure_sync_and_send(expr);
+    }
+
+    fn ensure_sync_and_send<T>(_o: T)
+    where
+        T: Sync + Send,
+    {
+        //
+    }
+}
