@@ -42,7 +42,11 @@ pub trait Rule {
 
 impl Debug for dyn Rule {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{{ name={}, type={:?}, group_rule={:?} }}", self.name(), self.rule_type(), self.group_rule())
+        f.debug_struct("Rule")
+            .field("name", &self.name())
+            .field("type", &self.rule_type())
+            .field("group_rule", &self.group_rule())
+            .finish()
     }
 }
 
@@ -186,6 +190,7 @@ impl<'r> Iterator for RuleIterator<'r> {
 
 impl Debug for RuleIterator<'_> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        // Can not used debug struct because the size of a slice is not known at compile time.
         write!(f, "RuleIterator({:?})", self.rules.as_slice())
     }
 }
