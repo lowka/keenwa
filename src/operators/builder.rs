@@ -765,6 +765,7 @@ mod test {
     use crate::memo::format_memo;
     use crate::operators::properties::LogicalPropertiesBuilder;
     use crate::operators::scalar::value::ScalarValue;
+    use crate::operators::Properties;
     use crate::optimizer::SetPropertiesCallback;
     use crate::rules::testing::format_operator_tree;
     use crate::statistics::NoStatisticsBuilder;
@@ -1137,7 +1138,13 @@ Memo:
             buf.push_str(format_operator_tree(expr.mexpr()).as_str());
             buf.push('\n');
 
-            buf.push_str(format!("  output cols: {:?}\n", expr.props().logical().output_columns()).as_str());
+            let props = expr.props();
+            match props {
+                Properties::Relational(props) => {
+                    buf.push_str(format!("  output cols: {:?}\n", props.logical().output_columns()).as_str());
+                }
+                Properties::Scalar(_) => {}
+            }
             buf.push_str("Metadata:\n");
 
             let columns: Vec<ColumnMetadata> =
