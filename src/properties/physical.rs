@@ -1,20 +1,16 @@
-use std::fmt::{Display, Formatter};
-use std::rc::Rc;
-
 use crate::properties::OrderingChoice;
+use std::fmt::{Display, Formatter};
 
 /// Physical properties required by an operator.
-#[derive(Debug, Eq, PartialEq, Hash)]
+#[derive(Debug, Eq, PartialEq, Hash, Clone)]
 pub struct PhysicalProperties {
-    inner: Option<Rc<Values>>,
+    inner: Option<Values>,
 }
 
 impl PhysicalProperties {
-    const EMPTY: PhysicalProperties = PhysicalProperties { inner: None };
-
     /// Returns physical properties object that has no requirements.
     pub const fn none() -> Self {
-        PhysicalProperties::EMPTY
+        PhysicalProperties { inner: None }
     }
 
     /// Creates a new physical properties object that require the the given ordering.
@@ -22,9 +18,7 @@ impl PhysicalProperties {
         let values = Values {
             ordering: Some(ordering),
         };
-        PhysicalProperties {
-            inner: Some(Rc::new(values)),
-        }
+        PhysicalProperties { inner: Some(values) }
     }
 
     /// Returns `true` if this physical properties object has no requirements.
@@ -57,18 +51,6 @@ impl PhysicalProperties {
 impl Default for PhysicalProperties {
     fn default() -> Self {
         PhysicalProperties::none()
-    }
-}
-
-impl Clone for PhysicalProperties {
-    fn clone(&self) -> Self {
-        if self.is_empty() {
-            PhysicalProperties::EMPTY
-        } else {
-            PhysicalProperties {
-                inner: self.inner.clone(),
-            }
-        }
     }
 }
 

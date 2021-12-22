@@ -1,4 +1,5 @@
 use itertools::Itertools;
+use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::{Debug, Display, Formatter};
@@ -49,7 +50,7 @@ where
 
         let ctx = OptimizationContext {
             group: root_group,
-            required_properties: required_property,
+            required_properties: runtime_state.properties_cache.insert(required_property),
         };
 
         log::debug!("Initial ctx: {}, initial memo:\n{}", ctx, format_memo(memo));
@@ -315,7 +316,7 @@ where
                     })
                 }
                 RelExpr::Physical(_) => {
-                    let task = get_optimize_rel_inputs_task(&ctx, expr, rule_set);
+                    let task = get_optimize_rel_inputs_task(&ctx, expr, &runtime_state.properties_cache, rule_set);
                     runtime_state.tasks.schedule(task);
                 }
             }
@@ -458,7 +459,7 @@ fn apply_rule<R>(
 
                 log::debug!(" + Physical expression: {}", &new_expr);
 
-                let task = get_optimize_rel_inputs_task(&ctx, &new_expr, rule_set);
+                let task = get_optimize_rel_inputs_task(&ctx, &new_expr, &runtime_state.properties_cache, rule_set);
                 runtime_state.tasks.schedule(task);
             }
         }
@@ -497,6 +498,7 @@ fn enforce_properties<R>(
         // 2) copy_out_best_expr traverses its child expressions recursively so adding an enforcer to a group which
         // is used as its input results an infinite loop during the traversal.
         let (_, enforcer_expr) = memo.insert_group(Operator::from(enforcer_expr));
+        let remaining_properties = runtime_state.properties_cache.insert(remaining_properties);
 
         (enforcer_expr, remaining_properties)
     };
@@ -515,6 +517,8 @@ fn enforce_properties<R>(
         };
         // combine with remaining_properties ???
         let required_properties = expr.expr().as_relational().as_physical().build_required_properties();
+        let num_children = expr.mexpr().num_children();
+        let required_properties = runtime_state.properties_cache.insert_list(required_properties, num_children);
         let inputs = InputContexts::with_required_properties(&expr, required_properties);
 
         runtime_state.tasks.schedule(Task::OptimizeInputs {
@@ -590,7 +594,12 @@ fn get_optimize_scalar_inputs_task(ctx: &OptimizationContext, expr: &ExprRef) ->
     }
 }
 
-fn get_optimize_rel_inputs_task<R>(ctx: &OptimizationContext, expr: &ExprRef, rule_set: &R) -> Task
+fn get_optimize_rel_inputs_task<R>(
+    ctx: &OptimizationContext,
+    expr: &ExprRef,
+    properties_cache: &PhysicalPropertiesCache,
+    rule_set: &R,
+) -> Task
 where
     R: RuleSet,
 {
@@ -604,8 +613,22 @@ where
         // Optimization context has no required properties + expression does not require any property from its inputs.
         // -> optimize each child expression using required properties of child expressions.
         // In this case every child expression is optimized using required properties of its memo group.
-
-        let inputs = InputContexts::from_inputs(expr);
+        let inputs = expr
+            .children()
+            .map(|group| {
+                let required_properties = match group.expr() {
+                    OperatorExpr::Relational(_) => {
+                        properties_cache.insert(group.props().as_relational().required.clone())
+                    }
+                    OperatorExpr::Scalar(_) => properties_cache.none(),
+                };
+                OptimizationContext {
+                    group,
+                    required_properties,
+                }
+            })
+            .collect();
+        let inputs = InputContexts::from_inputs(inputs);
         Task::OptimizeInputs {
             ctx: ctx.clone(),
             expr: expr.clone(),
@@ -630,6 +653,8 @@ where
         // -> same as the above
 
         // FIXME: MergeSort -> 'provides' conflicts with 'retains'
+        let num_children = expr.mexpr().num_children();
+        let required_properties = properties_cache.insert_list(required_properties, num_children);
         let inputs = InputContexts::with_required_properties(expr, required_properties);
         Task::OptimizeInputs {
             ctx: ctx.clone(),
@@ -683,7 +708,7 @@ where
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 struct OptimizationContext {
     group: GroupRef,
-    required_properties: PhysicalProperties,
+    required_properties: Rc<PhysicalProperties>,
 }
 
 impl OptimizationContext {
@@ -705,6 +730,7 @@ impl Display for OptimizationContext {
 struct RuntimeState {
     tasks: TaskQueue,
     state: State,
+    properties_cache: PhysicalPropertiesCache,
     applied_rules: AppliedRules,
     stats: Stats,
     // TODO:
@@ -716,6 +742,7 @@ impl RuntimeState {
         RuntimeState {
             tasks: TaskQueue::default(),
             state: State::default(),
+            properties_cache: PhysicalPropertiesCache::default(),
             stats: Stats::default(),
             applied_rules: AppliedRules::default(),
             enable_explore_groups: true,
@@ -870,16 +897,7 @@ struct InputContexts {
 }
 
 impl InputContexts {
-    fn with_required_properties(expr: &ExprRef, required_properties: Option<Vec<PhysicalProperties>>) -> Self {
-        let required_properties = match required_properties {
-            None => (0..expr.children().len()).map(|_| PhysicalProperties::none()).collect(),
-            Some(props) => {
-                let num = expr.children().len();
-                assert_eq!(props.len(), num,
-                           "Number of required properties must be equal to the number of child expressions. Expected: {} but got {}", num, props.len());
-                props
-            }
-        };
+    fn with_required_properties(expr: &ExprRef, required_properties: Vec<Rc<PhysicalProperties>>) -> Self {
         let inputs = expr
             .children()
             .zip(required_properties.into_iter())
@@ -894,7 +912,7 @@ impl InputContexts {
         }
     }
 
-    fn new(expr: &ExprRef, required_properties: PhysicalProperties) -> Self {
+    fn new(expr: &ExprRef, required_properties: Rc<PhysicalProperties>) -> Self {
         InputContexts {
             inputs: expr
                 .children()
@@ -907,7 +925,7 @@ impl InputContexts {
         }
     }
 
-    fn completed(group: GroupRef, required_properties: PhysicalProperties) -> Self {
+    fn completed(group: GroupRef, required_properties: Rc<PhysicalProperties>) -> Self {
         let mut ctx = InputContexts {
             inputs: vec![OptimizationContext {
                 group,
@@ -919,20 +937,7 @@ impl InputContexts {
         ctx
     }
 
-    fn from_inputs(expr: &ExprRef) -> Self {
-        let inputs = expr
-            .children()
-            .map(|group| {
-                let required_properties = match group.expr() {
-                    OperatorExpr::Relational(_) => group.props().as_relational().required().clone(),
-                    OperatorExpr::Scalar(_) => PhysicalProperties::none(),
-                };
-                OptimizationContext {
-                    group,
-                    required_properties,
-                }
-            })
-            .collect();
+    fn from_inputs(inputs: Vec<OptimizationContext>) -> Self {
         InputContexts {
             inputs,
             current_index: 0,
@@ -978,6 +983,69 @@ fn new_cost_estimation_ctx(inputs: &InputContexts, state: &State) -> (CostEstima
     }
 
     (CostEstimationContext { input_groups }, input_cost)
+}
+
+#[derive(Debug)]
+struct PhysicalPropertiesCache {
+    properties: RefCell<HashMap<PhysicalProperties, Rc<PhysicalProperties>>>,
+}
+
+impl Default for PhysicalPropertiesCache {
+    fn default() -> Self {
+        let none = PhysicalProperties::none();
+        let cache = PhysicalPropertiesCache {
+            properties: RefCell::new(HashMap::new()),
+        };
+        cache.insert(none);
+        cache
+    }
+}
+
+impl PhysicalPropertiesCache {
+    fn insert(&self, properties: PhysicalProperties) -> Rc<PhysicalProperties> {
+        let mut inner = self.properties.borrow_mut();
+        let existing = inner.get(&properties);
+
+        if let Some(props) = existing {
+            props.clone()
+        } else {
+            match inner.entry(properties.clone()) {
+                Entry::Occupied(o) => o.get().clone(),
+                Entry::Vacant(v) => {
+                    let rc = Rc::new(properties);
+                    v.insert(rc.clone());
+                    rc
+                }
+            }
+        }
+    }
+
+    fn insert_list(&self, vec: Option<Vec<PhysicalProperties>>, size: usize) -> Vec<Rc<PhysicalProperties>> {
+        match vec {
+            None => self.none_list(size),
+            Some(props) => {
+                assert_eq!(props.len(), size,
+                           "Number of required properties must be equal to the number of child expressions. Expected: {} but got {}", size, props.len());
+                props.into_iter().map(|p| self.insert(p)).collect()
+            }
+        }
+    }
+
+    fn none(&self) -> Rc<PhysicalProperties> {
+        let mut inner = self.properties.borrow_mut();
+        let none = PhysicalProperties::none();
+        let rc = inner.get(&none).expect("Empty physical properties are always present");
+        rc.clone()
+    }
+
+    fn none_list(&self, size: usize) -> Vec<Rc<PhysicalProperties>> {
+        let mut props = Vec::with_capacity(size);
+        for _ in 0..size {
+            let none = self.none();
+            props.push(none);
+        }
+        props
+    }
 }
 
 struct OptimizerResultCallbackContext<'o> {
