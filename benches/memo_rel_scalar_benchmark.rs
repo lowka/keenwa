@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use keenwa::memo::{
     ChildNodeRef, CopyInExprs, CopyInNestedExprs, Expr, ExprContext, ExprGroupRef, ExprRef, Memo, MemoExpr,
-    MemoExprFormatter, MemoGroupRef, NewChildExprs, Properties, SubQueries,
+    MemoExprFormatter, MemoGroupRef, NewChildExprs, Props, SubQueries,
 };
 
 use std::fmt::{Display, Formatter};
@@ -168,7 +168,7 @@ enum TestProps {
     Scalar(ScalarProps),
 }
 
-impl Properties for TestProps {
+impl Props for TestProps {
     type RelProps = RelProps;
     type ScalarProps = ScalarProps;
 

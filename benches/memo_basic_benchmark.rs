@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use keenwa::memo::{
     ChildNodeRef, CopyInExprs, Expr, ExprGroupRef, ExprRef, Memo, MemoExpr, MemoExprFormatter, MemoGroupRef,
-    NewChildExprs, Properties, SubQueries,
+    NewChildExprs, Props, SubQueries,
 };
 use std::fmt::{Display, Formatter};
 
@@ -37,7 +37,7 @@ struct TestProps {
     a: i32,
 }
 
-impl Properties for TestProps {
+impl Props for TestProps {
     type RelProps = TestProps;
     type ScalarProps = TestProps;
 

@@ -8,7 +8,7 @@ use crate::operators::relational::logical::{
 use crate::operators::relational::physical::{PhysicalExpr, Sort};
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::ScalarNode;
-use crate::operators::{OperatorExpr, Properties};
+use crate::operators::{OperatorExpr, Properties, RelationalProperties};
 use crate::properties::logical::LogicalProperties;
 use crate::statistics::StatisticsBuilder;
 use std::fmt::{Debug, Formatter};
@@ -161,14 +161,12 @@ where
         manual_props: Properties,
         metadata: MetadataRef,
     ) -> Result<Properties, OptimizerError> {
-        let Properties {
-            logical,
-            required,
-            nested_sub_queries,
-        } = manual_props;
-        let statistics = logical.statistics;
         match expr {
             OperatorExpr::Relational(RelExpr::Logical(expr)) => {
+                let RelationalProperties { required, .. } = match manual_props {
+                    Properties::Relational(props) => props,
+                    Properties::Scalar(_) => return Err(OptimizerError::Internal("a".into())),
+                };
                 let LogicalProperties {
                     output_columns,
                     // build_xxx methods return logical properties without statistics.
@@ -212,7 +210,7 @@ where
                 } else {
                     logical
                 };
-                Ok(Properties::new(logical, required))
+                Ok(Properties::new_relational_properties(logical, required))
             }
             OperatorExpr::Relational(RelExpr::Physical(expr)) => {
                 // Only enforcer operators are copied into a memo as groups.
@@ -223,18 +221,19 @@ where
                     // Sort operator does not have any ordering requirements
                     let required = input.props().required().clone().without_ordering();
 
-                    Ok(Properties::new(logical, required))
+                    Ok(Properties::new_relational_properties(logical, required))
                 } else {
                     Err(OptimizerError::Internal(
                         "Physical expressions are not allowed in an operator tree".to_string(),
                     ))
                 }
             }
-            OperatorExpr::Scalar(_) => {
-                assert!(required.is_empty(), "Physical properties can not be set for scalar expressions");
-                let logical = LogicalProperties::new(Vec::new(), statistics);
-                Ok(Properties::scalar(logical, nested_sub_queries))
-            }
+            OperatorExpr::Scalar(_) => match manual_props {
+                Properties::Relational(_) => {
+                    Err(OptimizerError::Internal("Scalar expression with relational properties".into()))
+                }
+                Properties::Scalar(scalar) => Ok(Properties::new_scalar_properties(scalar.nested_sub_queries)),
+            },
         }
     }
 }

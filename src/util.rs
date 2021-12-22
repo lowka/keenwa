@@ -2,7 +2,7 @@ use crate::cost::Cost;
 use crate::memo::GroupId;
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::scalar::ScalarExpr;
-use crate::properties::logical::LogicalProperties;
+use crate::operators::Properties;
 use crate::properties::physical::PhysicalProperties;
 use std::fmt::Debug;
 
@@ -28,11 +28,8 @@ pub trait BestExprContext {
     /// Returns the cost of the expression.
     fn cost(&self) -> Cost;
 
-    /// Returns the logical properties of the expression.
-    fn logical(&self) -> &LogicalProperties;
-
-    /// Returns physical properties required by the expression.
-    fn required(&self) -> &PhysicalProperties;
+    /// Returns properties of the expression.
+    fn props(&self) -> &Properties;
 
     /// Returns the identifier of a group the expression belongs to.
     fn group_id(&self) -> GroupId;

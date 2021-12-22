@@ -58,16 +58,15 @@ where
 
     fn build_select(
         &self,
-        expr: &LogicalExpr,
-        logical: &LogicalProperties,
-        metadata: MetadataRef,
         input: &RelNode,
         filter: Option<&ScalarNode>,
+        metadata: MetadataRef,
     ) -> Result<Option<Statistics>, OptimizerError> {
-        let selectivity = filter
-            .map(|f| self.selectivity_provider.get_selectivity(f.expr(), expr, logical, metadata))
-            .flatten()
-            .unwrap_or(Statistics::DEFAULT_SELECTIVITY);
+        let selectivity = match filter {
+            Some(filter) => self.build_filter(filter, metadata)?,
+            None => None,
+        }
+        .unwrap_or(Statistics::DEFAULT_SELECTIVITY);
 
         let logical = input.props().logical();
         let input_statistics = logical.statistics().unwrap();
@@ -120,6 +119,12 @@ where
     fn build_empty(&self) -> Result<Option<Statistics>, OptimizerError> {
         Ok(Some(Statistics::new(0f64, Statistics::DEFAULT_SELECTIVITY)))
     }
+
+    fn build_filter(&self, expr: &ScalarNode, metadata: MetadataRef) -> Result<Option<f64>, OptimizerError> {
+        let selectivity = self.selectivity_provider.get_selectivity(expr.expr(), metadata);
+
+        Ok(selectivity)
+    }
 }
 
 impl<T> StatisticsBuilder for SimpleCatalogStatisticsBuilder<T>
@@ -129,13 +134,13 @@ where
     fn build_statistics(
         &self,
         expr: &LogicalExpr,
-        logical: &LogicalProperties,
+        _logical: &LogicalProperties,
         metadata: MetadataRef,
     ) -> Result<Option<Statistics>, OptimizerError> {
         match expr {
             LogicalExpr::Projection(LogicalProjection { input, columns, .. }) => self.build_projection(input, columns),
             LogicalExpr::Select(LogicalSelect { input, filter, .. }) => {
-                self.build_select(expr, logical, metadata, input, filter.as_ref())
+                self.build_select(input, filter.as_ref(), metadata)
             }
             LogicalExpr::Aggregate(LogicalAggregate { input, group_exprs, .. }) => {
                 self.build_aggregate(input, group_exprs, &[])
@@ -171,13 +176,7 @@ pub trait SelectivityProvider {
     fn as_any(&self) -> &dyn Any;
 
     /// Returns selectivity of the given predicate expression `filter` in a context of the relational expression `expr`.
-    fn get_selectivity(
-        &self,
-        filter: &ScalarExpr,
-        expr: &LogicalExpr,
-        logical_properties: &LogicalProperties,
-        metadata: MetadataRef,
-    ) -> Option<f64>;
+    fn get_selectivity(&self, filter: &ScalarExpr, metadata: MetadataRef) -> Option<f64>;
 }
 
 /// [SelectivityProvider](self::SelectivityProvider) that always returns selectivity of 1.0.
@@ -189,13 +188,7 @@ impl SelectivityProvider for DefaultSelectivityStatistics {
         self
     }
 
-    fn get_selectivity(
-        &self,
-        _filter: &ScalarExpr,
-        _expr: &LogicalExpr,
-        _logical_properties: &LogicalProperties,
-        _metadata: MetadataRef,
-    ) -> Option<f64> {
+    fn get_selectivity(&self, _filter: &ScalarExpr, _metadata: MetadataRef) -> Option<f64> {
         Some(Statistics::DEFAULT_SELECTIVITY)
     }
 }
@@ -227,13 +220,7 @@ impl SelectivityProvider for PrecomputedSelectivityStatistics {
         self
     }
 
-    fn get_selectivity(
-        &self,
-        filter: &ScalarExpr,
-        _expr: &LogicalExpr,
-        _logical_properties: &LogicalProperties,
-        metadata: MetadataRef,
-    ) -> Option<f64> {
+    fn get_selectivity(&self, filter: &ScalarExpr, metadata: MetadataRef) -> Option<f64> {
         struct ReplaceColumnIdsWithColumnNames<'a> {
             metadata: MetadataRef<'a>,
         }
@@ -267,14 +254,8 @@ where
         self.as_ref()
     }
 
-    fn get_selectivity(
-        &self,
-        filter: &ScalarExpr,
-        expr: &LogicalExpr,
-        logical_properties: &LogicalProperties,
-        metadata: MetadataRef,
-    ) -> Option<f64> {
-        self.as_ref().get_selectivity(filter, expr, logical_properties, metadata)
+    fn get_selectivity(&self, filter: &ScalarExpr, metadata: MetadataRef) -> Option<f64> {
+        self.as_ref().get_selectivity(filter, metadata)
     }
 }
 
@@ -408,7 +389,7 @@ mod test {
             });
 
             let logical = LogicalProperties::new(vec![], Some(statistics));
-            let properties = Properties::new(logical, PhysicalProperties::none());
+            let properties = Properties::new_relational_properties(logical, PhysicalProperties::none());
 
             Operator::new(OperatorExpr::from(expr), properties)
         }

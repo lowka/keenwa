@@ -1,5 +1,5 @@
 use crate::operators::relational::physical::PhysicalExpr;
-use crate::operators::GroupRef;
+use crate::operators::{GroupRef, Properties};
 use crate::statistics::Statistics;
 
 pub mod simple;
@@ -24,6 +24,9 @@ impl CostEstimationContext {
     /// Returns statistics of the i-th child expression.
     pub fn child_statistics(&self, i: usize) -> Option<&Statistics> {
         let group = &self.input_groups[i];
-        group.props().logical().statistics()
+        match group.props() {
+            Properties::Relational(props) => props.logical.statistics(),
+            Properties::Scalar(_) => None,
+        }
     }
 }

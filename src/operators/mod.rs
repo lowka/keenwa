@@ -1,6 +1,6 @@
 use crate::memo::{
     ChildNodeRef, CopyInExprs, CopyInNestedExprs, ExprContext, ExprGroupRef, MemoExpr, MemoExprFormatter,
-    MemoGroupCallback, MemoGroupRef, NewChildExprs, SubQueries,
+    MemoGroupCallback, MemoGroupRef, NewChildExprs, Props, SubQueries,
 };
 use crate::meta::MutableMetadata;
 use crate::operators::scalar::expr_with_new_inputs;
@@ -49,24 +49,21 @@ impl Operator {
         self.expr.expr()
     }
 
-    /// Physical properties required by this expression.
-    pub fn required(&self) -> &PhysicalProperties {
-        self.group.props().required()
-    }
-
     /// Creates a new operator from this one but with new required properties.
     pub fn with_required(self, required: PhysicalProperties) -> Self {
         let Operator { expr, group, .. } = self;
         assert!(expr.expr().is_relational(), "Scalar expressions do not support physical properties: {:?}", expr);
-        let old_properties = group.props().clone();
-        let props = Properties {
+        let old_properties = match group.props().clone() {
+            Properties::Relational(props) => props,
+            Properties::Scalar(_) => panic!("Relational operator with scalar properties"),
+        };
+        let props = RelationalProperties {
             logical: old_properties.logical,
             required,
-            nested_sub_queries: Vec::new(),
         };
         Operator {
             expr,
-            group: crate::memo::ExprGroupRef::Detached(Box::new(props)),
+            group: crate::memo::ExprGroupRef::Detached(Box::new(Properties::Relational(props))),
         }
     }
 }
@@ -123,33 +120,58 @@ impl OperatorExpr {
     }
 }
 
-/// Properties of an operator.
-#[derive(Debug, Clone, Default)]
-//TODO: Split properties into relational properties and scalar properties.
-// Move (logical, required) to RelationalProperties.
-pub struct Properties {
-    pub(crate) logical: LogicalProperties,
-    pub(crate) required: PhysicalProperties,
-    pub(crate) nested_sub_queries: Vec<MemoGroupRef<Operator>>,
+/// Properties of an operator. Properties are shared between all operators (expressions) in a [memo group](crate::memo::MemoGroupRef).
+#[derive(Debug, Clone)]
+pub enum Properties {
+    Relational(RelationalProperties),
+    Scalar(ScalarProperties),
 }
 
 impl Properties {
-    pub fn new(logical: LogicalProperties, required: PhysicalProperties) -> Self {
-        Properties {
-            logical,
-            required,
-            nested_sub_queries: Vec::new(),
+    pub fn new_relational_properties(logical: LogicalProperties, required: PhysicalProperties) -> Self {
+        Properties::Relational(RelationalProperties { logical, required })
+    }
+
+    pub fn new_scalar_properties(nested_sub_queries: Vec<MemoGroupRef<Operator>>) -> Self {
+        Properties::Scalar(ScalarProperties { nested_sub_queries })
+    }
+}
+
+impl Props for Properties {
+    type RelProps = RelationalProperties;
+    type ScalarProps = ScalarProperties;
+
+    fn new_rel(props: Self::RelProps) -> Self {
+        Properties::Relational(props)
+    }
+
+    fn new_scalar(props: Self::ScalarProps) -> Self {
+        Properties::Scalar(props)
+    }
+
+    fn as_relational(&self) -> &Self::RelProps {
+        match self {
+            Properties::Relational(props) => props,
+            Properties::Scalar(_) => panic!("Expected relational properties"),
         }
     }
 
-    pub fn scalar(logical: LogicalProperties, nested_sub_queries: Vec<MemoGroupRef<Operator>>) -> Self {
-        Properties {
-            logical,
-            required: PhysicalProperties::default(),
-            nested_sub_queries,
+    fn as_scalar(&self) -> &Self::ScalarProps {
+        match self {
+            Properties::Relational(_) => panic!("Expected scalar properties"),
+            Properties::Scalar(props) => props,
         }
     }
+}
 
+/// Properties of a relational operator.
+#[derive(Debug, Clone, Default)]
+pub struct RelationalProperties {
+    pub(crate) logical: LogicalProperties,
+    pub(crate) required: PhysicalProperties,
+}
+
+impl RelationalProperties {
     /// Logical properties shared by an expression and equivalent expressions inside a group the expression belongs to.
     pub fn logical(&self) -> &LogicalProperties {
         &self.logical
@@ -161,24 +183,16 @@ impl Properties {
     }
 }
 
-impl crate::memo::Properties for Properties {
-    type RelProps = Properties;
-    type ScalarProps = Properties;
+/// Properties of a scalar operator.
+#[derive(Debug, Clone, Default)]
+pub struct ScalarProperties {
+    pub(crate) nested_sub_queries: Vec<MemoGroupRef<Operator>>,
+}
 
-    fn new_rel(props: Self::RelProps) -> Self {
-        props
-    }
-
-    fn new_scalar(props: Self::ScalarProps) -> Self {
-        props
-    }
-
-    fn as_relational(&self) -> &Self::RelProps {
-        self
-    }
-
-    fn as_scalar(&self) -> &Self::ScalarProps {
-        self
+impl ScalarProperties {
+    /// Returns nested sub-queries of scalar expression tree these properties are associated with.
+    pub fn nested_sub_queries(&self) -> &[MemoGroupRef<Operator>] {
+        &self.nested_sub_queries
     }
 }
 
@@ -253,7 +267,7 @@ impl MemoExpr for Operator {
         match self.expr() {
             OperatorExpr::Relational(RelExpr::Logical(e)) => e.num_children(),
             OperatorExpr::Relational(RelExpr::Physical(e)) => e.num_children(),
-            OperatorExpr::Scalar(_) => self.props().nested_sub_queries.len(),
+            OperatorExpr::Scalar(_) => self.props().as_scalar().nested_sub_queries.len(),
         }
     }
 
@@ -261,8 +275,8 @@ impl MemoExpr for Operator {
         match self.expr() {
             OperatorExpr::Relational(RelExpr::Logical(e)) => e.get_child(i),
             OperatorExpr::Relational(RelExpr::Physical(e)) => e.get_child(i),
-            OperatorExpr::Scalar(_) if i < self.props().nested_sub_queries.len() => {
-                self.props().nested_sub_queries.get(i).map(ChildNodeRef::Group)
+            OperatorExpr::Scalar(_) if i < self.props().as_scalar().nested_sub_queries.len() => {
+                self.props().as_scalar().nested_sub_queries.get(i).map(ChildNodeRef::Group)
             }
             OperatorExpr::Scalar(_) => None,
         }
@@ -290,15 +304,17 @@ impl MemoExpr for Operator {
     }
 
     fn get_sub_queries(&self) -> Option<SubQueries<Self>> {
-        if !self.props().nested_sub_queries.is_empty() {
-            Some(SubQueries::new(&self.props().nested_sub_queries))
-        } else {
-            None
+        match self.props() {
+            Properties::Scalar(props) if !props.nested_sub_queries.is_empty() => {
+                Some(SubQueries::new(&props.nested_sub_queries))
+            }
+            Properties::Relational(_) => None,
+            Properties::Scalar(_) => None,
         }
     }
 
     fn new_properties_with_nested_sub_queries(
-        props: Self::Props,
+        _props: Self::Props,
         sub_queries: impl Iterator<Item = MemoGroupRef<Self>>,
     ) -> Self::Props {
         let sub_queries: Vec<_> = sub_queries.enumerate()
@@ -309,7 +325,7 @@ impl MemoExpr for Operator {
             })
             .collect();
 
-        Properties::scalar(props.logical, sub_queries)
+        Properties::new_scalar_properties(sub_queries)
     }
 }
 
@@ -391,9 +407,13 @@ impl<T> OperatorCopyIn<'_, '_, T> {
 
 impl From<OperatorExpr> for Operator {
     fn from(expr: OperatorExpr) -> Self {
+        let props = match expr {
+            OperatorExpr::Relational(_) => Properties::Relational(RelationalProperties::default()),
+            OperatorExpr::Scalar(_) => Properties::Scalar(ScalarProperties::default()),
+        };
         Operator {
             expr: crate::memo::ExprRef::Detached(Box::new(expr)),
-            group: crate::memo::ExprGroupRef::Detached(Box::new(Properties::default())),
+            group: crate::memo::ExprGroupRef::Detached(Box::new(props)),
         }
     }
 }

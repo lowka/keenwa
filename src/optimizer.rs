@@ -6,13 +6,12 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::cost::{Cost, CostEstimationContext, CostEstimator};
-use crate::memo::{format_memo, ChildNode, ExprId, GroupId, MemoGroupCallback, NewChildExprs};
+use crate::memo::{format_memo, ChildNode, ExprId, GroupId, MemoExpr, MemoGroupCallback, NewChildExprs, Props};
 use crate::meta::MetadataRef;
 use crate::operators::properties::PropertiesProvider;
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::expr_with_new_inputs;
 use crate::operators::{ExprMemo, ExprRef, GroupRef, Operator, OperatorExpr, OperatorMetadata, Properties};
-use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
 use crate::rules::{RuleContext, RuleId, RuleMatch, RuleResult, RuleSet, RuleType};
 use crate::util::{BestExprContext, BestExprRef, ResultCallback};
@@ -45,7 +44,7 @@ where
 
         log::debug!("Optimizing expression: {:?}", expr);
 
-        let required_property = expr.required().clone();
+        let required_property = expr.props().as_relational().required().clone();
         let (root_group, _) = memo.insert_group(expr);
 
         let ctx = OptimizationContext {
@@ -555,7 +554,7 @@ fn optimize_inputs<T>(
         let group = &ctx.group;
         let cost = match expr.expr() {
             OperatorExpr::Relational(expr) => {
-                let logical_properties = group.props().logical();
+                let logical_properties = group.props().as_relational().logical();
                 let statistics = logical_properties.statistics();
                 let (cost_ctx, inputs_cost) = new_cost_estimation_ctx(&inputs, &runtime_state.state);
                 let expr_cost = cost_estimator.estimate_cost(expr.as_physical(), &cost_ctx, statistics);
@@ -924,10 +923,13 @@ impl InputContexts {
         let inputs = expr
             .children()
             .map(|group| {
-                let required_properties = group.props().required();
+                let required_properties = match group.expr() {
+                    OperatorExpr::Relational(_) => group.props().as_relational().required().clone(),
+                    OperatorExpr::Scalar(_) => PhysicalProperties::none(),
+                };
                 OptimizationContext {
-                    group: group.clone(),
-                    required_properties: required_properties.clone(),
+                    group,
+                    required_properties,
                 }
             })
             .collect();
@@ -989,12 +991,8 @@ impl<'o> BestExprContext for OptimizerResultCallbackContext<'o> {
         self.best_expr.cost
     }
 
-    fn logical(&self) -> &LogicalProperties {
-        self.ctx.group.props().logical()
-    }
-
-    fn required(&self) -> &PhysicalProperties {
-        self.ctx.group.props().required()
+    fn props(&self) -> &Properties {
+        self.ctx.group.props()
     }
 
     fn group_id(&self) -> GroupId {

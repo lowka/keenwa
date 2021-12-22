@@ -162,7 +162,7 @@ pub trait MemoExpr: Clone {
     /// The type of the expression.
     type Expr: Expr;
     /// The type of the properties.
-    type Props: Properties;
+    type Props: Props;
 
     /// Returns the expression this memo expression stores.
     /// This method is a shorthand for `memo_expr.expr_ref().expr()`.
@@ -197,8 +197,8 @@ pub trait MemoExpr: Clone {
     /// provided by the given [NewChildExprs](self::NewChildExprs).
     fn expr_with_new_children(expr: &Self::Expr, inputs: NewChildExprs<Self>) -> Self::Expr;
 
-    /// Called when a scalar expression has nested sub-queries. Should return properties that contain
-    /// the given memo groups.
+    /// Called when a scalar expression with nested sub-queries should be added to a memo.
+    /// Return properties that contain the given memo groups.
     fn new_properties_with_nested_sub_queries(
         props: Self::Props,
         sub_queries: impl Iterator<Item = MemoGroupRef<Self>>,
@@ -252,7 +252,7 @@ pub trait Expr: Clone {
 
 /// A trait for properties of the expression.
 // FIXME: Rename to Props.
-pub trait Properties: Clone {
+pub trait Props: Clone {
     /// The type of relational properties.
     type RelProps;
     /// The type of scalar properties.
@@ -414,7 +414,7 @@ pub trait MemoGroupCallback {
     /// The type of expression.
     type Expr: Expr;
     /// The type of properties of the expression.
-    type Props: Properties;
+    type Props: Props;
     /// The type of metadata stored by the memo.
     type Metadata;
 
@@ -432,7 +432,7 @@ impl<E, T, RelExpr, P, RelProps> RelNode<E>
 where
     E: MemoExpr<Expr = T, Props = P>,
     T: Expr<RelExpr = RelExpr> + 'static,
-    P: Properties<RelProps = RelProps> + 'static,
+    P: Props<RelProps = RelProps> + 'static,
 {
     /// Creates a relational node of an expression tree from the given relational expression and properties.
     pub fn new(expr: RelExpr, props: RelProps) -> Self {
@@ -475,8 +475,8 @@ where
     /// Returns a reference to properties associated with this node:
     /// * if this node is an expression returns a reference to the properties of the underlying expression.
     /// * If this node is a memo group returns a reference to the properties of the first expression of this memo group.
-    pub fn props(&self) -> &E::Props {
-        self.0.props()
+    pub fn props(&self) -> &RelProps {
+        self.0.props().as_relational()
     }
 
     /// Returns an [self::ExprRef] of the underlying memo expression.
@@ -535,7 +535,7 @@ impl<E, T, ScalarExpr, P, ScalarProps> ScalarNode<E>
 where
     E: MemoExpr<Expr = T, Props = P>,
     T: Expr<ScalarExpr = ScalarExpr> + 'static,
-    P: Properties<ScalarProps = ScalarProps> + 'static,
+    P: Props<ScalarProps = ScalarProps> + 'static,
 {
     /// Creates a scalar node of an expression tree from the given scalar expression and properties.
     pub fn new(expr: ScalarExpr, props: ScalarProps) -> Self {
@@ -578,8 +578,8 @@ where
     /// Returns a reference to properties associated with this node:
     /// * if this node is an expression returns a reference to the properties of the underlying expression.
     /// * If this node is a memo group returns a reference to the properties of the first expression of this memo group.
-    pub fn props(&self) -> &E::Props {
-        self.0.props()
+    pub fn props(&self) -> &ScalarProps {
+        self.0.props().as_scalar()
     }
 
     /// Returns an [self::ExprRef] of the underlying memo expression.
@@ -702,7 +702,7 @@ where
 {
     fn from(expr: &'a ChildNode<E>) -> Self {
         match expr {
-            ChildNode::Expr(expr) => ChildNodeRef::Expr(&expr),
+            ChildNode::Expr(expr) => ChildNodeRef::Expr(expr),
             ChildNode::Group(group) => ChildNodeRef::Group(group),
         }
     }
@@ -1184,8 +1184,7 @@ where
                 props,
                 children.iter().map(|e| match e {
                     ChildNode::Expr(_) => {
-                        // ExprContext.children contains groups.
-                        unreachable!()
+                        unreachable!("ExprContext.children must contain only references to memo groups")
                     }
                     ChildNode::Group(group) => group.clone(),
                 }),
@@ -1867,7 +1866,7 @@ mod test {
         sub_queries: Vec<MemoGroupRef<TestOperator>>,
     }
 
-    impl Properties for TestProps {
+    impl Props for TestProps {
         type RelProps = RelProps;
         type ScalarProps = ScalarProps;
 
@@ -2114,7 +2113,7 @@ mod test {
                     format!("{:?}", children[0].expr().as_relational()),
                     "child expr"
                 );
-                assert_eq!(input.props().as_relational(), leaf.props().as_relational(), "input props");
+                assert_eq!(input.props(), leaf.props().as_relational(), "input props");
             }
             _ => panic!("Unexpected expression: {:?}", expr),
         }
