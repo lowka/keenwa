@@ -1,6 +1,6 @@
 use crate::memo::{
-    CopyInExprs, CopyInNestedExprs, ExprContext, ExprGroupRef, MemoExpr, MemoExprFormatter, MemoExprNode,
-    MemoExprNodeRef, MemoGroupCallback, MemoGroupRef, NewChildExprs, SubQueries,
+    ChildNodeRef, CopyInExprs, CopyInNestedExprs, ExprContext, ExprGroupRef, MemoExpr, MemoExprFormatter,
+    MemoGroupCallback, MemoGroupRef, NewChildExprs, SubQueries,
 };
 use crate::meta::MutableMetadata;
 use crate::operators::scalar::expr_with_new_inputs;
@@ -235,8 +235,7 @@ impl MemoExpr for Operator {
         visitor.copy_in(self, expr_ctx);
     }
 
-    fn with_new_children(expr: &Self::Expr, inputs: NewChildExprs<Self>) -> Self::Expr {
-        let mut inputs = OperatorInputs::from(inputs);
+    fn expr_with_new_children(expr: &Self::Expr, mut inputs: NewChildExprs<Self>) -> Self::Expr {
         match expr {
             OperatorExpr::Relational(expr) => match expr {
                 RelExpr::Logical(expr) => OperatorExpr::from(expr.with_new_inputs(&mut inputs)),
@@ -258,12 +257,12 @@ impl MemoExpr for Operator {
         }
     }
 
-    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Self>> {
+    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Self>> {
         match self.expr() {
             OperatorExpr::Relational(RelExpr::Logical(e)) => e.get_child(i),
             OperatorExpr::Relational(RelExpr::Physical(e)) => e.get_child(i),
             OperatorExpr::Scalar(_) if i < self.props().nested_sub_queries.len() => {
-                self.props().nested_sub_queries.get(i).map(MemoExprNodeRef::Group)
+                self.props().nested_sub_queries.get(i).map(ChildNodeRef::Group)
             }
             OperatorExpr::Scalar(_) => None,
         }
@@ -298,18 +297,15 @@ impl MemoExpr for Operator {
         }
     }
 
-    fn new_properties_with_nested_sub_queries<'a>(
+    fn new_properties_with_nested_sub_queries(
         props: Self::Props,
-        sub_queries: impl Iterator<Item = &'a MemoExprNode<Self>>,
+        sub_queries: impl Iterator<Item = MemoGroupRef<Self>>,
     ) -> Self::Props {
         let sub_queries: Vec<_> = sub_queries.enumerate()
-            .map(|(i, e)| {
-                assert!(e.expr().is_relational(),
-                        "MemoExpr::with_new_children has been called with invalid arguments: A non relational sub query expression at index: {}", i);
-                match e {
-                    MemoExprNode::Expr(_) => panic!(),
-                    MemoExprNode::Group(group) => group.clone(),
-                }
+            .map(|(i, group)| {
+                assert!(group.expr().is_relational(),
+                        "MemoExpr::expr_with_new_children has been called with invalid arguments: A non relational sub query expression at index: {}", i);
+                group
             })
             .collect();
 
@@ -390,67 +386,6 @@ impl<T> OperatorCopyIn<'_, '_, T> {
     /// Copies the given expression `expr` into a memo.
     pub fn copy_in(self, expr: &Operator, expr_ctx: ExprContext<Operator>) {
         self.visitor.copy_in(expr, expr_ctx)
-    }
-}
-
-/// A wrapper round [`NewChildExprs`](crate::memo::NewChildExprs) that provides convenient methods
-/// to retrieve both relational and scalar expressions.
-//???: Improve error reporting
-#[derive(Debug)]
-pub struct OperatorInputs {
-    inputs: NewChildExprs<Operator>,
-}
-
-impl OperatorInputs {
-    /// Ensures that this container holds exactly `n` expressions and panics if this condition is not met.
-    pub fn expect_len(&self, n: usize, operator: &str) {
-        assert_eq!(self.inputs.len(), n, "{}: Unexpected number of child expressions", operator);
-    }
-
-    /// Retrieves the next relational expression.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if there is no relational expressions left or the retrieved expression is
-    /// not a relational expression.
-    pub fn rel_node(&mut self) -> RelNode {
-        self.inputs.rel_node()
-    }
-
-    /// Retrieves the next `n` relational expressions.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if there is not enough expressions left or some of the retrieved expressions are
-    /// not relational expressions.
-    pub fn rel_nodes(&mut self, n: usize) -> Vec<RelNode> {
-        self.inputs.rel_nodes(n)
-    }
-
-    /// Retrieves the next scalar expression.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if there is no expressions left or the retrieved expression is
-    /// not a scalar expression.
-    pub fn scalar_node(&mut self) -> ScalarNode {
-        self.inputs.scalar_node()
-    }
-
-    /// Retrieves the next `n` scalar expressions.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if there is not enough expressions left or some of the retrieved expressions are
-    /// not scalar expressions.
-    pub fn scalar_nodes(&mut self, n: usize) -> Vec<ScalarNode> {
-        self.inputs.scalar_nodes(n)
-    }
-}
-
-impl From<NewChildExprs<Operator>> for OperatorInputs {
-    fn from(inputs: NewChildExprs<Operator>) -> Self {
-        OperatorInputs { inputs }
     }
 }
 

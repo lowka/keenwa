@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use keenwa::memo::{
-    CopyInExprs, CopyInNestedExprs, Expr, ExprContext, ExprGroupRef, ExprRef, Memo, MemoExpr, MemoExprFormatter,
-    MemoExprNode, MemoExprNodeRef, MemoGroupRef, NewChildExprs, Properties, SubQueries,
+    ChildNodeRef, CopyInExprs, CopyInNestedExprs, Expr, ExprContext, ExprGroupRef, ExprRef, Memo, MemoExpr,
+    MemoExprFormatter, MemoGroupRef, NewChildExprs, Properties, SubQueries,
 };
 
 use std::fmt::{Display, Formatter};
@@ -234,23 +234,23 @@ impl MemoExpr for TestOperator {
         ctx.copy_in(self, expr_ctx)
     }
 
-    fn with_new_children(expr: &Self::Expr, mut inputs: NewChildExprs<Self>) -> Self::Expr {
+    fn expr_with_new_children(expr: &Self::Expr, mut inputs: NewChildExprs<Self>) -> Self::Expr {
         match expr {
             TestExpr::Relational(expr) => {
                 let expr = match expr {
                     TestRelExpr::Scan { src } => {
-                        assert!(inputs.is_empty(), "expects no inputs");
+                        inputs.expect_len(0, "Scan");
                         TestRelExpr::Scan { src }
                     }
                     TestRelExpr::Filter { .. } => {
-                        assert_eq!(inputs.len(), 2, "expects 1 input");
+                        inputs.expect_len(2, "Filter");
                         TestRelExpr::Filter {
                             input: inputs.rel_node(),
                             filter: inputs.scalar_node(),
                         }
                     }
                     TestRelExpr::Join { .. } => {
-                        assert_eq!(inputs.len(), 2, "expects 2 inputs");
+                        inputs.expect_len(2, "Join");
                         TestRelExpr::Join {
                             left: inputs.rel_node(),
                             right: inputs.rel_node(),
@@ -263,17 +263,13 @@ impl MemoExpr for TestOperator {
         }
     }
 
-    fn new_properties_with_nested_sub_queries<'a>(
+    fn new_properties_with_nested_sub_queries(
         _props: Self::Props,
-        sub_queries: impl Iterator<Item = &'a MemoExprNode<Self>>,
+        sub_queries: impl Iterator<Item = MemoGroupRef<Self>>,
     ) -> Self::Props {
-        let sub_queries: Vec<_> = sub_queries
-            .map(|e| match e {
-                MemoExprNode::Expr(_) => panic!(),
-                MemoExprNode::Group(group) => group.clone(),
-            })
-            .collect();
-        TestProps::Scalar(ScalarProps { sub_queries })
+        TestProps::Scalar(ScalarProps {
+            sub_queries: sub_queries.collect(),
+        })
     }
 
     fn num_children(&self) -> usize {
@@ -293,7 +289,7 @@ impl MemoExpr for TestOperator {
         }
     }
 
-    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Self>> {
+    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Self>> {
         match self.expr() {
             TestExpr::Relational(expr) => match expr {
                 TestRelExpr::Scan { .. } => None,
