@@ -1,11 +1,10 @@
-use crate::memo::{ExprContext, MemoExprFormatter, MemoExprNodeRef};
+use crate::memo::{ChildNodeRef, ExprContext, MemoExprFormatter, NewChildExprs};
 use crate::meta::ColumnId;
 use crate::operators::relational::join::{JoinCondition, JoinOn};
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::expr::ExprVisitor;
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
-use crate::operators::{Operator, OperatorExpr};
-use crate::operators::{OperatorCopyIn, OperatorInputs};
+use crate::operators::{Operator, OperatorCopyIn, OperatorExpr};
 
 // TODO: Docs
 /// A logical expression describes a high-level operator without specifying an implementation algorithm to be used.
@@ -38,7 +37,7 @@ impl LogicalExpr {
         }
     }
 
-    pub(crate) fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    pub(crate) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         match self {
             LogicalExpr::Projection(expr) => LogicalExpr::Projection(expr.with_new_inputs(inputs)),
             LogicalExpr::Select(expr) => LogicalExpr::Select(expr.with_new_inputs(inputs)),
@@ -66,7 +65,7 @@ impl LogicalExpr {
         }
     }
 
-    pub(crate) fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    pub(crate) fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
         match self {
             LogicalExpr::Projection(expr) => expr.get_child(i),
             LogicalExpr::Select(expr) => expr.get_child(i),
@@ -203,7 +202,7 @@ impl LogicalProjection {
         visitor.visit_rel(expr_ctx, &self.input);
     }
 
-    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         inputs.expect_len(1, "LogicalProjection");
         LogicalProjection {
             input: inputs.rel_node(),
@@ -216,7 +215,7 @@ impl LogicalProjection {
         1
     }
 
-    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
         if i == 0 {
             Some((&self.input).into())
         } else {
@@ -247,7 +246,7 @@ impl LogicalSelect {
         visitor.visit_opt_scalar(expr_ctx, self.filter.as_ref());
     }
 
-    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         let num_opt = self.filter.as_ref().map(|_| 1).unwrap_or_default();
         inputs.expect_len(1 + num_opt, "LogicalSelect");
 
@@ -261,7 +260,7 @@ impl LogicalSelect {
         1 + self.filter.as_ref().map(|_| 1).unwrap_or_default()
     }
 
-    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
         match i {
             0 => Some((&self.input).into()),
             1 if self.filter.is_some() => {
@@ -302,7 +301,7 @@ impl LogicalAggregate {
         }
     }
 
-    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         inputs.expect_len(1 + self.aggr_exprs.len() + self.group_exprs.len(), "LogicalAggregate");
 
         LogicalAggregate {
@@ -317,7 +316,7 @@ impl LogicalAggregate {
         1 + self.aggr_exprs.len() + self.group_exprs.len()
     }
 
-    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
         let num_aggr_exprs = self.aggr_exprs.len();
         let num_group_exprs = self.group_exprs.len();
         match i {
@@ -363,7 +362,7 @@ impl LogicalJoin {
         visitor.visit_join_condition(expr_ctx, &self.condition);
     }
 
-    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         let num_opt = match &self.condition {
             JoinCondition::Using(_) => 0,
             JoinCondition::On(_) => 1,
@@ -388,7 +387,7 @@ impl LogicalJoin {
         2 + num_opt
     }
 
-    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
         match i {
             0 => Some((&self.left).into()),
             1 => Some((&self.right).into()),
@@ -421,7 +420,7 @@ pub struct LogicalGet {
 }
 
 impl LogicalGet {
-    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         inputs.expect_len(0, "LogicalGet");
 
         LogicalGet {
@@ -434,7 +433,7 @@ impl LogicalGet {
         0
     }
 
-    fn get_child(&self, _i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    fn get_child(&self, _i: usize) -> Option<ChildNodeRef<Operator>> {
         None
     }
 
@@ -463,7 +462,7 @@ impl LogicalUnion {
         visitor.visit_rel(expr_ctx, &self.right);
     }
 
-    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         inputs.expect_len(2, "LogicalUnion");
         LogicalUnion {
             left: inputs.rel_node(),
@@ -477,7 +476,7 @@ impl LogicalUnion {
         2
     }
 
-    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
         match i {
             0 => Some((&self.left).into()),
             1 => Some((&self.left).into()),
@@ -511,7 +510,7 @@ impl LogicalIntersect {
         visitor.visit_rel(expr_ctx, &self.right);
     }
 
-    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         inputs.expect_len(2, "LogicalUnion");
         LogicalIntersect {
             left: inputs.rel_node(),
@@ -525,7 +524,7 @@ impl LogicalIntersect {
         2
     }
 
-    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
         match i {
             0 => Some((&self.left).into()),
             1 => Some((&self.left).into()),
@@ -559,7 +558,7 @@ impl LogicalExcept {
         visitor.visit_rel(expr_ctx, &self.right);
     }
 
-    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         inputs.expect_len(2, "LogicalExcept");
         LogicalExcept {
             left: inputs.rel_node(),
@@ -573,7 +572,7 @@ impl LogicalExcept {
         2
     }
 
-    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
         match i {
             0 => Some((&self.left).into()),
             1 => Some((&self.left).into()),
@@ -596,7 +595,7 @@ impl LogicalExcept {
 pub struct LogicalEmpty {}
 
 impl LogicalEmpty {
-    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         inputs.expect_len(0, "LogicalEmpty");
         LogicalEmpty {}
     }
@@ -612,7 +611,7 @@ impl LogicalEmpty {
         0
     }
 
-    fn get_child(&self, _i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    fn get_child(&self, _i: usize) -> Option<ChildNodeRef<Operator>> {
         None
     }
 }

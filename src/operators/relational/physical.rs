@@ -1,9 +1,9 @@
-use crate::memo::{ExprContext, MemoExprFormatter, MemoExprNodeRef};
+use crate::memo::{ChildNodeRef, ExprContext, MemoExprFormatter, NewChildExprs};
 use crate::meta::ColumnId;
 use crate::operators::relational::join::{get_join_columns_pair, JoinCondition, JoinOn};
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::ScalarNode;
-use crate::operators::{Operator, OperatorCopyIn, OperatorInputs};
+use crate::operators::{Operator, OperatorCopyIn};
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::OrderingChoice;
 
@@ -48,7 +48,7 @@ impl PhysicalExpr {
         }
     }
 
-    pub fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    pub fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         match self {
             PhysicalExpr::Projection(expr) => PhysicalExpr::Projection(expr.with_new_inputs(inputs)),
             PhysicalExpr::Select(expr) => PhysicalExpr::Select(expr.with_new_inputs(inputs)),
@@ -84,7 +84,7 @@ impl PhysicalExpr {
         }
     }
 
-    pub fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    pub fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
         match self {
             PhysicalExpr::Projection(expr) => expr.get_child(i),
             PhysicalExpr::Select(expr) => expr.get_child(i),
@@ -153,8 +153,8 @@ impl Projection {
         visitor.visit_rel(expr_ctx, &self.input);
     }
 
-    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
-        inputs.expect_len(1, "LogicalProjection");
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
+        inputs.expect_len(1, "Projection");
         Projection {
             input: inputs.rel_node(),
             columns: self.columns.clone(),
@@ -169,7 +169,7 @@ impl Projection {
         1
     }
 
-    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
         if i == 0 {
             Some((&self.input).into())
         } else {
@@ -199,7 +199,7 @@ impl Select {
         visitor.visit_opt_scalar(expr_ctx, self.filter.as_ref());
     }
 
-    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         let num_opt = self.filter.as_ref().map(|_| 1).unwrap_or_default();
         inputs.expect_len(1 + num_opt, "Select");
 
@@ -217,7 +217,7 @@ impl Select {
         1 + self.filter.as_ref().map(|_| 1).unwrap_or_default()
     }
 
-    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
         match i {
             0 => Some((&self.input).into()),
             1 if self.filter.is_some() => {
@@ -256,7 +256,7 @@ impl HashAggregate {
         }
     }
 
-    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         inputs.expect_len(1 + self.aggr_exprs.len() + self.group_exprs.len(), "HashAggregate");
 
         HashAggregate {
@@ -274,7 +274,7 @@ impl HashAggregate {
         1 + self.aggr_exprs.len() + self.group_exprs.len()
     }
 
-    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
         let num_aggr_exprs = self.aggr_exprs.len();
         let num_group_exprs = self.group_exprs.len();
         match i {
@@ -320,7 +320,7 @@ impl HashJoin {
         visitor.visit_join_condition(expr_ctx, &self.condition);
     }
 
-    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         let num_opt = match &self.condition {
             JoinCondition::Using(_) => 0,
             JoinCondition::On(_) => 1,
@@ -349,7 +349,7 @@ impl HashJoin {
         2 + num_opt
     }
 
-    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
         match i {
             0 => Some((&self.left).into()),
             1 => Some((&self.right).into()),
@@ -389,7 +389,7 @@ impl MergeSortJoin {
         visitor.visit_join_condition(expr_ctx, &self.condition);
     }
 
-    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         let num_opt = match &self.condition {
             JoinCondition::Using(_) => 0,
             JoinCondition::On(_) => 1,
@@ -426,7 +426,7 @@ impl MergeSortJoin {
         2 + num_opt
     }
 
-    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
         match i {
             0 => Some((&self.left).into()),
             1 => Some((&self.right).into()),
@@ -466,7 +466,7 @@ impl NestedLoop {
         visitor.visit_opt_scalar(expr_ctx, self.condition.as_ref());
     }
 
-    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         let num_opt = self.condition.as_ref().map(|_| 1).unwrap_or_default();
         inputs.expect_len(2 + num_opt, "NestedLoop");
 
@@ -485,7 +485,7 @@ impl NestedLoop {
         2 + self.condition.as_ref().map(|_| 1).unwrap_or_default()
     }
 
-    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
         match i {
             0 => Some((&self.left).into()),
             1 => Some((&self.right).into()),
@@ -517,7 +517,7 @@ pub struct Scan {
 }
 
 impl Scan {
-    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         inputs.expect_len(0, "Scan");
 
         Scan {
@@ -534,7 +534,7 @@ impl Scan {
         0
     }
 
-    fn get_child(&self, _i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    fn get_child(&self, _i: usize) -> Option<ChildNodeRef<Operator>> {
         None
     }
 
@@ -555,7 +555,7 @@ pub struct IndexScan {
 }
 
 impl IndexScan {
-    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         inputs.expect_len(0, "IndexScan");
 
         IndexScan {
@@ -572,7 +572,7 @@ impl IndexScan {
         0
     }
 
-    fn get_child(&self, _i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    fn get_child(&self, _i: usize) -> Option<ChildNodeRef<Operator>> {
         None
     }
 
@@ -597,7 +597,7 @@ impl Sort {
         visitor.visit_rel(expr_ctx, &self.input);
     }
 
-    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         inputs.expect_len(1, "Sort");
 
         Sort {
@@ -614,7 +614,7 @@ impl Sort {
         1
     }
 
-    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
         if i == 0 {
             Some((&self.input).into())
         } else {
@@ -644,7 +644,7 @@ impl Append {
         visitor.visit_rel(expr_ctx, &self.right);
     }
 
-    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         inputs.expect_len(2, "Append");
 
         Append {
@@ -661,7 +661,7 @@ impl Append {
         2
     }
 
-    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
         match i {
             0 => Some((&self.left).into()),
             1 => Some((&self.right).into()),
@@ -691,7 +691,7 @@ impl Unique {
         visitor.visit_rel(expr_ctx, &self.right);
     }
 
-    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         inputs.expect_len(2, "Unique");
 
         Unique {
@@ -714,7 +714,7 @@ impl Unique {
         2
     }
 
-    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
         match i {
             0 => Some((&self.left).into()),
             1 => Some((&self.right).into()),
@@ -748,7 +748,7 @@ impl HashedSetOp {
         visitor.visit_rel(expr_ctx, &self.right);
     }
 
-    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         inputs.expect_len(2, "Unique");
 
         HashedSetOp {
@@ -767,7 +767,7 @@ impl HashedSetOp {
         2
     }
 
-    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
         match i {
             0 => Some((&self.left).into()),
             1 => Some((&self.right).into()),
@@ -791,8 +791,8 @@ impl HashedSetOp {
 pub struct Empty {}
 
 impl Empty {
-    fn with_new_inputs(&self, inputs: &mut OperatorInputs) -> Self {
-        inputs.expect_len(0, "LogicalEmpty");
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
+        inputs.expect_len(0, "Empty");
         Empty {}
     }
 
@@ -804,7 +804,7 @@ impl Empty {
         0
     }
 
-    fn get_child(&self, _i: usize) -> Option<MemoExprNodeRef<Operator>> {
+    fn get_child(&self, _i: usize) -> Option<ChildNodeRef<Operator>> {
         None
     }
 

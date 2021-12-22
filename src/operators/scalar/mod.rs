@@ -1,6 +1,7 @@
+use crate::memo::NewChildExprs;
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::ExprRewriter;
-use crate::operators::{Operator, OperatorInputs};
+use crate::operators::Operator;
 
 pub mod expr;
 pub mod value;
@@ -13,9 +14,9 @@ pub type ScalarNode = crate::memo::ScalarNode<Operator>;
 /// Replaces all relational expressions in of this expression tree with
 /// relational expressions provided by `inputs` object. if this expression tree does not
 /// contain nested sub-queries this method returns a copy of this `Expr`.
-pub fn expr_with_new_inputs(expr: &ScalarExpr, inputs: &mut OperatorInputs) -> ScalarExpr {
+pub fn expr_with_new_inputs(expr: &ScalarExpr, inputs: &mut NewChildExprs<Operator>) -> ScalarExpr {
     struct RelInputsRewriter<'a> {
-        inputs: &'a mut OperatorInputs,
+        inputs: &'a mut NewChildExprs<Operator>,
     }
     impl ExprRewriter<RelNode> for RelInputsRewriter<'_> {
         fn rewrite(&mut self, expr: ScalarExpr) -> ScalarExpr {

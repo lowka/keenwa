@@ -6,14 +6,12 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::cost::{Cost, CostEstimationContext, CostEstimator};
-use crate::memo::{format_memo, ExprId, GroupId, MemoExprNode, MemoGroupCallback, NewChildExprs};
+use crate::memo::{format_memo, ChildNode, ExprId, GroupId, MemoGroupCallback, NewChildExprs};
 use crate::meta::MetadataRef;
 use crate::operators::properties::PropertiesProvider;
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::expr_with_new_inputs;
-use crate::operators::{
-    ExprMemo, ExprRef, GroupRef, Operator, OperatorExpr, OperatorInputs, OperatorMetadata, Properties,
-};
+use crate::operators::{ExprMemo, ExprRef, GroupRef, Operator, OperatorExpr, OperatorMetadata, Properties};
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
 use crate::rules::{RuleContext, RuleId, RuleMatch, RuleResult, RuleSet, RuleType};
@@ -1043,14 +1041,13 @@ where
 
             for input_ctx in &best_expr.inputs {
                 let out = copy_out_best_expr(result_callback, state, memo, input_ctx)?;
-                new_inputs.push_back(MemoExprNode::from(out));
+                new_inputs.push_back(ChildNode::Expr(out));
             }
 
             let best_expr_ctx = OptimizerResultCallbackContext { ctx, best_expr, inputs };
             result_callback.on_best_expr(best_expr_ref.clone(), &best_expr_ctx);
             //TODO: Copy required properties.
-            let new_inputs = NewChildExprs::new(new_inputs);
-            let mut new_inputs = OperatorInputs::from(new_inputs);
+            let mut new_inputs = NewChildExprs::new(new_inputs);
             let new_expr = match best_expr_ref {
                 BestExprRef::Relational(expr) => OperatorExpr::from(expr.with_new_inputs(&mut new_inputs)),
                 BestExprRef::Scalar(expr) => OperatorExpr::from(expr_with_new_inputs(expr, &mut new_inputs)),

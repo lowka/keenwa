@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use keenwa::memo::{
-    CopyInExprs, Expr, ExprGroupRef, ExprRef, Memo, MemoExpr, MemoExprFormatter, MemoExprNode, MemoExprNodeRef,
+    ChildNodeRef, CopyInExprs, Expr, ExprGroupRef, ExprRef, Memo, MemoExpr, MemoExprFormatter, MemoGroupRef,
     NewChildExprs, Properties, SubQueries,
 };
 use std::fmt::{Display, Formatter};
@@ -120,21 +120,21 @@ impl MemoExpr for TestOperator {
         ctx.copy_in(self, expr_ctx);
     }
 
-    fn with_new_children(expr: &Self::Expr, mut inputs: NewChildExprs<Self>) -> Self::Expr {
+    fn expr_with_new_children(expr: &Self::Expr, mut inputs: NewChildExprs<Self>) -> Self::Expr {
         match expr {
             TestExpr::Scan { src } => {
-                assert!(inputs.is_empty(), "expects no inputs");
+                inputs.expect_len(0, "Scan");
                 TestExpr::Scan { src: src.clone() }
             }
             TestExpr::Filter { filter, .. } => {
-                assert_eq!(inputs.len(), 1, "expects 1 input");
+                inputs.expect_len(1, "Filter");
                 TestExpr::Filter {
                     input: inputs.rel_node(),
                     filter: filter.clone(),
                 }
             }
             TestExpr::Join { .. } => {
-                assert_eq!(inputs.len(), 2, "expects 2 inputs");
+                inputs.expect_len(2, "Join");
                 TestExpr::Join {
                     left: inputs.rel_node(),
                     right: inputs.rel_node(),
@@ -143,9 +143,9 @@ impl MemoExpr for TestOperator {
         }
     }
 
-    fn new_properties_with_nested_sub_queries<'a>(
+    fn new_properties_with_nested_sub_queries(
         _props: Self::Props,
-        _sub_queries: impl Iterator<Item = &'a MemoExprNode<Self>>,
+        _sub_queries: impl Iterator<Item = MemoGroupRef<Self>>,
     ) -> Self::Props {
         unimplemented!()
     }
@@ -158,7 +158,7 @@ impl MemoExpr for TestOperator {
         }
     }
 
-    fn get_child(&self, i: usize) -> Option<MemoExprNodeRef<Self>> {
+    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Self>> {
         match self.expr() {
             TestExpr::Scan { .. } => None,
             TestExpr::Filter { input, .. } if i == 0 => Some(input.into()),
