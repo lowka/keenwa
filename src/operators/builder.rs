@@ -658,6 +658,7 @@ impl AggregateBuilder<'_> {
 }
 
 /// [OperatorCallback] that does nothing.
+#[derive(Debug)]
 pub struct NoOpOperatorCallback;
 
 impl OperatorCallback for NoOpOperatorCallback {
@@ -669,12 +670,6 @@ impl OperatorCallback for NoOpOperatorCallback {
     fn new_scalar_expr(&self, expr: Operator) -> ScalarNode {
         assert!(expr.expr().is_scalar(), "Not a scalar expression");
         ScalarNode::from_mexpr(expr)
-    }
-}
-
-impl Debug for dyn OperatorCallback {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "OperatorCallback")
     }
 }
 

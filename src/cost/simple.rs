@@ -129,6 +129,6 @@ impl CostEstimator for SimpleCostEstimator {
 
 impl Debug for SimpleCostEstimator {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "SimpleCostEstimator")
+        f.debug_struct("SimpleCostEstimator").finish()
     }
 }

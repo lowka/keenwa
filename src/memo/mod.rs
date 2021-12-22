@@ -399,12 +399,10 @@ where
     P: Debug,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ExpGroup(")?;
         match self {
-            ExprGroupRef::Detached(group) => write!(f, "{:?}", group)?,
-            ExprGroupRef::Memo(group) => write!(f, "{:?}", group)?,
+            ExprGroupRef::Detached(group) => f.debug_tuple("Detached").field(&*group).finish(),
+            ExprGroupRef::Memo(group) => f.debug_tuple("Memo").field(group).finish(),
         }
-        write!(f, ")")
     }
 }
 
@@ -524,7 +522,7 @@ where
     E: Debug,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("RelNode").field("0", &self.0).finish()
+        f.debug_tuple("RelNode").field(&self.0).finish()
     }
 }
 
@@ -627,7 +625,7 @@ where
     E: Debug,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ScalarNode").field("0", &self.0).finish()
+        f.debug_tuple("ScalarNode").field(&self.0).finish()
     }
 }
 
@@ -676,8 +674,8 @@ where
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            ChildNode::Expr(expr) => write!(f, "Expr({:?})", expr),
-            ChildNode::Group(group) => write!(f, "Group({:?})", group.id),
+            ChildNode::Expr(expr) => f.debug_tuple("Expr").field(expr).finish(),
+            ChildNode::Group(group) => f.debug_tuple("Expr").field(group).finish(),
         }
     }
 }
@@ -801,7 +799,7 @@ where
     E: MemoExpr,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "MemoGroupRef {{ id: {:?} }}", self.id)
+        f.debug_struct("MemoGroupRef").field("id", &self.id).finish()
     }
 }
 
@@ -950,7 +948,7 @@ where
     E: MemoExpr,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "MemoExprRef {{ id: {:?} }}", self.id)
+        f.debug_struct("MemoExprRef").field("id", &self.id).finish()
     }
 }
 
@@ -1041,7 +1039,7 @@ impl Display for GroupId {
 
 impl Debug for GroupId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "GroupId({:})", self.0.index())
+        f.debug_tuple("GroupId").field(&self.0.index()).finish()
     }
 }
 
@@ -1063,7 +1061,7 @@ impl Display for ExprId {
 
 impl Debug for ExprId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "ExprId({:})", self.0.index())
+        f.debug_tuple("ExprId").field(&self.0.index()).finish()
     }
 }
 
