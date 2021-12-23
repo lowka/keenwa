@@ -1,4 +1,4 @@
-use crate::memo::{ChildNodeRef, ExprContext, MemoExprFormatter, NewChildExprs};
+use crate::memo::{ExprContext, MemoExprFormatter, NewChildExprs};
 use crate::meta::ColumnId;
 use crate::operators::relational::join::{JoinCondition, JoinOn};
 use crate::operators::relational::{RelExpr, RelNode};
@@ -65,7 +65,7 @@ impl LogicalExpr {
         }
     }
 
-    pub(crate) fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
+    pub(crate) fn get_child(&self, i: usize) -> Option<&Operator> {
         match self {
             LogicalExpr::Projection(expr) => expr.get_child(i),
             LogicalExpr::Select(expr) => expr.get_child(i),
@@ -215,9 +215,9 @@ impl LogicalProjection {
         1
     }
 
-    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<&Operator> {
         if i == 0 {
-            Some((&self.input).into())
+            Some(self.input.mexpr())
         } else {
             None
         }
@@ -260,12 +260,12 @@ impl LogicalSelect {
         1 + self.filter.as_ref().map(|_| 1).unwrap_or_default()
     }
 
-    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<&Operator> {
         match i {
-            0 => Some((&self.input).into()),
+            0 => Some(self.input.mexpr()),
             1 if self.filter.is_some() => {
                 let filter = self.filter.as_ref().unwrap();
-                Some(filter.into())
+                Some(filter.mexpr())
             }
             _ => None,
         }
@@ -316,18 +316,18 @@ impl LogicalAggregate {
         1 + self.aggr_exprs.len() + self.group_exprs.len()
     }
 
-    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<&Operator> {
         let num_aggr_exprs = self.aggr_exprs.len();
         let num_group_exprs = self.group_exprs.len();
         match i {
-            0 => Some((&self.input).into()),
+            0 => Some(self.input.mexpr()),
             _ if i >= 1 && i < num_aggr_exprs => {
                 let expr = &self.aggr_exprs[i];
-                Some(expr.into())
+                Some(expr.mexpr())
             }
             _ if i >= num_aggr_exprs && i < 1 + num_aggr_exprs + num_group_exprs => {
                 let expr = &self.group_exprs[i];
-                Some(expr.into())
+                Some(expr.mexpr())
             }
             _ => None,
         }
@@ -387,13 +387,13 @@ impl LogicalJoin {
         2 + num_opt
     }
 
-    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<&Operator> {
         match i {
-            0 => Some((&self.left).into()),
-            1 => Some((&self.right).into()),
+            0 => Some(self.left.mexpr()),
+            1 => Some(self.right.mexpr()),
             2 => match &self.condition {
                 JoinCondition::Using(_) => unreachable!(),
-                JoinCondition::On(on) => Some((&on.expr).into()),
+                JoinCondition::On(on) => Some((&on.expr).mexpr()),
             },
             _ => None,
         }
@@ -433,7 +433,7 @@ impl LogicalGet {
         0
     }
 
-    fn get_child(&self, _i: usize) -> Option<ChildNodeRef<Operator>> {
+    fn get_child(&self, _i: usize) -> Option<&Operator> {
         None
     }
 
@@ -476,10 +476,10 @@ impl LogicalUnion {
         2
     }
 
-    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<&Operator> {
         match i {
-            0 => Some((&self.left).into()),
-            1 => Some((&self.left).into()),
+            0 => Some(self.left.mexpr()),
+            1 => Some(self.right.mexpr()),
             _ => None,
         }
     }
@@ -524,10 +524,10 @@ impl LogicalIntersect {
         2
     }
 
-    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<&Operator> {
         match i {
-            0 => Some((&self.left).into()),
-            1 => Some((&self.left).into()),
+            0 => Some(self.left.mexpr()),
+            1 => Some(self.right.mexpr()),
             _ => None,
         }
     }
@@ -572,10 +572,10 @@ impl LogicalExcept {
         2
     }
 
-    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<&Operator> {
         match i {
-            0 => Some((&self.left).into()),
-            1 => Some((&self.left).into()),
+            0 => Some(self.left.mexpr()),
+            1 => Some(self.right.mexpr()),
             _ => None,
         }
     }
@@ -611,7 +611,7 @@ impl LogicalEmpty {
         0
     }
 
-    fn get_child(&self, _i: usize) -> Option<ChildNodeRef<Operator>> {
+    fn get_child(&self, _i: usize) -> Option<&Operator> {
         None
     }
 }

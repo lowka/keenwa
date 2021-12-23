@@ -1,5 +1,5 @@
 use crate::error::OptimizerError;
-use crate::memo::{ChildNodeRef, MemoExpr, MemoExprFormatter, MemoGroupCallback, StringMemoFormatter};
+use crate::memo::{MemoExpr, MemoExprFormatter, MemoGroupCallback, StringMemoFormatter};
 use crate::meta::MutableMetadata;
 use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::physical::PhysicalExpr;
@@ -182,9 +182,9 @@ impl MemoExprFormatter for FormatHeader<'_> {
         self.fmt.write_source(source);
     }
 
-    fn write_expr<'e, T>(&mut self, _name: &str, _input: impl Into<ChildNodeRef<'e, T>>)
+    fn write_expr<T>(&mut self, _name: &str, _input: impl AsRef<T>)
     where
-        T: MemoExpr + 'e,
+        T: MemoExpr,
     {
         //exprs are written by another formatter
     }
@@ -228,9 +228,9 @@ impl MemoExprFormatter for FormatExprs<'_> {
         // source is written by another formatter
     }
 
-    fn write_expr<'e, T>(&mut self, name: &str, input: impl Into<ChildNodeRef<'e, T>>)
+    fn write_expr<T>(&mut self, name: &str, input: impl AsRef<T>)
     where
-        T: MemoExpr + 'e,
+        T: MemoExpr,
     {
         self.depth += 1;
         self.buf.push('\n');
@@ -238,16 +238,12 @@ impl MemoExprFormatter for FormatExprs<'_> {
         self.buf.push_str(name);
         self.buf.push_str(": ");
 
-        let input: ChildNodeRef<T> = input.into();
+        let expr = input.as_ref();
         let fmt = StringMemoFormatter::new(self.buf);
         let mut header = FormatHeader { fmt };
 
-        let (expr, props) = match input {
-            ChildNodeRef::Expr(expr) => (expr.expr(), expr.props()),
-            ChildNodeRef::Group(group) => (group.expr(), group.props()),
-        };
-        T::format_expr(expr, props, &mut header);
-        T::format_expr(expr, props, self);
+        T::format_expr(expr.expr(), expr.props(), &mut header);
+        T::format_expr(expr.expr(), expr.props(), self);
 
         self.depth -= 1;
     }

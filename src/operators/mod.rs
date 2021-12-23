@@ -1,6 +1,6 @@
 use crate::memo::{
-    ChildNodeRef, CopyInExprs, CopyInNestedExprs, ExprContext, ExprGroupRef, MemoExpr, MemoExprFormatter,
-    MemoGroupCallback, MemoGroupRef, NewChildExprs, Props, SubQueries,
+    CopyInExprs, CopyInNestedExprs, ExprContext, ExprGroupRef, MemoExpr, MemoExprFormatter, MemoGroupCallback,
+    NewChildExprs, Props,
 };
 use crate::meta::MutableMetadata;
 use crate::operators::scalar::expr_with_new_inputs;
@@ -132,7 +132,7 @@ impl Properties {
         Properties::Relational(RelationalProperties { logical, required })
     }
 
-    pub fn new_scalar_properties(nested_sub_queries: Vec<MemoGroupRef<Operator>>) -> Self {
+    pub fn new_scalar_properties(nested_sub_queries: Vec<Operator>) -> Self {
         Properties::Scalar(ScalarProperties { nested_sub_queries })
     }
 }
@@ -186,12 +186,12 @@ impl RelationalProperties {
 /// Properties of a scalar operator.
 #[derive(Debug, Clone, Default)]
 pub struct ScalarProperties {
-    pub(crate) nested_sub_queries: Vec<MemoGroupRef<Operator>>,
+    pub(crate) nested_sub_queries: Vec<Operator>,
 }
 
 impl ScalarProperties {
     /// Returns nested sub-queries of scalar expression tree these properties are associated with.
-    pub fn nested_sub_queries(&self) -> &[MemoGroupRef<Operator>] {
+    pub fn nested_sub_queries(&self) -> &[Operator] {
         &self.nested_sub_queries
     }
 }
@@ -271,12 +271,12 @@ impl MemoExpr for Operator {
         }
     }
 
-    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Self>> {
+    fn get_child(&self, i: usize) -> Option<&Self> {
         match self.expr() {
             OperatorExpr::Relational(RelExpr::Logical(e)) => e.get_child(i),
             OperatorExpr::Relational(RelExpr::Physical(e)) => e.get_child(i),
             OperatorExpr::Scalar(_) if i < self.props().as_scalar().nested_sub_queries.len() => {
-                self.props().as_scalar().nested_sub_queries.get(i).map(ChildNodeRef::Group)
+                self.props().as_scalar().nested_sub_queries.get(i)
             }
             OperatorExpr::Scalar(_) => None,
         }
@@ -303,29 +303,11 @@ impl MemoExpr for Operator {
         &self.group
     }
 
-    fn get_sub_queries(&self) -> Option<SubQueries<Self>> {
-        match self.props() {
-            Properties::Scalar(props) if !props.nested_sub_queries.is_empty() => {
-                Some(SubQueries::new(&props.nested_sub_queries))
-            }
-            Properties::Relational(_) => None,
-            Properties::Scalar(_) => None,
-        }
-    }
-
     fn new_properties_with_nested_sub_queries(
         _props: Self::Props,
-        sub_queries: impl Iterator<Item = MemoGroupRef<Self>>,
+        sub_queries: impl Iterator<Item = Self>,
     ) -> Self::Props {
-        let sub_queries: Vec<_> = sub_queries.enumerate()
-            .map(|(i, group)| {
-                assert!(group.expr().is_relational(),
-                        "MemoExpr::expr_with_new_children has been called with invalid arguments: A non relational sub query expression at index: {}", i);
-                group
-            })
-            .collect();
-
-        Properties::new_scalar_properties(sub_queries)
+        Properties::new_scalar_properties(sub_queries.collect())
     }
 }
 
@@ -387,7 +369,7 @@ impl<T> OperatorCopyIn<'_, '_, T> {
         impl<T> ExprVisitor<RelNode> for CopyNestedRelExprs<'_, '_, '_, T> {
             fn post_visit(&mut self, expr: &ScalarExpr) {
                 if let ScalarExpr::SubQuery(rel_node) = expr {
-                    self.collector.visit_expr(rel_node.into())
+                    self.collector.visit_expr(rel_node)
                 }
             }
         }
@@ -461,6 +443,18 @@ impl From<ScalarExpr> for OperatorExpr {
         OperatorExpr::Scalar(expr)
     }
 }
+//
+// impl<'a> From<&'a RelNode> for &'a Operator {
+//     fn from(node: &'a RelNode) -> Self {
+//         &node.0
+//     }
+// }
+//
+// impl<'a> From<&'a ScalarNode> for &'a Operator {
+//     fn from(node: &'a ScalarNode) -> Self {
+//         &node.0
+//     }
+// }
 
 #[cfg(test)]
 mod test {

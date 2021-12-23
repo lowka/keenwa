@@ -9,7 +9,7 @@ use crate::catalog::{Catalog, CatalogRef, TableBuilder, DEFAULT_SCHEMA};
 use crate::cost::simple::SimpleCostEstimator;
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
-use crate::memo::{ChildNodeRef, MemoExpr, MemoExprFormatter, StringMemoFormatter};
+use crate::memo::{MemoExpr, MemoExprFormatter, StringMemoFormatter};
 use crate::meta::MutableMetadata;
 use crate::operators::builder::{MemoizeOperatorCallback, OperatorBuilder};
 use crate::operators::properties::LogicalPropertiesBuilder;
@@ -325,9 +325,9 @@ where
         self.fmt.write_source(source);
     }
 
-    fn write_expr<'e, T>(&mut self, _name: &str, _input: impl Into<ChildNodeRef<'e, T>>)
+    fn write_expr<T>(&mut self, _name: &str, _input: impl AsRef<T>)
     where
-        T: MemoExpr + 'e,
+        T: MemoExpr,
     {
         self.fmt.push(' ');
 
