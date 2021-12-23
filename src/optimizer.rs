@@ -422,7 +422,6 @@ fn apply_rule<R>(
     let group_id = ctx.group_id();
 
     if runtime_state.applied_rules.is_applied(&rule_id, &expr_id, &group_id) {
-        // panic!("Rule#{} has already been applied. Binding: {:?}", rule_id, binding);
         return;
     }
 

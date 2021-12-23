@@ -49,22 +49,6 @@ impl Expr for TestExpr {
     }
 }
 
-impl TestExpr {
-    fn as_relational(&self) -> &TestRelExpr {
-        match self {
-            TestExpr::Relational(expr) => expr,
-            TestExpr::Scalar(_) => panic!("Expected a relational expr"),
-        }
-    }
-
-    fn as_scalar(&self) -> &TestScalarExpr {
-        match self {
-            TestExpr::Relational(_) => panic!("Expected relational expr"),
-            TestExpr::Scalar(expr) => expr,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 enum TestScalarExpr {
     Value(i32),
@@ -162,7 +146,6 @@ struct TestOperator {
 
 #[derive(Debug, Clone)]
 enum TestProps {
-    // a: i32,
     Rel(RelProps),
     Scalar(ScalarProps),
 }
@@ -190,7 +173,7 @@ impl Props for TestProps {
 
 #[derive(Debug, Clone, Default)]
 struct RelProps {
-    a: i32,
+    _a: i32,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -278,13 +261,7 @@ impl MemoExpr for TestOperator {
                 TestRelExpr::Filter { .. } => 2,
                 TestRelExpr::Join { .. } => 2,
             },
-            TestExpr::Scalar(_) => {
-                if let TestProps::Scalar(props) = self.props() {
-                    props.sub_queries.len()
-                } else {
-                    0
-                }
-            }
+            TestExpr::Scalar(_) => self.props().as_scalar().sub_queries.len(),
         }
     }
 
