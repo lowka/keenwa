@@ -1,4 +1,4 @@
-use crate::memo::{ChildNodeRef, ExprContext, MemoExprFormatter, NewChildExprs};
+use crate::memo::{ExprContext, MemoExprFormatter, NewChildExprs};
 use crate::meta::ColumnId;
 use crate::operators::relational::join::{get_join_columns_pair, JoinCondition, JoinOn};
 use crate::operators::relational::RelNode;
@@ -84,7 +84,7 @@ impl PhysicalExpr {
         }
     }
 
-    pub fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
+    pub fn get_child(&self, i: usize) -> Option<&Operator> {
         match self {
             PhysicalExpr::Projection(expr) => expr.get_child(i),
             PhysicalExpr::Select(expr) => expr.get_child(i),
@@ -169,9 +169,9 @@ impl Projection {
         1
     }
 
-    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<&Operator> {
         if i == 0 {
-            Some((&self.input).into())
+            Some(self.input.mexpr())
         } else {
             None
         }
@@ -217,12 +217,12 @@ impl Select {
         1 + self.filter.as_ref().map(|_| 1).unwrap_or_default()
     }
 
-    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<&Operator> {
         match i {
-            0 => Some((&self.input).into()),
+            0 => Some(self.input.mexpr()),
             1 if self.filter.is_some() => {
                 let filter = self.filter.as_ref().unwrap();
-                Some(filter.into())
+                Some(filter.mexpr())
             }
             _ => None,
         }
@@ -274,18 +274,18 @@ impl HashAggregate {
         1 + self.aggr_exprs.len() + self.group_exprs.len()
     }
 
-    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<&Operator> {
         let num_aggr_exprs = self.aggr_exprs.len();
         let num_group_exprs = self.group_exprs.len();
         match i {
-            0 => Some((&self.input).into()),
+            0 => Some(self.input.mexpr()),
             _ if i >= 1 && i < 1 + num_aggr_exprs => {
                 let expr = &self.aggr_exprs[i - 1];
-                Some(expr.into())
+                Some(expr.mexpr())
             }
             _ if i >= num_aggr_exprs && i < 1 + num_aggr_exprs + num_group_exprs => {
                 let expr = &self.group_exprs[i - num_aggr_exprs - 1];
-                Some(expr.into())
+                Some(expr.mexpr())
             }
             _ => None,
         }
@@ -349,13 +349,13 @@ impl HashJoin {
         2 + num_opt
     }
 
-    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<&Operator> {
         match i {
-            0 => Some((&self.left).into()),
-            1 => Some((&self.right).into()),
+            0 => Some(self.left.mexpr()),
+            1 => Some(self.right.mexpr()),
             2 => match &self.condition {
                 JoinCondition::Using(_) => unreachable!(),
-                JoinCondition::On(on) => Some((&on.expr).into()),
+                JoinCondition::On(on) => Some(on.expr.mexpr()),
             },
             _ => None,
         }
@@ -426,13 +426,13 @@ impl MergeSortJoin {
         2 + num_opt
     }
 
-    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<&Operator> {
         match i {
-            0 => Some((&self.left).into()),
-            1 => Some((&self.right).into()),
+            0 => Some(self.left.mexpr()),
+            1 => Some(self.right.mexpr()),
             2 => match &self.condition {
                 JoinCondition::Using(_) => None,
-                JoinCondition::On(on) => Some((&on.expr).into()),
+                JoinCondition::On(on) => Some(on.expr.mexpr()),
             },
             _ => None,
         }
@@ -485,13 +485,13 @@ impl NestedLoop {
         2 + self.condition.as_ref().map(|_| 1).unwrap_or_default()
     }
 
-    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<&Operator> {
         match i {
-            0 => Some((&self.left).into()),
-            1 => Some((&self.right).into()),
+            0 => Some(self.left.mexpr()),
+            1 => Some(self.right.mexpr()),
             2 if self.condition.is_some() => {
                 let condition = self.condition.as_ref().unwrap();
-                Some(condition.into())
+                Some(condition.mexpr())
             }
             _ => None,
         }
@@ -534,7 +534,7 @@ impl Scan {
         0
     }
 
-    fn get_child(&self, _i: usize) -> Option<ChildNodeRef<Operator>> {
+    fn get_child(&self, _i: usize) -> Option<&Operator> {
         None
     }
 
@@ -572,7 +572,7 @@ impl IndexScan {
         0
     }
 
-    fn get_child(&self, _i: usize) -> Option<ChildNodeRef<Operator>> {
+    fn get_child(&self, _i: usize) -> Option<&Operator> {
         None
     }
 
@@ -614,9 +614,9 @@ impl Sort {
         1
     }
 
-    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<&Operator> {
         if i == 0 {
-            Some((&self.input).into())
+            Some(self.input.mexpr())
         } else {
             None
         }
@@ -661,10 +661,10 @@ impl Append {
         2
     }
 
-    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<&Operator> {
         match i {
-            0 => Some((&self.left).into()),
-            1 => Some((&self.right).into()),
+            0 => Some(self.left.mexpr()),
+            1 => Some(self.right.mexpr()),
             _ => None,
         }
     }
@@ -714,10 +714,10 @@ impl Unique {
         2
     }
 
-    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<&Operator> {
         match i {
-            0 => Some((&self.left).into()),
-            1 => Some((&self.right).into()),
+            0 => Some(self.left.mexpr()),
+            1 => Some(self.right.mexpr()),
             _ => None,
         }
     }
@@ -767,10 +767,10 @@ impl HashedSetOp {
         2
     }
 
-    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Operator>> {
+    fn get_child(&self, i: usize) -> Option<&Operator> {
         match i {
-            0 => Some((&self.left).into()),
-            1 => Some((&self.right).into()),
+            0 => Some(self.left.mexpr()),
+            1 => Some(self.right.mexpr()),
             _ => None,
         }
     }
@@ -804,7 +804,7 @@ impl Empty {
         0
     }
 
-    fn get_child(&self, _i: usize) -> Option<ChildNodeRef<Operator>> {
+    fn get_child(&self, _i: usize) -> Option<&Operator> {
         None
     }
 

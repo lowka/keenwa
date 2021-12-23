@@ -1,8 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use keenwa::memo::{
-    ChildNodeRef, CopyInExprs, Expr, ExprGroupRef, ExprRef, Memo, MemoExpr, MemoExprFormatter, MemoGroupRef,
-    NewChildExprs, Props, SubQueries,
-};
+use keenwa::memo::{CopyInExprs, Expr, ExprGroupRef, ExprRef, Memo, MemoExpr, MemoExprFormatter, NewChildExprs, Props};
 use std::fmt::{Display, Formatter};
 
 type RelNode = keenwa::memo::RelNode<TestOperator>;
@@ -145,7 +142,7 @@ impl MemoExpr for TestOperator {
 
     fn new_properties_with_nested_sub_queries(
         _props: Self::Props,
-        _sub_queries: impl Iterator<Item = MemoGroupRef<Self>>,
+        _sub_queries: impl Iterator<Item = Self>,
     ) -> Self::Props {
         unimplemented!()
     }
@@ -158,19 +155,15 @@ impl MemoExpr for TestOperator {
         }
     }
 
-    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Self>> {
+    fn get_child(&self, i: usize) -> Option<&Self> {
         match self.expr() {
             TestExpr::Scan { .. } => None,
-            TestExpr::Filter { input, .. } if i == 0 => Some(input.into()),
+            TestExpr::Filter { input, .. } if i == 0 => Some(input.mexpr()),
             TestExpr::Filter { .. } => None,
-            TestExpr::Join { left, .. } if i == 0 => Some(left.into()),
-            TestExpr::Join { right, .. } if i == 1 => Some(right.into()),
+            TestExpr::Join { left, .. } if i == 0 => Some(left.mexpr()),
+            TestExpr::Join { right, .. } if i == 1 => Some(right.mexpr()),
             TestExpr::Join { .. } => None,
         }
-    }
-
-    fn get_sub_queries(&self) -> Option<SubQueries<Self>> {
-        unreachable!()
     }
 
     fn format_expr<F>(expr: &Self::Expr, _props: &Self::Props, f: &mut F)

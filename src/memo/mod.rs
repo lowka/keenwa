@@ -197,21 +197,18 @@ pub trait MemoExpr: Clone {
     /// provided by the given [NewChildExprs](self::NewChildExprs).
     fn expr_with_new_children(expr: &Self::Expr, inputs: NewChildExprs<Self>) -> Self::Expr;
 
-    /// Called when a scalar expression with nested sub-queries should be added to a memo.
-    /// Return properties that contain the given memo groups.
+    /// Called when a scalar expression with the given nested sub-queries should be added to a memo.
+    /// Returns properties that contain the given child expressions.
     fn new_properties_with_nested_sub_queries(
         props: Self::Props,
-        sub_queries: impl Iterator<Item = MemoGroupRef<Self>>,
+        sub_queries: impl Iterator<Item = Self>,
     ) -> Self::Props;
 
     /// Returns the number of child expressions of this memo expression.
     fn num_children(&self) -> usize;
 
     /// Returns the i-th child expression of this memo expression.
-    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Self>>;
-
-    /// Returns nested sub-queries of this memo expression.
-    fn get_sub_queries(&self) -> Option<SubQueries<Self>>;
+    fn get_child(&self, i: usize) -> Option<&Self>;
 
     /// Builds a textual representation of the given expression.
     fn format_expr<F>(expr: &Self::Expr, props: &Self::Props, f: &mut F)
@@ -277,33 +274,6 @@ pub trait Props: Clone {
     ///
     /// This method panics if the underlying properties are not scalar.
     fn as_scalar(&self) -> &Self::ScalarProps;
-}
-
-/// Provides access to nested sub-queries of a scalar memo-expression.
-pub struct SubQueries<'a, E>
-where
-    E: MemoExpr,
-{
-    sub_queries: &'a [MemoGroupRef<E>],
-}
-
-impl<'a, E> SubQueries<'a, E>
-where
-    E: MemoExpr,
-{
-    pub fn new(sub_queries: &'a [MemoGroupRef<E>]) -> Self {
-        SubQueries { sub_queries }
-    }
-
-    /// Returns the number of nested sub-queries of a memo expression.
-    pub fn num(&self) -> usize {
-        self.sub_queries.len()
-    }
-
-    /// Returns the i-th nested sub-query of a memo expression.
-    pub fn get_sub_query(&self, i: usize) -> Option<MemoGroupRef<E>> {
-        self.sub_queries.get(i).cloned()
-    }
 }
 
 /// `ExprRef` is a reference to an expression.
@@ -429,8 +399,8 @@ pub struct RelNode<E>(E);
 impl<E, T, RelExpr, P, RelProps> RelNode<E>
 where
     E: MemoExpr<Expr = T, Props = P>,
-    T: Expr<RelExpr = RelExpr> + 'static,
-    P: Props<RelProps = RelProps> + 'static,
+    T: Expr<RelExpr = RelExpr>,
+    P: Props<RelProps = RelProps>,
 {
     /// Creates a relational node of an expression tree from the given relational expression and properties.
     pub fn new(expr: RelExpr, props: RelProps) -> Self {
@@ -464,7 +434,10 @@ where
     /// # Panics
     ///
     /// This method panics if this node does not hold a relational expression.
-    pub fn expr(&self) -> &T::RelExpr {
+    pub fn expr<'e>(&'e self) -> &'e T::RelExpr
+    where
+        T: 'e,
+    {
         let expr = self.0.expr_ref();
         let expr = expr.expr();
         expr.as_relational()
@@ -473,7 +446,11 @@ where
     /// Returns a reference to properties associated with this node:
     /// * if this node is an expression returns a reference to the properties of the underlying expression.
     /// * If this node is a memo group returns a reference to the properties of the first expression of this memo group.
-    pub fn props(&self) -> &RelProps {
+    pub fn props<'e>(&'e self) -> &'e RelProps
+    where
+        T: 'e,
+        P: 'e,
+    {
         self.0.props().as_relational()
     }
 
@@ -481,30 +458,19 @@ where
     pub fn expr_ref(&self) -> &ExprRef<E> {
         self.0.expr_ref()
     }
-}
 
-impl<T> From<ChildNode<T>> for RelNode<T>
-where
-    T: MemoExpr,
-{
-    fn from(expr: ChildNode<T>) -> Self {
-        let expr = match expr {
-            ChildNode::Expr(expr) => expr,
-            ChildNode::Group(group) => T::from_group(group),
-        };
-        RelNode(expr)
+    /// Returns a reference to the underlying memo expression.
+    pub fn mexpr(&self) -> &E {
+        &self.0
     }
 }
 
-impl<'a, T> From<&'a RelNode<T>> for ChildNodeRef<'a, T>
+impl<E> AsRef<E> for RelNode<E>
 where
-    T: MemoExpr + 'static,
+    E: MemoExpr,
 {
-    fn from(node: &'a RelNode<T>) -> Self {
-        match node.0.expr_ref() {
-            ExprRef::Detached(_) => ChildNodeRef::Expr(&node.0),
-            ExprRef::Memo(expr) => ChildNodeRef::Group(expr.mgroup()),
-        }
+    fn as_ref(&self) -> &E {
+        &self.0
     }
 }
 
@@ -532,8 +498,8 @@ pub struct ScalarNode<E>(E);
 impl<E, T, ScalarExpr, P, ScalarProps> ScalarNode<E>
 where
     E: MemoExpr<Expr = T, Props = P>,
-    T: Expr<ScalarExpr = ScalarExpr> + 'static,
-    P: Props<ScalarProps = ScalarProps> + 'static,
+    T: Expr<ScalarExpr = ScalarExpr>,
+    P: Props<ScalarProps = ScalarProps>,
 {
     /// Creates a scalar node of an expression tree from the given scalar expression and properties.
     pub fn new(expr: ScalarExpr, props: ScalarProps) -> Self {
@@ -567,7 +533,10 @@ where
     /// # Panics
     ///
     /// This method panics if this not does not hold a scalar expression.
-    pub fn expr(&self) -> &T::ScalarExpr {
+    pub fn expr<'e>(&'e self) -> &'e T::ScalarExpr
+    where
+        T: 'e,
+    {
         let expr = self.0.expr_ref();
         let expr = expr.expr();
         expr.as_scalar()
@@ -576,7 +545,11 @@ where
     /// Returns a reference to properties associated with this node:
     /// * if this node is an expression returns a reference to the properties of the underlying expression.
     /// * If this node is a memo group returns a reference to the properties of the first expression of this memo group.
-    pub fn props(&self) -> &ScalarProps {
+    pub fn props<'e>(&'e self) -> &'e ScalarProps
+    where
+        T: 'e,
+        P: 'e,
+    {
         self.0.props().as_scalar()
     }
 
@@ -584,30 +557,19 @@ where
     pub fn expr_ref(&self) -> &ExprRef<E> {
         self.0.expr_ref()
     }
-}
 
-impl<E> From<ChildNode<E>> for ScalarNode<E>
-where
-    E: MemoExpr,
-{
-    fn from(expr: ChildNode<E>) -> Self {
-        let expr = match expr {
-            ChildNode::Expr(expr) => expr,
-            ChildNode::Group(group) => E::from_group(group),
-        };
-        ScalarNode(expr)
+    /// Returns a reference to the underlying memo expression.
+    pub fn mexpr(&self) -> &E {
+        &self.0
     }
 }
 
-impl<'a, T> From<&'a ScalarNode<T>> for ChildNodeRef<'a, T>
+impl<E> AsRef<E> for ScalarNode<E>
 where
-    T: MemoExpr + 'static,
+    E: MemoExpr,
 {
-    fn from(node: &'a ScalarNode<T>) -> Self {
-        match node.0.expr_ref() {
-            ExprRef::Detached(_) => ChildNodeRef::Expr(&node.0),
-            ExprRef::Memo(expr) => ChildNodeRef::Group(expr.mgroup()),
-        }
+    fn as_ref(&self) -> &E {
+        &self.0
     }
 }
 
@@ -626,83 +588,6 @@ where
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_tuple("ScalarNode").field(&self.0).finish()
-    }
-}
-
-/// `ChildNode` represents an expression in within an expression tree.
-/// An instance of `ChildNode` can be an expression or a memo group. Initially every expression in an expression tree
-/// has a direct link its child expressions (represented by [ChildNode::Expr]).
-/// When an expression is copied into a [`memo`](self::Memo) its child expressions are replaced with
-/// references to memo groups (a reference to a memo group is represented by [ChildNode::Group]).
-///
-/// This enum is used by [NewChildExprs] to create an expression with the specified child expressions.
-#[derive(Clone)]
-pub enum ChildNode<T>
-where
-    T: MemoExpr,
-{
-    /// A node is an expression. This variant is used when an expression is copied from a memo.
-    Expr(T),
-    /// A node is a memo group. This variant is used when an expression is copied into a memo.
-    Group(MemoGroupRef<T>),
-}
-
-impl<T> ChildNode<T>
-where
-    T: MemoExpr,
-{
-    fn expr(&self) -> &T::Expr {
-        match self {
-            ChildNode::Expr(expr) => expr.expr(),
-            ChildNode::Group(group) => group.expr(),
-        }
-    }
-}
-
-impl<E> From<E> for ChildNode<E>
-where
-    E: MemoExpr,
-{
-    fn from(expr: E) -> Self {
-        ChildNode::Expr(expr)
-    }
-}
-
-impl<E> Debug for ChildNode<E>
-where
-    E: MemoExpr + Debug,
-{
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ChildNode::Expr(expr) => f.debug_tuple("Expr").field(expr).finish(),
-            ChildNode::Group(group) => f.debug_tuple("Expr").field(group).finish(),
-        }
-    }
-}
-
-/// A reference to a child expression of a [memo expression](self::MemoExpr).
-/// * If the memo expression has not been added to a memo stores a reference to that expression.
-/// * If the memo expression has been added to a memo returns a reference to a memo group of that child expression.
-#[derive(Debug)]
-pub enum ChildNodeRef<'a, E>
-where
-    E: MemoExpr,
-{
-    /// Reference to a child expression.
-    Expr(&'a E),
-    /// Reference to a memo-group of that child expression.
-    Group(&'a MemoGroupRef<E>),
-}
-
-impl<'a, E> From<&'a ChildNode<E>> for ChildNodeRef<'a, E>
-where
-    E: MemoExpr,
-{
-    fn from(expr: &'a ChildNode<E>) -> Self {
-        match expr {
-            ChildNode::Expr(expr) => ChildNodeRef::Expr(expr),
-            ChildNode::Group(group) => ChildNodeRef::Group(group),
-        }
     }
 }
 
@@ -903,18 +788,10 @@ where
     /// Returns an iterator over child expressions of this memo expression.
     pub fn children(&self) -> MemoExprInputsIter<E> {
         let expr = self.get_memo_expr();
-        if let Some(sub_queries) = self.mexpr().get_sub_queries() {
-            MemoExprInputsIter {
-                expr,
-                position: 0,
-                num_children: sub_queries.num(),
-            }
-        } else {
-            MemoExprInputsIter {
-                expr,
-                position: 0,
-                num_children: expr.num_children(),
-            }
+        MemoExprInputsIter {
+            expr,
+            position: 0,
+            num_children: expr.num_children(),
         }
     }
 
@@ -972,17 +849,10 @@ where
 
             self.position += 1;
 
-            if let Some(sub_queries) = self.expr.get_sub_queries() {
-                sub_queries.get_sub_query(position)
-            } else {
-                self.expr
-                    .get_child(position)
-                    .map(|e| match e {
-                        ChildNodeRef::Expr(_) => unreachable!(),
-                        ChildNodeRef::Group(group) => Some(group.clone()),
-                    })
-                    .flatten()
-            }
+            self.expr.get_child(position).map(|e| match e.group_ref() {
+                ExprGroupRef::Detached(_) => unreachable!(),
+                ExprGroupRef::Memo(group) => group.clone(),
+            })
         } else {
             None
         }
@@ -1002,9 +872,9 @@ where
             if i > 0 {
                 write!(f, ", ")?;
             }
-            match expr {
-                ChildNodeRef::Expr(_) => unreachable!(),
-                ChildNodeRef::Group(group) => write!(f, "{:?}", group)?,
+            match expr.group_ref() {
+                ExprGroupRef::Detached(_) => unreachable!(),
+                ExprGroupRef::Memo(group) => write!(f, "{:?}", group)?,
             }
             i += 1;
         }
@@ -1126,25 +996,22 @@ where
     /// Visits the given child expression and recursively copies that expression into the memo:
     /// * If the given expression is an expression this methods recursively copies it into the memo.
     /// * If the child expression is a group this method returns a reference to that group.
-    pub fn visit_expr_node<'e>(&mut self, expr_ctx: &mut ExprContext<E>, expr_node: impl Into<ChildNodeRef<'e, E>>)
-    where
-        E: 'e,
-    {
-        let input: ChildNodeRef<E> = expr_node.into();
-        match input {
-            ChildNodeRef::Expr(expr) => {
+    pub fn visit_expr_node(&mut self, expr_ctx: &mut ExprContext<E>, expr_node: impl AsRef<E>) {
+        let input = expr_node.as_ref();
+        let child_group = match input.group_ref() {
+            ExprGroupRef::Detached(_) => {
                 let copy_in = CopyIn {
                     memo: self.memo,
                     parent: None,
                     depth: self.depth + 1,
                 };
-                let (group, _expr) = copy_in.execute(expr);
-                expr_ctx.children.push_back(ChildNode::Group(group));
+                let (group, _) = copy_in.execute(input);
+                group
             }
-            ChildNodeRef::Group(group) => {
-                expr_ctx.children.push_back(ChildNode::Group(group.clone()));
-            }
-        }
+            ExprGroupRef::Memo(group) => group.clone(),
+        };
+        let child_expr = E::from_group(child_group);
+        expr_ctx.children.push_back(child_expr);
     }
 
     /// Visits the given optional child expression if it is present and recursively copies it into a memo.
@@ -1154,13 +1021,7 @@ where
     ///   visitor.visit_expr_node(expr_ctx, expr_node);
     /// }
     /// ```
-    pub fn visit_opt_expr_node<'e>(
-        &mut self,
-        expr_ctx: &mut ExprContext<E>,
-        expr_node: Option<impl Into<ChildNodeRef<'e, E>>>,
-    ) where
-        E: MemoExpr + 'e,
-    {
+    pub fn visit_opt_expr_node<'e>(&mut self, expr_ctx: &mut ExprContext<E>, expr_node: Option<impl AsRef<E>>) {
         if let Some(expr_node) = expr_node {
             self.visit_expr_node(expr_ctx, expr_node);
         };
@@ -1180,11 +1041,15 @@ where
             // Collect nested relational expressions from a scalar expression and store them in group properties.
             E::new_properties_with_nested_sub_queries(
                 props,
-                children.iter().map(|e| match e {
+                children.iter().map(|e| /*match e {
                     ChildNode::Expr(_) => {
                         unreachable!("ExprContext.children must contain only references to memo groups")
                     }
-                    ChildNode::Group(group) => group.clone(),
+                    ChildNode::Group(group) => ChildNode::Group(group.clone()),
+                }*/
+                match e.group_ref() {
+                    ExprGroupRef::Detached(_) => unreachable!("ExprContext.children must contain only references to memo groups"),
+                    ExprGroupRef::Memo(_) => e.clone(),
                 }),
             )
         } else {
@@ -1240,7 +1105,7 @@ pub struct ExprContext<E>
 where
     E: MemoExpr,
 {
-    children: VecDeque<ChildNode<E>>,
+    children: VecDeque<E>,
     parent: Option<MemoGroupRef<E>>,
     props: E::Props,
 }
@@ -1252,7 +1117,7 @@ pub struct NewChildExprs<E>
 where
     E: MemoExpr,
 {
-    children: VecDeque<ChildNode<E>>,
+    children: VecDeque<E>,
     capacity: usize,
     index: usize,
 }
@@ -1262,7 +1127,7 @@ where
     E: MemoExpr,
 {
     /// Creates an instance of `NewChildExprs`.
-    pub fn new(children: VecDeque<ChildNode<E>>) -> Self {
+    pub fn new(children: VecDeque<E>) -> Self {
         NewChildExprs {
             capacity: children.len(),
             index: 0,
@@ -1288,7 +1153,7 @@ where
     pub fn rel_node(&mut self) -> RelNode<E> {
         let expr = self.expr();
         Self::expect_relational(&expr);
-        RelNode::from(expr)
+        RelNode::from_mexpr(expr)
     }
 
     /// Retrieves the next `n` relational expressions.
@@ -1302,7 +1167,7 @@ where
             .into_iter()
             .map(|i| {
                 Self::expect_relational(&i);
-                RelNode::from(i)
+                RelNode::from_mexpr(i)
             })
             .collect()
     }
@@ -1316,7 +1181,7 @@ where
     pub fn scalar_node(&mut self) -> ScalarNode<E> {
         let expr = self.expr();
         Self::expect_scalar(&expr);
-        ScalarNode::from(expr)
+        ScalarNode::from_mexpr(expr)
     }
 
     /// Retrieves the next `n` scalar expressions.
@@ -1330,17 +1195,17 @@ where
             .into_iter()
             .map(|i| {
                 Self::expect_scalar(&i);
-                ScalarNode::from(i)
+                ScalarNode::from_mexpr(i)
             })
             .collect()
     }
 
-    fn expr(&mut self) -> ChildNode<E> {
+    fn expr(&mut self) -> E {
         self.ensure_available(1);
         self.next_index()
     }
 
-    fn exprs(&mut self, n: usize) -> Vec<ChildNode<E>> {
+    fn exprs(&mut self, n: usize) -> Vec<E> {
         self.ensure_available(n);
         let mut children = Vec::with_capacity(n);
         for _ in 0..n {
@@ -1349,7 +1214,7 @@ where
         children
     }
 
-    fn next_index(&mut self) -> ChildNode<E> {
+    fn next_index(&mut self) -> E {
         // the assertion in ensure_available guarantees that `children` has enough elements.
         self.children.pop_front().unwrap()
     }
@@ -1367,11 +1232,11 @@ where
         self.index += n;
     }
 
-    fn expect_relational(expr: &ChildNode<E>) {
+    fn expect_relational(expr: &E) {
         assert!(!expr.expr().is_scalar(), "expected a relational expression");
     }
 
-    fn expect_scalar(expr: &ChildNode<E>) {
+    fn expect_scalar(expr: &E) {
         assert!(expr.expr().is_scalar(), "expected a scalar expression");
     }
 }
@@ -1410,19 +1275,22 @@ where
         (f)(expr, &mut self);
         // Visit collected nested expressions so that they will be added to the given expression as child expressions.
         for input in self.nested_exprs {
-            self.ctx.visit_expr_node(self.expr_ctx, &ChildNode::Group(input));
+            let expr_node = E::from_group(input);
+            let rel_node = RelNode::from_mexpr(expr_node);
+            self.ctx.visit_expr_node(self.expr_ctx, rel_node);
         }
     }
 
     /// Copies the given nested expression into a memo.
-    pub fn visit_expr(&mut self, expr: ChildNodeRef<E>) {
-        match expr {
-            ChildNodeRef::Expr(expr) => {
+    pub fn visit_expr(&mut self, expr: impl AsRef<E>) {
+        let expr = expr.as_ref();
+        match expr.group_ref() {
+            ExprGroupRef::Detached(_) => {
                 expr.copy_in(self.ctx);
                 let (group, _) = std::mem::take(&mut self.ctx.result).expect("Failed to copy in a nested expressions");
                 self.add_group(group);
             }
-            ChildNodeRef::Group(group) => self.add_group(group.clone()),
+            ExprGroupRef::Memo(group) => self.add_group(group.clone()),
         }
     }
 
@@ -1486,9 +1354,9 @@ pub trait MemoExprFormatter {
     fn write_source(&mut self, source: &str);
 
     /// Writes a child expression.
-    fn write_expr<'e, T>(&mut self, name: &str, input: impl Into<ChildNodeRef<'e, T>>)
+    fn write_expr<T>(&mut self, name: &str, input: impl AsRef<T>)
     where
-        T: MemoExpr + 'e;
+        T: MemoExpr;
 
     /// Writes a child expression it is present. This method is equivalent to:
     /// ```text
@@ -1496,9 +1364,9 @@ pub trait MemoExprFormatter {
     ///   fmt.write_expr(name, expr);
     /// }
     /// ```
-    fn write_expr_if_present<'e, T>(&mut self, name: &str, expr: Option<impl Into<ChildNodeRef<'e, T>>>)
+    fn write_expr_if_present<T>(&mut self, name: &str, expr: Option<impl AsRef<T>>)
     where
-        T: MemoExpr + 'e,
+        T: MemoExpr,
     {
         if let Some(expr) = expr {
             self.write_expr(name, expr);
@@ -1544,16 +1412,16 @@ impl MemoExprFormatter for StringMemoFormatter<'_> {
         self.buf.push_str(source);
     }
 
-    fn write_expr<'e, T>(&mut self, name: &str, input: impl Into<ChildNodeRef<'e, T>>)
+    fn write_expr<T>(&mut self, name: &str, input: impl AsRef<T>)
     where
-        T: MemoExpr + 'e,
+        T: MemoExpr,
     {
         self.buf.push(' ');
         if !name.is_empty() {
             self.buf.push_str(name);
             self.buf.push('=');
         }
-        let s = format_node_ref(input.into());
+        let s = format_node_ref(input.as_ref());
         self.buf.push_str(s.as_str());
     }
 
@@ -1611,11 +1479,11 @@ impl<'f, 'a> MemoExprFormatter for DisplayMemoExprFormatter<'f, 'a> {
         self.fmt.write_str(source).unwrap();
     }
 
-    fn write_expr<'e, T>(&mut self, _name: &str, input: impl Into<ChildNodeRef<'e, T>>)
+    fn write_expr<T>(&mut self, _name: &str, input: impl AsRef<T>)
     where
-        T: MemoExpr + 'e,
+        T: MemoExpr,
     {
-        let s = format_node_ref(input.into());
+        let s = format_node_ref(input.as_ref());
         self.fmt.write_char(' ').unwrap();
         self.fmt.write_str(s.as_str()).unwrap();
     }
@@ -1635,17 +1503,17 @@ impl<'f, 'a> MemoExprFormatter for DisplayMemoExprFormatter<'f, 'a> {
     }
 }
 
-fn format_node_ref<T>(input: ChildNodeRef<'_, T>) -> String
+fn format_node_ref<T>(input: &T) -> String
 where
     T: MemoExpr,
 {
-    match input {
-        ChildNodeRef::Expr(expr) => {
+    match input.expr_ref() {
+        ExprRef::Detached(expr) => {
             // This only happens when expression has not been added to a memo.
-            let ptr: *const T::Expr = &*expr.expr();
+            let ptr: *const T::Expr = &**expr;
             format!("{:?}", ptr)
         }
-        ChildNodeRef::Group(group) => format!("{}", group.id()),
+        ExprRef::Memo(group) => format!("{}", group.id()),
     }
 }
 
@@ -1777,7 +1645,7 @@ mod test {
                     rhs.copy_in_nested(collector);
                 }
                 TestScalarExpr::SubQuery(expr) => {
-                    collector.visit_expr(expr.into());
+                    collector.visit_expr(expr);
                 }
             }
         }
@@ -1861,7 +1729,7 @@ mod test {
 
     #[derive(Debug, Clone, Default)]
     struct ScalarProps {
-        sub_queries: Vec<MemoGroupRef<TestOperator>>,
+        sub_queries: Vec<TestOperator>,
     }
 
     impl Props for TestProps {
@@ -1966,7 +1834,7 @@ mod test {
 
         fn new_properties_with_nested_sub_queries(
             _props: Self::Props,
-            sub_queries: impl Iterator<Item = MemoGroupRef<Self>>,
+            sub_queries: impl Iterator<Item = Self>,
         ) -> Self::Props {
             TestProps::Scalar(ScalarProps {
                 sub_queries: sub_queries.collect(),
@@ -1985,29 +1853,22 @@ mod test {
             }
         }
 
-        fn get_child(&self, i: usize) -> Option<ChildNodeRef<Self>> {
+        fn get_child(&self, i: usize) -> Option<&Self> {
             match self.expr() {
                 TestExpr::Relational(expr) => match expr {
                     TestRelExpr::Leaf(_) => None,
-                    TestRelExpr::Node { input } if i == 0 => Some(input.into()),
+                    TestRelExpr::Node { input } if i == 0 => Some(input.mexpr()),
                     TestRelExpr::Node { .. } => None,
-                    TestRelExpr::Nodes { inputs } if i < inputs.len() => inputs.get(i).map(|e| e.into()),
+                    TestRelExpr::Nodes { inputs } if i < inputs.len() => inputs.get(i).map(|e| e.mexpr()),
                     TestRelExpr::Nodes { .. } => None,
-                    TestRelExpr::Filter { input, .. } if i == 0 => Some(input.into()),
-                    TestRelExpr::Filter { filter, .. } if i == 1 => Some(filter.into()),
+                    TestRelExpr::Filter { input, .. } if i == 0 => Some(input.mexpr()),
+                    TestRelExpr::Filter { filter, .. } if i == 1 => Some(filter.mexpr()),
                     TestRelExpr::Filter { .. } => None,
                 },
                 TestExpr::Scalar(_) => {
                     let props = self.group.props().as_scalar();
-                    props.sub_queries.get(i).map(ChildNodeRef::Group)
+                    props.sub_queries.get(i)
                 }
-            }
-        }
-
-        fn get_sub_queries(&self) -> Option<SubQueries<Self>> {
-            match self.props() {
-                TestProps::Rel(_) => None,
-                TestProps::Scalar(props) => Some(SubQueries::new(&props.sub_queries)),
             }
         }
 

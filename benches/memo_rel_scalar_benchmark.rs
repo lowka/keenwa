@@ -1,9 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use keenwa::memo::{
-    ChildNodeRef, CopyInExprs, CopyInNestedExprs, Expr, ExprContext, ExprGroupRef, ExprRef, Memo, MemoExpr,
-    MemoExprFormatter, MemoGroupRef, NewChildExprs, Props, SubQueries,
+    CopyInExprs, CopyInNestedExprs, Expr, ExprContext, ExprGroupRef, ExprRef, Memo, MemoExpr, MemoExprFormatter,
+    NewChildExprs, Props,
 };
-
 use std::fmt::{Display, Formatter};
 
 type RelNode = keenwa::memo::RelNode<TestOperator>;
@@ -120,7 +119,7 @@ impl TestScalarExpr {
                 rhs.copy_in_nested(visitor);
             }
             TestScalarExpr::SubQuery(expr) => {
-                visitor.visit_expr(expr.into());
+                visitor.visit_expr(expr);
             }
         }
     }
@@ -161,7 +160,7 @@ struct TestOperator {
     group: ExprGroupRef<TestOperator>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 enum TestProps {
     // a: i32,
     Rel(RelProps),
@@ -189,14 +188,14 @@ impl Props for TestProps {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default)]
 struct RelProps {
     a: i32,
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default)]
 struct ScalarProps {
-    sub_queries: Vec<MemoGroupRef<TestOperator>>,
+    sub_queries: Vec<TestOperator>,
 }
 impl MemoExpr for TestOperator {
     type Expr = TestExpr;
@@ -265,7 +264,7 @@ impl MemoExpr for TestOperator {
 
     fn new_properties_with_nested_sub_queries(
         _props: Self::Props,
-        sub_queries: impl Iterator<Item = MemoGroupRef<Self>>,
+        sub_queries: impl Iterator<Item = Self>,
     ) -> Self::Props {
         TestProps::Scalar(ScalarProps {
             sub_queries: sub_queries.collect(),
@@ -289,23 +288,19 @@ impl MemoExpr for TestOperator {
         }
     }
 
-    fn get_child(&self, i: usize) -> Option<ChildNodeRef<Self>> {
+    fn get_child(&self, i: usize) -> Option<&Self> {
         match self.expr() {
             TestExpr::Relational(expr) => match expr {
                 TestRelExpr::Scan { .. } => None,
-                TestRelExpr::Filter { input, .. } if i == 0 => Some(input.into()),
-                TestRelExpr::Filter { filter, .. } if i == 1 => Some(filter.into()),
+                TestRelExpr::Filter { input, .. } if i == 0 => Some(input.mexpr()),
+                TestRelExpr::Filter { filter, .. } if i == 1 => Some(filter.mexpr()),
                 TestRelExpr::Filter { .. } => None,
-                TestRelExpr::Join { left, .. } if i == 0 => Some(left.into()),
-                TestRelExpr::Join { right, .. } if i == 1 => Some(right.into()),
+                TestRelExpr::Join { left, .. } if i == 0 => Some(left.mexpr()),
+                TestRelExpr::Join { right, .. } if i == 1 => Some(right.mexpr()),
                 TestRelExpr::Join { .. } => None,
             },
             TestExpr::Scalar(_) => None,
         }
-    }
-
-    fn get_sub_queries(&self) -> Option<SubQueries<Self>> {
-        unreachable!()
     }
 
     fn format_expr<F>(expr: &Self::Expr, _props: &Self::Props, f: &mut F)

@@ -7,7 +7,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use crate::cost::{Cost, CostEstimationContext, CostEstimator};
-use crate::memo::{format_memo, ChildNode, ExprId, GroupId, MemoExpr, MemoGroupCallback, NewChildExprs, Props};
+use crate::memo::{format_memo, ExprId, GroupId, MemoExpr, MemoGroupCallback, NewChildExprs, Props};
 use crate::meta::MetadataRef;
 use crate::operators::properties::PropertiesProvider;
 use crate::operators::relational::{RelExpr, RelNode};
@@ -1032,7 +1032,7 @@ impl PhysicalPropertiesCache {
     }
 
     fn none(&self) -> Rc<PhysicalProperties> {
-        let mut inner = self.properties.borrow_mut();
+        let inner = self.properties.borrow_mut();
         let none = PhysicalProperties::none();
         let rc = inner.get(&none).expect("Empty physical properties are always present");
         rc.clone()
@@ -1107,7 +1107,7 @@ where
 
             for input_ctx in &best_expr.inputs {
                 let out = copy_out_best_expr(result_callback, state, memo, input_ctx)?;
-                new_inputs.push_back(ChildNode::Expr(out));
+                new_inputs.push_back(out);
             }
 
             let best_expr_ctx = OptimizerResultCallbackContext { ctx, best_expr, inputs };
