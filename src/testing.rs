@@ -134,16 +134,16 @@ impl OptimizerTester {
     /// `expected_plan` can be written in two forms with description (1) or without description (2):
     ///
     /// 1. With description:
-    ///
+    /// ```text
     ///     query: Some description
     ///     expr 1
     ///     expr 2
-    ///
+    ///```
     /// 2. Without description:
-    ///
+    ///```text
     ///     expr 1
     ///     expr 2
-    ///
+    ///```
     pub fn optimize(&mut self, expected_plan: &str) {
         let tables = TestTables::new();
         let _columns = tables.columns.clone();
@@ -294,7 +294,6 @@ struct BestExprFormatter<'a, 'c, C>
 where
     C: BestExprContext,
 {
-    // buf: &'a mut String,
     fmt: StringMemoFormatter<'a>,
     ctx: &'c C,
     input_index: usize,

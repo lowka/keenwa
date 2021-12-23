@@ -400,12 +400,6 @@ mod test {
         let mut visitor = TraversalTester { exprs: Vec::new() };
         expr.accept(&mut visitor);
 
-        // let actual: Vec<String> = visitor
-        //     .exprs
-        //     .into_iter()
-        //     .map(|s| s.split(" ptr 0x").take(1).collect::<String>())
-        //     .collect();
-
         let expected: Vec<String> = expected.into_iter().map(|s| s.to_string()).collect();
         assert_eq!(visitor.exprs, expected, "traversal order does not match");
     }

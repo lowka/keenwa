@@ -234,6 +234,18 @@ impl MemoExpr for Operator {
     type Expr = OperatorExpr;
     type Props = Properties;
 
+    fn create(expr: crate::memo::ExprRef<Self>, group: crate::memo::ExprGroupRef<Self>) -> Self {
+        Operator { expr, group }
+    }
+
+    fn expr_ref(&self) -> &crate::memo::ExprRef<Self> {
+        &self.expr
+    }
+
+    fn group_ref(&self) -> &ExprGroupRef<Self> {
+        &self.group
+    }
+
     fn copy_in<T>(&self, visitor: &mut CopyInExprs<Self, T>) {
         let mut visitor = OperatorCopyIn { visitor };
         let mut expr_ctx = visitor.enter_expr(self);
@@ -259,8 +271,11 @@ impl MemoExpr for Operator {
         }
     }
 
-    fn create(expr: crate::memo::ExprRef<Self>, group: crate::memo::ExprGroupRef<Self>) -> Self {
-        Operator { expr, group }
+    fn new_properties_with_nested_sub_queries(
+        _props: Self::Props,
+        sub_queries: impl Iterator<Item = Self>,
+    ) -> Self::Props {
+        Properties::new_scalar_properties(sub_queries.collect())
     }
 
     fn num_children(&self) -> usize {
@@ -275,7 +290,7 @@ impl MemoExpr for Operator {
         match self.expr() {
             OperatorExpr::Relational(RelExpr::Logical(e)) => e.get_child(i),
             OperatorExpr::Relational(RelExpr::Physical(e)) => e.get_child(i),
-            OperatorExpr::Scalar(_) if i < self.props().as_scalar().nested_sub_queries.len() => {
+            OperatorExpr::Scalar(_) if i < self.props().as_scalar().nested_sub_queries().len() => {
                 self.props().as_scalar().nested_sub_queries.get(i)
             }
             OperatorExpr::Scalar(_) => None,
@@ -293,21 +308,6 @@ impl MemoExpr for Operator {
             },
             OperatorExpr::Scalar(expr) => expr.format_expr(f),
         }
-    }
-
-    fn expr_ref(&self) -> &crate::memo::ExprRef<Self> {
-        &self.expr
-    }
-
-    fn group_ref(&self) -> &ExprGroupRef<Self> {
-        &self.group
-    }
-
-    fn new_properties_with_nested_sub_queries(
-        _props: Self::Props,
-        sub_queries: impl Iterator<Item = Self>,
-    ) -> Self::Props {
-        Properties::new_scalar_properties(sub_queries.collect())
     }
 }
 
@@ -443,18 +443,6 @@ impl From<ScalarExpr> for OperatorExpr {
         OperatorExpr::Scalar(expr)
     }
 }
-//
-// impl<'a> From<&'a RelNode> for &'a Operator {
-//     fn from(node: &'a RelNode) -> Self {
-//         &node.0
-//     }
-// }
-//
-// impl<'a> From<&'a ScalarNode> for &'a Operator {
-//     fn from(node: &'a ScalarNode) -> Self {
-//         &node.0
-//     }
-// }
 
 #[cfg(test)]
 mod test {
