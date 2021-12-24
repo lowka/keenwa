@@ -168,9 +168,7 @@ impl OperatorBuilder {
                 scope: &scope,
                 result: Ok(()),
             };
-            let filter = filter.rewrite(&mut rewriter);
-            rewriter.result?;
-
+            let filter = filter.rewrite(&mut rewriter)?;
             let expr = self.add_scalar_node(filter);
             Some(expr)
         } else {
@@ -194,8 +192,7 @@ impl OperatorBuilder {
                 scope: &scope,
                 result: Ok(()),
             };
-            let expr = expr.rewrite(&mut rewriter);
-            rewriter.result?;
+            let expr = expr.rewrite(&mut rewriter)?;
             let (id, name) = match expr {
                 ScalarExpr::Column(id) => {
                     // Should never panic because RewriteExprs set an error when encounters an unknown column id.
@@ -289,9 +286,7 @@ impl OperatorBuilder {
             scope: &scope,
             result: Ok(()),
         };
-        let expr = expr.rewrite(&mut rewriter);
-        rewriter.result?;
-
+        let expr = expr.rewrite(&mut rewriter)?;
         let expr = self.add_scalar_node(expr);
         let condition = JoinCondition::On(JoinOn::new(expr));
         let expr = LogicalExpr::Join(LogicalJoin { left, right, condition });
@@ -315,7 +310,7 @@ impl OperatorBuilder {
                     scope: &scope,
                     result: Ok(()),
                 };
-                let expr = expr.rewrite(&mut rewriter);
+                let expr = expr.rewrite(&mut rewriter)?;
                 let column_id = if let ScalarExpr::Column(id) = expr {
                     id
                 } else {
@@ -517,32 +512,33 @@ struct RewriteExprs<'a> {
 }
 
 impl ExprRewriter<RelNode> for RewriteExprs<'_> {
-    fn pre_rewrite(&mut self, _expr: &Expr<RelNode>) -> bool {
-        self.result.is_ok()
+    type Error = OptimizerError;
+
+    fn pre_rewrite(&mut self, _expr: &Expr<RelNode>) -> Result<bool, Self::Error> {
+        Ok(true)
     }
 
-    fn rewrite(&mut self, expr: ScalarExpr) -> ScalarExpr {
+    fn rewrite(&mut self, expr: ScalarExpr) -> Result<ScalarExpr, Self::Error> {
         match expr {
             ScalarExpr::Column(column_id) => {
                 let exists = self.scope.columns.iter().any(|(_, id)| column_id == *id);
                 if exists {
-                    self.result = Err(OptimizerError::Internal(format!(
+                    return Err(OptimizerError::Internal(format!(
                         "Projection: Unexpected column : {}. Input columns: {:?}",
                         column_id, self.scope.columns
                     )));
                 }
-                expr
+                Ok(expr)
             }
             ScalarExpr::ColumnName(ref column_name) => {
                 let column_id = self.scope.columns.iter().find(|(name, _id)| column_name == name).map(|(_, id)| *id);
                 match column_id {
-                    Some(column_id) => ScalarExpr::Column(column_id),
+                    Some(column_id) => Ok(ScalarExpr::Column(column_id)),
                     None => {
-                        self.result = Err(OptimizerError::Internal(format!(
+                        return Err(OptimizerError::Internal(format!(
                             "Projection: Unexpected column : {}. Input columns: {:?}",
                             column_name, self.scope.columns
                         )));
-                        expr
                     }
                 }
             }
@@ -550,15 +546,14 @@ impl ExprRewriter<RelNode> for RewriteExprs<'_> {
                 match rel_node.expr_ref() {
                     ExprRef::Detached(_) => {
                         //FIXME: Add a method to handle nested relational expressions to OperatorCallback?
-                        self.result = Err(OptimizerError::Internal(
+                        return Err(OptimizerError::Internal(
                             "Use OperatorBuilder::sub_query_builder to build a nested sub query".to_string(),
                         ));
                     }
-                    ExprRef::Memo(_) => {}
+                    ExprRef::Memo(_) => Ok(expr),
                 }
-                expr
             }
-            _ => expr,
+            _ => Ok(expr),
         }
     }
 }
@@ -598,8 +593,7 @@ impl AggregateBuilder<'_> {
                     result: Ok(()),
                 };
                 let expr = ScalarExpr::ColumnName(a);
-                let expr = expr.rewrite(&mut rewriter);
-                rewriter.result?;
+                let expr = expr.rewrite(&mut rewriter)?;
 
                 let name = format!("{}", f);
                 let expr = ScalarExpr::Aggregate {
@@ -630,8 +624,7 @@ impl AggregateBuilder<'_> {
                     result: Ok(()),
                 };
                 let expr = ScalarExpr::ColumnName(name);
-                let expr = expr.rewrite(&mut rewriter);
-                rewriter.result?;
+                let expr = expr.rewrite(&mut rewriter)?;
                 let expr = self.builder.add_scalar_node(expr);
 
                 Ok(expr)

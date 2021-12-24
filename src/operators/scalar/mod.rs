@@ -2,6 +2,7 @@ use crate::memo::NewChildExprs;
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::ExprRewriter;
 use crate::operators::Operator;
+use std::convert::Infallible;
 
 pub mod expr;
 pub mod value;
@@ -19,16 +20,18 @@ pub fn expr_with_new_inputs(expr: &ScalarExpr, inputs: &mut NewChildExprs<Operat
         inputs: &'a mut NewChildExprs<Operator>,
     }
     impl ExprRewriter<RelNode> for RelInputsRewriter<'_> {
-        fn rewrite(&mut self, expr: ScalarExpr) -> ScalarExpr {
+        type Error = Infallible;
+        fn rewrite(&mut self, expr: ScalarExpr) -> Result<ScalarExpr, Self::Error> {
             if let ScalarExpr::SubQuery(_) = expr {
                 let rel_node = self.inputs.rel_node();
-                ScalarExpr::SubQuery(rel_node)
+                Ok(ScalarExpr::SubQuery(rel_node))
             } else {
-                expr
+                Ok(expr)
             }
         }
     }
     let expr = expr.clone();
     let mut rewriter = RelInputsRewriter { inputs };
-    expr.rewrite(&mut rewriter)
+    // Never returns an error
+    expr.rewrite(&mut rewriter).unwrap()
 }

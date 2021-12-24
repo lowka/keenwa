@@ -2,6 +2,7 @@ use crate::meta::ColumnId;
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::{BinaryOp, ExprVisitor};
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
+use std::convert::Infallible;
 use std::fmt::{Display, Formatter};
 
 //TODO:
@@ -104,10 +105,13 @@ impl JoinOn {
             columns: &'a mut Vec<ColumnId>,
         }
         impl ExprVisitor<RelNode> for CollectColumns<'_> {
-            fn post_visit(&mut self, expr: &ScalarExpr) {
+            type Error = Infallible;
+
+            fn post_visit(&mut self, expr: &ScalarExpr) -> Result<(), Self::Error> {
                 if let ScalarExpr::Column(id) = expr {
                     self.columns.push(*id);
                 }
+                Ok(())
             }
         }
         let mut visitor = CollectColumns { columns: &mut columns };

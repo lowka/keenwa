@@ -12,6 +12,7 @@ use relational::physical::PhysicalExpr;
 use relational::{RelExpr, RelNode};
 use scalar::expr::ExprVisitor;
 use scalar::{ScalarExpr, ScalarNode};
+use std::convert::Infallible;
 use std::fmt::Debug;
 use std::rc::Rc;
 
@@ -367,17 +368,21 @@ impl<T> OperatorCopyIn<'_, '_, T> {
             collector: &'b mut CopyInNestedExprs<'a, 'c, Operator, T>,
         }
         impl<T> ExprVisitor<RelNode> for CopyNestedRelExprs<'_, '_, '_, T> {
-            fn post_visit(&mut self, expr: &ScalarExpr) {
+            type Error = Infallible;
+
+            fn post_visit(&mut self, expr: &ScalarExpr) -> Result<(), Self::Error> {
                 if let ScalarExpr::SubQuery(rel_node) = expr {
                     self.collector.visit_expr(rel_node)
                 }
+                Ok(())
             }
         }
 
         let nested_ctx = CopyInNestedExprs::new(self.visitor, expr_ctx);
         nested_ctx.execute(expr, |expr, collector: &mut CopyInNestedExprs<Operator, T>| {
             let mut visitor = CopyNestedRelExprs { collector };
-            expr.accept(&mut visitor)
+            // Never returns an error
+            expr.accept(&mut visitor).unwrap()
         });
     }
 

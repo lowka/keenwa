@@ -1,3 +1,4 @@
+use crate::error::OptimizerError;
 use crate::memo::{ExprContext, MemoExprFormatter, NewChildExprs};
 use crate::meta::ColumnId;
 use crate::operators::relational::join::{JoinCondition, JoinOn};
@@ -103,13 +104,17 @@ impl LogicalExpr {
         Operator::from(expr)
     }
 
-    /// Performs depth-first traversal of this expression tree calling methods of the given `visitor`.
-    pub fn accept<T>(&self, visitor: &mut T)
+    /// Performs a depth-first traversal of this expression tree calling methods of the given `visitor`.
+    ///
+    /// If [LogicalExprVisitor::pre_visit] returns `Ok(false)` then child expression of the expression are not visited.
+    ///
+    /// If an error is returned then traversal terminates.
+    pub fn accept<T>(&self, visitor: &mut T) -> Result<(), OptimizerError>
     where
         T: LogicalExprVisitor,
     {
-        if !visitor.pre_visit(self) {
-            return;
+        if !visitor.pre_visit(self)? {
+            return Ok(());
         }
 
         struct VisitNestedLogicalExprs<'a, T> {
@@ -119,10 +124,13 @@ impl LogicalExpr {
         where
             T: LogicalExprVisitor,
         {
-            fn post_visit(&mut self, expr: &ScalarExpr) {
+            type Error = OptimizerError;
+
+            fn post_visit(&mut self, expr: &ScalarExpr) -> Result<(), Self::Error> {
                 if let ScalarExpr::SubQuery(rel_node) = expr {
-                    rel_node.expr().as_logical().accept(self.visitor);
+                    rel_node.expr().as_logical().accept(self.visitor)?;
                 }
+                Ok(())
             }
         }
         let mut expr_visitor = VisitNestedLogicalExprs { visitor };
@@ -130,15 +138,15 @@ impl LogicalExpr {
         match self {
             LogicalExpr::Projection(LogicalProjection { input, exprs, .. }) => {
                 for expr in exprs {
-                    expr.accept(&mut expr_visitor);
+                    expr.accept(&mut expr_visitor)?;
                 }
-                input.expr().as_logical().accept(visitor);
+                input.expr().as_logical().accept(visitor)?;
             }
             LogicalExpr::Select(LogicalSelect { input, filter }) => {
                 if let Some(expr) = filter.as_ref() {
-                    expr.expr().accept(&mut expr_visitor);
+                    expr.expr().accept(&mut expr_visitor)?;
                 }
-                input.expr().as_logical().accept(visitor);
+                input.expr().as_logical().accept(visitor)?;
             }
             LogicalExpr::Aggregate(LogicalAggregate {
                 input,
@@ -147,39 +155,40 @@ impl LogicalExpr {
                 ..
             }) => {
                 for aggr_expr in aggr_exprs {
-                    aggr_expr.expr().accept(&mut expr_visitor);
+                    aggr_expr.expr().accept(&mut expr_visitor)?;
                 }
                 for group_expr in group_exprs {
-                    group_expr.expr().accept(&mut expr_visitor);
+                    group_expr.expr().accept(&mut expr_visitor)?;
                 }
-                input.expr().as_logical().accept(visitor);
+                input.expr().as_logical().accept(visitor)?;
             }
             LogicalExpr::Join(LogicalJoin { left, right, .. }) => {
-                left.expr().as_logical().accept(visitor);
-                right.expr().as_logical().accept(visitor);
+                left.expr().as_logical().accept(visitor)?;
+                right.expr().as_logical().accept(visitor)?;
             }
             LogicalExpr::Get(_) => {}
             LogicalExpr::Union(LogicalUnion { left, right, .. })
             | LogicalExpr::Intersect(LogicalIntersect { left, right, .. })
             | LogicalExpr::Except(LogicalExcept { left, right, .. }) => {
-                left.expr().as_logical().accept(visitor);
-                right.expr().as_logical().accept(visitor);
+                left.expr().as_logical().accept(visitor)?;
+                right.expr().as_logical().accept(visitor)?;
             }
             LogicalExpr::Empty(_) => {}
         }
-        visitor.post_visit(self);
+        visitor.post_visit(self)
     }
 }
 
-/// Used by [`LogicalExpr::accept`](self::LogicalExpr::accept) during a traversal of an expression tree.
+/// Called by [LogicalExpr::accept] during a traversal of an expression tree.
 pub trait LogicalExprVisitor {
-    /// Called before all child expressions of `expr` are visited.  
-    fn pre_visit(&mut self, _expr: &LogicalExpr) -> bool {
-        true
+    /// Called before all child expressions of `expr` are visited.
+    /// Default implementation always returns`Ok(true)`.
+    fn pre_visit(&mut self, _expr: &LogicalExpr) -> Result<bool, OptimizerError> {
+        Ok(true)
     }
 
     /// Called after all child expressions of `expr` are visited.
-    fn post_visit(&mut self, expr: &LogicalExpr);
+    fn post_visit(&mut self, expr: &LogicalExpr) -> Result<(), OptimizerError>;
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
