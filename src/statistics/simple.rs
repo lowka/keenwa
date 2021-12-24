@@ -15,6 +15,7 @@ use crate::statistics::StatisticsBuilder;
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::rc::Rc;
 
 /// A simple implementation of [StatisticsBuilder](super::StatisticsBuilder) that information available in a [database catalog].
@@ -226,19 +227,22 @@ impl SelectivityProvider for PrecomputedSelectivityStatistics {
         }
 
         impl ExprRewriter<RelNode> for ReplaceColumnIdsWithColumnNames<'_> {
-            fn rewrite(&mut self, expr: ScalarExpr) -> ScalarExpr {
+            type Error = Infallible;
+            fn rewrite(&mut self, expr: ScalarExpr) -> Result<ScalarExpr, Self::Error> {
                 if let ScalarExpr::Column(id) = expr {
+                    // Should not panic because columns has been assigned by the metadata itself.
                     let column = self.metadata.get_column(&id);
-                    ScalarExpr::ColumnName(column.name().clone())
+                    Ok(ScalarExpr::ColumnName(column.name().clone()))
                 } else {
-                    expr
+                    Ok(expr)
                 }
             }
         }
 
         let filter = filter.clone();
         let mut rewriter = ReplaceColumnIdsWithColumnNames { metadata };
-        let filter = filter.rewrite(&mut rewriter);
+        // Never returns an error
+        let filter = filter.rewrite(&mut rewriter).unwrap();
         let filter_str = format!("{}", filter);
 
         let inner = self.inner.borrow();

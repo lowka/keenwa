@@ -3,7 +3,7 @@ use crate::memo::MemoExprFormatter;
 use crate::meta::ColumnId;
 use crate::operators::scalar::value::ScalarValue;
 use itertools::Itertools;
-use std::convert::TryFrom;
+use std::convert::{Infallible, TryFrom};
 use std::fmt::{Debug, Display, Formatter};
 
 /// Expressions supported by the optimizer.
@@ -41,64 +41,74 @@ where
     T: NestedExpr,
 {
     /// Performs a depth-first traversal of this expression tree calling methods of the given `visitor`.
-    pub fn accept<V>(&self, visitor: &mut V)
+    ///
+    /// If [ExprVisitor::pre_visit] returns `Ok(false)` then child expressions of the expression are not visited.
+    ///
+    /// If an error is returned then traversal terminates.
+    pub fn accept<V>(&self, visitor: &mut V) -> Result<(), V::Error>
     where
         V: ExprVisitor<T>,
     {
-        visitor.pre_visit(self);
+        if !visitor.pre_visit(self)? {
+            return Ok(());
+        }
         match self {
             Expr::Column(_) => {}
             Expr::ColumnName(_) => {}
             Expr::Scalar(_) => {}
             Expr::BinaryExpr { lhs, rhs, .. } => {
-                lhs.accept(visitor);
-                rhs.accept(visitor);
+                lhs.accept(visitor)?;
+                rhs.accept(visitor)?;
             }
             Expr::Not(expr) => {
-                expr.accept(visitor);
+                expr.accept(visitor)?;
             }
             Expr::Aggregate { args, filter, .. } => {
                 for arg in args {
-                    arg.accept(visitor);
+                    arg.accept(visitor)?;
                 }
                 if let Some(f) = filter.as_ref() {
-                    f.accept(visitor)
+                    f.accept(visitor)?;
                 }
             }
-            Expr::SubQuery(_) => {}
+            Expr::SubQuery(_) => {
+                // Should be handled by visitor::pre_visit because Expr is generic over
+                // the type of a nested sub query.
+            }
         }
-        visitor.post_visit(self);
+        visitor.post_visit(self)
     }
 
-    /// Recursively rewrites this expression using the given `rewriter`.
-    /// It first calls [`Expr::rewrite`](Self::rewrite) for every child expressions and
-    /// then calls [`ExprRewriter::rewrite`] on this expression.
-    pub fn rewrite<V>(self, rewriter: &mut V) -> Self
+    /// Performs a depth-first traversal of this expression and recursively rewrites it using the given `rewriter`.
+    ///
+    /// If [ExprRewriter::pre_rewrite] returns `Ok(false)` then child expressions of the expression are not visited.
+    ///
+    /// If an error is returned then traversal terminates.
+    pub fn rewrite<V>(self, rewriter: &mut V) -> Result<Self, V::Error>
     where
         V: ExprRewriter<T>,
     {
-        if !rewriter.pre_rewrite(&self) {
-            return self;
+        if !rewriter.pre_rewrite(&self)? {
+            return Ok(self);
         }
         let expr = match self {
-            Expr::Column(_) => rewriter.rewrite(self),
-            Expr::ColumnName(_) => rewriter.rewrite(self),
-            Expr::Scalar(_) => rewriter.rewrite(self),
+            Expr::Column(_) => rewriter.rewrite(self)?,
+            Expr::ColumnName(_) => rewriter.rewrite(self)?,
+            Expr::Scalar(_) => rewriter.rewrite(self)?,
             Expr::BinaryExpr { lhs, rhs, op } => {
-                let lhs = rewrite_boxed(*lhs, rewriter);
-                let rhs = rewrite_boxed(*rhs, rewriter);
+                let lhs = rewrite_boxed(*lhs, rewriter)?;
+                let rhs = rewrite_boxed(*rhs, rewriter)?;
                 Expr::BinaryExpr { lhs, op, rhs }
             }
-            Expr::Not(expr) => expr.rewrite(rewriter),
+            Expr::Not(expr) => expr.rewrite(rewriter)?,
             Expr::Aggregate { func, args, filter } => Expr::Aggregate {
                 func,
-                args: rewrite_vec(args, rewriter),
-                filter: rewrite_boxed_option(filter, rewriter),
+                args: rewrite_vec(args, rewriter)?,
+                filter: rewrite_boxed_option(filter, rewriter)?,
             },
-            Expr::SubQuery(_) => rewriter.rewrite(self),
+            Expr::SubQuery(_) => rewriter.rewrite(self)?,
         };
-        rewriter.post_rewrite(&expr);
-        expr
+        Ok(expr)
     }
 
     pub fn format_expr<F>(&self, f: &mut F)
@@ -110,46 +120,54 @@ where
     }
 }
 
-/// Called by [`Expr::accept`](self::Expr::accept) during a traversal of an expression tree.
+/// Called by [Expr::accept] during a traversal of an expression tree.
 pub trait ExprVisitor<T>
 where
     T: NestedExpr,
 {
-    /// Called before all child expressions of `expr` are visited.  
-    fn pre_visit(&mut self, _expr: &Expr<T>) {}
+    /// The error type returned when operation fails.
+    type Error;
+
+    /// Called before all child expressions of `expr` are visited.
+    ///
+    /// Default implementation always returns `Ok(true)`.  
+    fn pre_visit(&mut self, _expr: &Expr<T>) -> Result<bool, Self::Error> {
+        Ok(true)
+    }
 
     /// Called after all child expressions of `expr` are visited.
-    fn post_visit(&mut self, expr: &Expr<T>);
+    fn post_visit(&mut self, expr: &Expr<T>) -> Result<(), Self::Error>;
 }
 
-/// Provides methods to rewrite an expression tree.
+/// Called by [Expr::rewrite] during a traversal of an expression tree.
 pub trait ExprRewriter<T>
 where
     T: NestedExpr,
 {
-    /// Returns `true` if rewriter should attempt to rewrite the given expression.
-    /// Default implementation always returns `true`.
-    fn pre_rewrite(&mut self, _expr: &Expr<T>) -> bool {
-        true
+    /// The error type returned when operation fails.
+    type Error;
+
+    /// Called before all child expressions of `expr` are rewritten.
+    ///
+    /// Default implementation always returns `Ok(true)`.
+    fn pre_rewrite(&mut self, _expr: &Expr<T>) -> Result<bool, Self::Error> {
+        Ok(true)
     }
 
-    /// Rewrites the given expression. Called after all children of the given expression are visited.
-    fn rewrite(&mut self, expr: Expr<T>) -> Expr<T>;
-
-    /// Called after a call to [rewrite](Self::rewrite).
-    fn post_rewrite(&mut self, _expr: &Expr<T>) {}
+    /// Rewrites the given expression. Called after all children of the given expression are rewritten.
+    fn rewrite(&mut self, expr: Expr<T>) -> Result<Expr<T>, Self::Error>;
 }
 
-fn rewrite_boxed<T, V>(expr: Expr<T>, rewriter: &mut V) -> Box<Expr<T>>
+fn rewrite_boxed<T, V>(expr: Expr<T>, rewriter: &mut V) -> Result<Box<Expr<T>>, V::Error>
 where
     V: ExprRewriter<T>,
     T: NestedExpr,
 {
-    let new_expr = expr.rewrite(rewriter);
-    Box::new(new_expr)
+    let new_expr = expr.rewrite(rewriter)?;
+    Ok(Box::new(new_expr))
 }
 
-fn rewrite_vec<T, V>(exprs: Vec<Expr<T>>, rewriter: &mut V) -> Vec<Expr<T>>
+fn rewrite_vec<T, V>(exprs: Vec<Expr<T>>, rewriter: &mut V) -> Result<Vec<Expr<T>>, V::Error>
 where
     V: ExprRewriter<T>,
     T: NestedExpr,
@@ -157,12 +175,15 @@ where
     exprs.into_iter().map(|e| e.rewrite(rewriter)).collect()
 }
 
-fn rewrite_boxed_option<T, V>(expr: Option<Box<Expr<T>>>, rewriter: &mut V) -> Option<Box<Expr<T>>>
+fn rewrite_boxed_option<T, V>(expr: Option<Box<Expr<T>>>, rewriter: &mut V) -> Result<Option<Box<Expr<T>>>, V::Error>
 where
     V: ExprRewriter<T>,
     T: NestedExpr,
 {
-    expr.map(|expr| rewrite_boxed(*expr, rewriter))
+    match expr {
+        None => Ok(None),
+        Some(expr) => Ok(Some(rewrite_boxed(*expr, rewriter)?)),
+    }
 }
 
 /// Binary operators.
@@ -360,13 +381,25 @@ mod test {
 
     #[test]
     fn rewriter() {
-        struct ColumnRewriter;
+        struct ColumnRewriter {
+            skip_column: ColumnId,
+        }
         impl ExprRewriter<DummyRelExpr> for ColumnRewriter {
-            fn rewrite(&mut self, expr: Expr) -> Expr {
-                if let Expr::Column(1) = expr {
-                    Expr::Column(2)
+            type Error = Infallible;
+
+            fn pre_rewrite(&mut self, expr: &Expr) -> Result<bool, Self::Error> {
+                if let Expr::Column(column) = expr {
+                    Ok(*column != self.skip_column)
                 } else {
-                    expr
+                    Ok(true)
+                }
+            }
+
+            fn rewrite(&mut self, expr: Expr) -> Result<Expr, Self::Error> {
+                if let Expr::Column(1) = expr {
+                    Ok(Expr::Column(2))
+                } else {
+                    Ok(expr)
                 }
             }
         }
@@ -380,7 +413,56 @@ mod test {
                 rhs: Box::new(Expr::Column(1)),
             }),
         };
-        expect_rewritten(expr, ColumnRewriter, "col:2 OR col:3 AND col:2");
+
+        let rewriter = ColumnRewriter { skip_column: 0 };
+        expect_rewritten(expr.clone(), rewriter, "col:2 OR col:3 AND col:2");
+
+        let rewriter = ColumnRewriter { skip_column: 1 };
+        expect_rewritten(expr, rewriter, "col:1 OR col:3 AND col:1");
+    }
+
+    #[test]
+    fn rewriter_fails() {
+        #[derive(Default)]
+        struct FailingRewriter {
+            visited: usize,
+            rewritten: usize,
+        }
+
+        impl ExprRewriter<DummyRelExpr> for FailingRewriter {
+            type Error = ();
+
+            fn pre_rewrite(&mut self, _expr: &Expr) -> Result<bool, Self::Error> {
+                self.visited += 1;
+                Ok(true)
+            }
+
+            fn rewrite(&mut self, expr: Expr) -> Result<Expr, Self::Error> {
+                self.rewritten += 1;
+                if let Expr::Column(1) = expr {
+                    Err(())
+                } else {
+                    Ok(expr)
+                }
+            }
+        }
+
+        let expr = Expr::BinaryExpr {
+            lhs: Box::new(Expr::Column(1)),
+            op: BinaryOp::Or,
+            rhs: Box::new(Expr::BinaryExpr {
+                lhs: Box::new(Expr::Column(3)),
+                op: BinaryOp::And,
+                rhs: Box::new(Expr::Column(1)),
+            }),
+        };
+
+        let mut rewriter = FailingRewriter::default();
+        let result = expr.rewrite(&mut rewriter);
+        let _ = result.expect_err("Expected an error");
+
+        assert_eq!(rewriter.visited, 2);
+        assert_eq!(rewriter.rewritten, 1);
     }
 
     fn expect_traversal_order(expr: &Expr, expected: Vec<&str>) {
@@ -388,17 +470,21 @@ mod test {
             exprs: Vec<String>,
         }
         impl ExprVisitor<DummyRelExpr> for TraversalTester {
-            fn pre_visit(&mut self, expr: &Expr) {
+            type Error = Infallible;
+
+            fn pre_visit(&mut self, expr: &Expr) -> Result<bool, Self::Error> {
                 self.exprs.push(format!("pre:{}", expr));
+                Ok(true)
             }
 
-            fn post_visit(&mut self, expr: &Expr) {
+            fn post_visit(&mut self, expr: &Expr) -> Result<(), Self::Error> {
                 self.exprs.push(format!("post:{}", expr));
+                Ok(())
             }
         }
 
         let mut visitor = TraversalTester { exprs: Vec::new() };
-        expr.accept(&mut visitor);
+        expr.accept(&mut visitor).unwrap();
 
         let expected: Vec<String> = expected.into_iter().map(|s| s.to_string()).collect();
         assert_eq!(visitor.exprs, expected, "traversal order does not match");
@@ -406,9 +492,9 @@ mod test {
 
     fn expect_rewritten<V>(expr: Expr, mut rewriter: V, result: &str)
     where
-        V: ExprRewriter<DummyRelExpr>,
+        V: ExprRewriter<DummyRelExpr, Error = Infallible>,
     {
-        let rewritten_expr = expr.rewrite(&mut rewriter);
+        let rewritten_expr = expr.rewrite(&mut rewriter).unwrap();
         assert_eq!(format!("{}", rewritten_expr), result.to_string(), "rewritten expression does not match");
     }
 }
