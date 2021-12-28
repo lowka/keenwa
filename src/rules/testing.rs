@@ -52,13 +52,13 @@ impl RuleTester {
 
     /// Attempts to apply the rule to the given expression and then compares the result with the expected value.
     pub fn apply(&mut self, expr: &LogicalExpr, expected: &str) {
-        let (_, expr_ref) = self.memo.insert_group(Operator::from(OperatorExpr::from(expr.clone())));
+        let memo_expr = self.memo.insert_group(Operator::from(OperatorExpr::from(expr.clone())));
 
         let ctx = RuleContext::new(Rc::new(PhysicalProperties::none()), self.metadata.get_ref());
         let rule_match = self.rule.matches(&ctx, expr);
         assert!(rule_match.is_some(), "Rule does not match: {:?}", self.rule);
 
-        let expr = expr_ref.mexpr().expr();
+        let expr = memo_expr.expr();
         let result = self.rule.apply(&ctx, expr.as_relational().as_logical());
         let expr = match result {
             Ok(Some(RuleResult::Substitute(expr))) => Operator::from(OperatorExpr::from(expr)),
@@ -66,8 +66,8 @@ impl RuleTester {
             Ok(None) => panic!("Rule matched but not applied: {:?}", self.rule),
             Err(e) => panic!("Failed to apply a rule. Rule: {:?}. Error: {}", self.rule, e),
         };
-        let (_, new_expr) = self.memo.insert_group(expr);
-        let actual_expr = format_operator_tree(new_expr.mexpr());
+        let new_expr = self.memo.insert_group(expr);
+        let actual_expr = format_operator_tree(&new_expr);
 
         assert_eq!(actual_expr.trim_end(), expected.trim());
     }

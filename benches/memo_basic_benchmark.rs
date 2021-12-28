@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use keenwa::memo::{CopyInExprs, Expr, ExprGroupRef, ExprRef, Memo, MemoExpr, MemoExprFormatter, NewChildExprs, Props};
+use keenwa::memo::{CopyInExprs, Expr, ExprGroupPtr, ExprPtr, Memo, MemoExpr, MemoExprFormatter, NewChildExprs, Props};
 use std::fmt::{Display, Formatter};
 
 type RelNode = keenwa::memo::RelNode<TestOperator>;
@@ -82,23 +82,23 @@ impl Expr for TestExpr {
 
 #[derive(Debug, Clone)]
 struct TestOperator {
-    expr: ExprRef<TestOperator>,
-    group: ExprGroupRef<TestOperator>,
+    expr: ExprPtr<TestOperator>,
+    group: ExprGroupPtr<TestOperator>,
 }
 
 impl MemoExpr for TestOperator {
     type Expr = TestExpr;
     type Props = TestProps;
 
-    fn create(expr: ExprRef<Self>, group: ExprGroupRef<Self>) -> Self {
+    fn from_parts(expr: ExprPtr<Self>, group: ExprGroupPtr<Self>) -> Self {
         TestOperator { expr, group }
     }
 
-    fn expr_ref(&self) -> &ExprRef<Self> {
+    fn expr_ptr(&self) -> &ExprPtr<Self> {
         &self.expr
     }
 
-    fn group_ref(&self) -> &ExprGroupRef<Self> {
+    fn group_ptr(&self) -> &ExprGroupPtr<Self> {
         &self.group
     }
 
@@ -192,8 +192,8 @@ impl MemoExpr for TestOperator {
 impl From<TestExpr> for TestOperator {
     fn from(expr: TestExpr) -> Self {
         TestOperator {
-            expr: ExprRef::Detached(Box::new(expr)),
-            group: ExprGroupRef::Detached(Box::new(TestProps::default())),
+            expr: ExprPtr::new(expr),
+            group: ExprGroupPtr::new(TestProps::default()),
         }
     }
 }
@@ -211,8 +211,8 @@ fn memo_bench(c: &mut Criterion) {
         b.iter(|| {
             let mut memo = Memo::new(());
             let query = TestOperator::from(query.clone());
-            let (group, _) = memo.insert_group(query);
-            black_box(group);
+            let expr = memo.insert_group(query);
+            black_box(expr);
         });
     });
 
@@ -222,8 +222,8 @@ fn memo_bench(c: &mut Criterion) {
         b.iter(|| {
             let mut memo = Memo::new(());
             let query = TestOperator::from(query.clone());
-            let (group, _) = memo.insert_group(query);
-            black_box(group);
+            let expr = memo.insert_group(query);
+            black_box(expr);
         });
     });
 }

@@ -1,6 +1,5 @@
-use itertools::Itertools;
 use std::alloc::Layout;
-use std::fmt::{Debug, Formatter};
+use std::fmt::Debug;
 use std::ptr::NonNull;
 
 /// Used by [memo](crate::memo::Memo) to store expressions. This data structure stores its data
@@ -9,7 +8,8 @@ use std::ptr::NonNull;
 ///
 /// # Safety
 ///
-/// It is callers responsibility to ensure that references to elements of this store does not outlive the store that created them.
+/// * It is caller's responsibility to ensure that references to elements of this store does not outlive it.
+/// * Caller must also guarantee they do not have both mutable and shared reference to the same element at the same time.
 pub struct Store<T> {
     page_size: usize,
     len: usize,
@@ -57,7 +57,12 @@ impl<T> Store<T> {
     }
 
     /// Returns a mutable reference to an element with the given id.
-    pub fn get_mut(&mut self, elem_id: StoreElementId) -> Option<&mut T> {
+    ///
+    /// # Safety
+    ///
+    /// It is the responsibility of a caller to ensure that
+    /// no aliasing reference to the element stored by the given index exists.
+    pub unsafe fn get_mut(&mut self, elem_id: StoreElementId) -> Option<&mut T> {
         let (page_idx, elem_idx) = self.to_page_index(elem_id);
 
         self.pages.get_mut(page_idx).map(|p| p.get_mut(elem_idx)).flatten()
@@ -109,6 +114,7 @@ impl<T> Store<T> {
         let layout = Layout::array::<T>(self.page_size).unwrap();
         let total_size = self.pages.len() * layout.size();
 
+        // FIXME: Do we really need this check ?
         // Ensure that the new allocation doesn't exceed `isize::MAX` bytes.
         assert!(total_size <= isize::MAX as usize, "Allocation too large");
 
@@ -134,18 +140,6 @@ impl<T> Store<T> {
     }
 }
 
-impl<T> Debug for Store<T>
-where
-    T: Debug,
-{
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let itr = self.iter();
-        f.write_str("[")?;
-        f.write_str(itr.map(|r| format!("{:?}", r.as_ref())).join(", ").as_str())?;
-        f.write_str("]")
-    }
-}
-
 /// A reference to an element of a [storage](self::Store).
 /// Internally it stores a raw pointer to the location of memory that stores that element.
 pub struct StoreElementRef<T> {
@@ -161,8 +155,18 @@ impl<T> StoreElementRef<T> {
     }
 
     /// Returns a reference to the underlying element.
-    pub fn as_ref(&self) -> &T {
-        unsafe { self.ptr.as_ref() }
+    ///
+    /// # Safety
+    ///
+    /// Caller must guarantee that there no mutable references to the underlying data.
+    /// See [Store::get_mut].
+    pub unsafe fn get(&self) -> &T {
+        self.ptr.as_ref()
+    }
+
+    /// Returns a raw pointer to the underlying element.
+    pub unsafe fn get_ptr(&self) -> *const T {
+        self.ptr.as_ptr()
     }
 }
 
@@ -201,7 +205,7 @@ struct Page<T> {
 
 impl<T> Page<T> {
     fn insert(&mut self, elem: T) -> StoreElementRef<T> {
-        // Caller guarantees that this page is not full
+        // SAFETY: Caller guarantees that this page is not full
         let elem_ref = unsafe {
             let elem_ptr = self.ptr.as_ptr().add(self.len);
             std::ptr::write(elem_ptr, elem);
@@ -214,6 +218,7 @@ impl<T> Page<T> {
 
     fn get(&self, idx: usize) -> Option<StoreElementRef<T>> {
         if idx < self.len {
+            // SAFETY: `idx` < `len` so it safe
             let elem_ref = unsafe {
                 let elem_ptr = self.ptr.as_ptr().add(idx);
                 StoreElementRef::new(elem_ptr)
@@ -226,6 +231,7 @@ impl<T> Page<T> {
 
     fn get_mut(&mut self, idx: usize) -> Option<&mut T> {
         if idx < self.len {
+            // SAFETY: `idx` < `len` so it safe
             let elem_ref = unsafe {
                 let elem_ptr = self.ptr.as_ptr().add(idx);
                 &mut *elem_ptr
@@ -244,6 +250,7 @@ impl<T> Page<T> {
 impl<T> Drop for Page<T> {
     fn drop(&mut self) {
         let layout = Layout::array::<T>(self.cap).unwrap();
+        // SAFETY: Page stores exactly `len`.
         unsafe {
             for i in 0..self.len {
                 let elem_ptr = self.ptr.as_ptr().add(i);
@@ -277,10 +284,6 @@ impl<T> Iterator for StoreElementIter<'_, T> {
             None
         }
     }
-
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        (self.store.len, Some(self.store.len))
-    }
 }
 
 impl<T> DoubleEndedIterator for StoreElementIter<'_, T> {
@@ -296,9 +299,68 @@ impl<T> DoubleEndedIterator for StoreElementIter<'_, T> {
     }
 }
 
+/// Wrapper around [Store](self::Store) that stores immutable objects.
+/// It does not provide mutable API so references to its elements can be cloned
+/// and they won't break aliasing rules of Rust (*).
+///
+/// # Safety
+///
+/// (*) Caller must still guarantee that references to elements of this store never outlive the `AppendOnlyStore`.
+pub struct AppendOnlyStore<T> {
+    store: Store<T>,
+}
+
+impl<T> AppendOnlyStore<T> {
+    pub fn new() -> Self {
+        AppendOnlyStore { store: Store::new(16) }
+    }
+
+    /// Adds an element to this store.
+    pub fn insert(&mut self, elem: T) -> (StoreElementId, ImmutableRef<T>) {
+        let (elem_id, elem_ref) = self.store.insert(elem);
+        (elem_id, ImmutableRef { inner: elem_ref })
+    }
+
+    /// Retrieve the element with the given element id from this store.
+    pub fn get(&self, elem_id: StoreElementId) -> Option<ImmutableRef<T>> {
+        self.store.get(elem_id).map(|i| ImmutableRef { inner: i })
+    }
+
+    /// Returns the identifier to be assigned to the next element of this store.
+    pub fn next_id(&self) -> StoreElementId {
+        self.store.next_id()
+    }
+
+    /// Returns the number of elements in this store.
+    pub fn len(&self) -> usize {
+        self.store.len()
+    }
+}
+
+/// A reference to an immutable object.
+#[derive(Clone)]
+pub struct ImmutableRef<T> {
+    inner: StoreElementRef<T>,
+}
+
+impl<T> ImmutableRef<T> {
+    pub fn get(&self) -> &T {
+        // This safe because AppendOnlyStore does not provide mutable APIs.
+        unsafe { self.inner.get() }
+    }
+}
+
+impl<T> PartialEq for ImmutableRef<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+}
+
+impl<T> Eq for ImmutableRef<T> {}
+
 #[cfg(test)]
 mod test {
-    use crate::memo::store::{Store, StoreElementId};
+    use crate::memo::store::{Store, StoreElementId, StoreElementRef};
     use std::fmt::Debug;
 
     #[derive(Debug, Eq, PartialEq, Clone)]
@@ -310,7 +372,8 @@ mod test {
         expect_num_pages(&store, 0);
         expect_allocated_bytes(&store, 0);
 
-        assert!(store.get(StoreElementId(0)).is_none(), "no elements");
+        let elem = store.get(StoreElementId(0));
+        assert!(elem.is_none(), "no elements");
     }
 
     #[test]
@@ -358,8 +421,8 @@ mod test {
 
         let _moved_store = std::thread::spawn(|| store).join().unwrap();
 
-        assert_eq!("a", ref1.as_ref());
-        assert_eq!("b", ref2.as_ref());
+        assert_eq!("a", read_safely(&ref1));
+        assert_eq!("b", read_safely(&ref2));
     }
 
     #[test]
@@ -368,7 +431,7 @@ mod test {
         let (_, elem_ref) = store.insert(String::from("a"));
         let elem_ref = std::thread::spawn(move || elem_ref).join().unwrap();
 
-        assert_eq!("a", elem_ref.as_ref());
+        assert_eq!("a", read_safely(&elem_ref));
     }
 
     fn expect_added<T>(store: &mut Store<T>, value: T)
@@ -376,10 +439,10 @@ mod test {
         T: Clone + PartialEq + Debug,
     {
         let (id, elem_ref) = store.insert(value.clone());
-        assert_eq!(&value, elem_ref.as_ref(), "inserted with id {:?}", id);
+        assert_eq!(&value, read_safely(&elem_ref), "inserted with id {:?}", id);
 
         let elem_ref = store.get(id).unwrap();
-        assert_eq!(&value, elem_ref.as_ref(), "retrieved by id {:?}", id);
+        assert_eq!(&value, read_safely(&elem_ref), "retrieved by id {:?}", id);
     }
 
     fn expect_num_pages<T>(store: &Store<T>, expected: usize) {
@@ -388,5 +451,9 @@ mod test {
 
     fn expect_allocated_bytes<T>(store: &Store<T>, expected: usize) {
         assert_eq!(expected, store.allocated_bytes(), "allocated_bytes")
+    }
+
+    fn read_safely<T>(elem_ref: &StoreElementRef<T>) -> &T {
+        unsafe { elem_ref.get() }
     }
 }
