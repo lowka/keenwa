@@ -1,7 +1,7 @@
 use crate::catalog::CatalogRef;
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
-use crate::memo::ExprRef;
+use crate::memo::ExprPtr;
 use crate::meta::{ColumnId, ColumnMetadata, MutableMetadata};
 use crate::operators::relational::join::{JoinCondition, JoinOn};
 use crate::operators::relational::logical::{
@@ -544,13 +544,13 @@ impl ExprRewriter<RelNode> for RewriteExprs<'_> {
             }
             ScalarExpr::SubQuery(ref rel_node) => {
                 match rel_node.expr_ref() {
-                    ExprRef::Detached(_) => {
+                    ExprPtr::Owned(_) => {
                         //FIXME: Add a method to handle nested relational expressions to OperatorCallback?
-                        return Err(OptimizerError::Internal(
+                        Err(OptimizerError::Internal(
                             "Use OperatorBuilder::sub_query_builder to build a nested sub query".to_string(),
-                        ));
+                        ))
                     }
-                    ExprRef::Memo(_) => Ok(expr),
+                    ExprPtr::Memo(_) => Ok(expr),
                 }
             }
             _ => Ok(expr),
@@ -691,15 +691,15 @@ impl OperatorCallback for MemoizeOperatorCallback {
     fn new_rel_expr(&self, expr: Operator) -> RelNode {
         assert!(expr.expr().is_relational(), "Expected a relational expression but got {:?}", expr);
         let mut memo = self.memo.borrow_mut();
-        let (group, _) = memo.insert_group(expr);
-        RelNode::from_group(group)
+        let expr = memo.insert_group(expr);
+        RelNode::from_mexpr(expr)
     }
 
     fn new_scalar_expr(&self, expr: Operator) -> ScalarNode {
         assert!(expr.expr().is_scalar(), "Expected a scalar expression but got {:?}", expr);
         let mut memo = self.memo.borrow_mut();
-        let (group, _) = memo.insert_group(expr);
-        ScalarNode::from_group(group)
+        let expr = memo.insert_group(expr);
+        ScalarNode::from_mexpr(expr)
     }
 }
 
@@ -1121,9 +1121,9 @@ Memo:
 
             let memoization = Rc::try_unwrap(self.memoization).unwrap();
             let mut memo = memoization.into_inner();
-            let (_, expr) = memo.insert_group(expr);
+            let expr = memo.insert_group(expr);
 
-            buf.push_str(format_operator_tree(expr.mexpr()).as_str());
+            buf.push_str(format_operator_tree(&expr).as_str());
             buf.push('\n');
 
             let props = expr.props();

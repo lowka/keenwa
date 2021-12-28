@@ -1,5 +1,5 @@
 use crate::operators::relational::physical::PhysicalExpr;
-use crate::operators::{GroupRef, Properties};
+use crate::operators::{ExprRef, Properties};
 use crate::statistics::Statistics;
 
 pub mod simple;
@@ -17,14 +17,14 @@ pub trait CostEstimator {
 /// Provides information that can be used to estimate a cost of an expression.
 #[derive(Debug)]
 pub struct CostEstimationContext {
-    pub(crate) input_groups: Vec<GroupRef>,
+    pub(crate) inputs: Vec<ExprRef>,
 }
 
 impl CostEstimationContext {
     /// Returns statistics of the i-th child expression.
     pub fn child_statistics(&self, i: usize) -> Option<&Statistics> {
-        let group = &self.input_groups[i];
-        match group.props() {
+        let best_expr = &self.inputs[i];
+        match best_expr.props() {
             Properties::Relational(props) => props.logical.statistics(),
             Properties::Scalar(_) => None,
         }

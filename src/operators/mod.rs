@@ -1,5 +1,5 @@
 use crate::memo::{
-    CopyInExprs, CopyInNestedExprs, ExprContext, ExprGroupRef, MemoExpr, MemoExprFormatter, MemoGroupCallback,
+    CopyInExprs, CopyInNestedExprs, ExprContext, ExprGroupPtr, MemoExpr, MemoExprFormatter, MemoGroupCallback,
     NewChildExprs, Props,
 };
 use crate::meta::MutableMetadata;
@@ -23,7 +23,6 @@ pub mod scalar;
 
 pub type OperatorMetadata = Rc<MutableMetadata>;
 pub type ExprMemo = crate::memo::Memo<Operator, OperatorMetadata>;
-pub type GroupRef = crate::memo::MemoGroupRef<Operator>;
 pub type ExprRef = crate::memo::MemoExprRef<Operator>;
 pub type ExprCallback = dyn MemoGroupCallback<Expr = Operator, Props = Properties, Metadata = OperatorMetadata>;
 
@@ -32,22 +31,27 @@ pub type ExprCallback = dyn MemoGroupCallback<Expr = Operator, Props = Propertie
 // TODO: Docs
 #[derive(Debug, Clone)]
 pub struct Operator {
-    pub(crate) expr: crate::memo::ExprRef<Operator>,
-    pub(crate) group: crate::memo::ExprGroupRef<Operator>,
+    pub(crate) expr: crate::memo::ExprPtr<Operator>,
+    pub(crate) group: crate::memo::ExprGroupPtr<Operator>,
 }
 
 impl Operator {
     /// Creates a new operator from the given expression and properties.
     pub fn new(expr: OperatorExpr, properties: Properties) -> Self {
         Operator {
-            expr: crate::memo::ExprRef::Detached(Box::new(expr)),
-            group: crate::memo::ExprGroupRef::Detached(Box::new(properties)),
+            expr: crate::memo::ExprPtr::new(expr),
+            group: crate::memo::ExprGroupPtr::new(properties),
         }
     }
 
     /// Returns an expression associated with this operator.
     pub fn expr(&self) -> &OperatorExpr {
         self.expr.expr()
+    }
+
+    /// Returns a reference properties associated with this operator (see [MemoExpr#props](crate::memo::MemoExpr::props)).
+    pub fn props(&self) -> &Properties {
+        self.group.props()
     }
 
     /// Creates a new operator from this one but with new required properties.
@@ -64,7 +68,7 @@ impl Operator {
         };
         Operator {
             expr,
-            group: crate::memo::ExprGroupRef::Detached(Box::new(Properties::Relational(props))),
+            group: crate::memo::ExprGroupPtr::new(Properties::Relational(props)),
         }
     }
 }
@@ -235,15 +239,15 @@ impl MemoExpr for Operator {
     type Expr = OperatorExpr;
     type Props = Properties;
 
-    fn create(expr: crate::memo::ExprRef<Self>, group: crate::memo::ExprGroupRef<Self>) -> Self {
+    fn from_parts(expr: crate::memo::ExprPtr<Self>, group: crate::memo::ExprGroupPtr<Self>) -> Self {
         Operator { expr, group }
     }
 
-    fn expr_ref(&self) -> &crate::memo::ExprRef<Self> {
+    fn expr_ptr(&self) -> &crate::memo::ExprPtr<Self> {
         &self.expr
     }
 
-    fn group_ref(&self) -> &ExprGroupRef<Self> {
+    fn group_ptr(&self) -> &ExprGroupPtr<Self> {
         &self.group
     }
 
@@ -399,8 +403,8 @@ impl From<OperatorExpr> for Operator {
             OperatorExpr::Scalar(_) => Properties::Scalar(ScalarProperties::default()),
         };
         Operator {
-            expr: crate::memo::ExprRef::Detached(Box::new(expr)),
-            group: crate::memo::ExprGroupRef::Detached(Box::new(props)),
+            expr: crate::memo::ExprPtr::new(expr),
+            group: crate::memo::ExprGroupPtr::new(props),
         }
     }
 }

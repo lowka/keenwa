@@ -12,7 +12,7 @@ use crate::meta::MetadataRef;
 use crate::operators::properties::PropertiesProvider;
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::expr_with_new_inputs;
-use crate::operators::{ExprMemo, ExprRef, GroupRef, Operator, OperatorExpr, OperatorMetadata, Properties};
+use crate::operators::{ExprMemo, ExprRef, Operator, OperatorExpr, OperatorMetadata, Properties};
 use crate::properties::physical::PhysicalProperties;
 use crate::rules::{RuleContext, RuleId, RuleMatch, RuleResult, RuleSet, RuleType};
 use crate::util::{BestExprContext, BestExprRef, ResultCallback};
@@ -46,10 +46,11 @@ where
         log::debug!("Optimizing expression: {:?}", expr);
 
         let required_property = expr.props().as_relational().required().clone();
-        let (root_group, _) = memo.insert_group(expr);
+        let root_expr = memo.insert_group(expr);
+        let root_group_id = root_expr.group_ptr().memo_group_id();
 
         let ctx = OptimizationContext {
-            group: root_group,
+            group: root_group_id,
             required_properties: runtime_state.properties_cache.insert(required_property),
         };
 
@@ -79,10 +80,10 @@ where
 
             match task {
                 Task::OptimizeGroup { ctx } => {
-                    optimize_group(runtime_state, ctx, self.rule_set.as_ref());
+                    optimize_group(runtime_state, memo, ctx, self.rule_set.as_ref());
                 }
                 Task::GroupOptimized { ctx } => {
-                    group_optimized(runtime_state, ctx);
+                    group_optimized(runtime_state, memo, ctx);
                 }
                 Task::OptimizeExpr { ctx, expr, explore } => {
                     optimize_expr(runtime_state, ctx, expr, explore, self.rule_set.as_ref(), memo.metadata().get_ref());
@@ -105,7 +106,7 @@ where
                     expr_optimized(runtime_state, ctx, expr);
                 }
                 Task::ExploreGroup { ctx } => {
-                    explore_group(runtime_state, ctx, self.rule_set.as_ref());
+                    explore_group(runtime_state, memo, ctx, self.rule_set.as_ref());
                 }
             }
         }
@@ -272,7 +273,7 @@ impl Display for ExprRefOption {
     }
 }
 
-fn optimize_group<R>(runtime_state: &mut RuntimeState, ctx: OptimizationContext, rule_set: &R)
+fn optimize_group<R>(runtime_state: &mut RuntimeState, memo: &ExprMemo, ctx: OptimizationContext, rule_set: &R)
 where
     R: RuleSet,
 {
@@ -290,8 +291,9 @@ where
     // Because the runtime_state and the group_state are borrowed mutably it is not possible
     // to split the code bellow into two different functions.
     // error[E0499]: cannot borrow `*runtime_state` as mutable more than once at a time
-    if ctx.group.expr().is_scalar() {
-        let expr = ctx.group.mexpr();
+    let group = memo.get_group(&ctx.group);
+    if group.expr().is_scalar() {
+        let expr = group.mexpr();
 
         if expr.children().len() == 0 {
             let best_expr = BestExpr::new(expr.clone(), 0, vec![]);
@@ -303,7 +305,7 @@ where
     } else {
         runtime_state.tasks.schedule(Task::ExploreGroup { ctx: ctx.clone() });
 
-        for expr in ctx.group.mexprs() {
+        for expr in group.mexprs() {
             let expr_id = expr.id();
             match expr.expr().as_relational() {
                 RelExpr::Logical(_) => {
@@ -324,10 +326,13 @@ where
     }
 }
 
-fn group_optimized(runtime_state: &mut RuntimeState, ctx: OptimizationContext) {
+fn group_optimized(runtime_state: &mut RuntimeState, memo: &ExprMemo, ctx: OptimizationContext) {
     let state = runtime_state.state.init_or_get_state(&ctx);
 
-    assert!(state.best_expr.is_some(), "No best expr for ctx: {}. first expression: {:?}", ctx, ctx.group.expr());
+    if state.best_expr.is_none() {
+        let group = memo.get_group(&ctx.group_id());
+        panic!("No best expr for ctx: {}. first expression: {:?}", ctx, group.mexpr());
+    }
     state.optimized = true;
 }
 
@@ -368,7 +373,7 @@ fn optimize_expr<R>(
                 expr: expr.clone(),
                 group: match rule_match {
                     RuleMatch::Expr => None,
-                    RuleMatch::Group => Some(ctx.group.clone()),
+                    RuleMatch::Group => Some(ctx.group),
                 },
                 #[cfg(test)]
                 rule_name: rule.name(),
@@ -441,24 +446,30 @@ fn apply_rule<R>(
         match result {
             RuleResult::Substitute(expr) => {
                 let new_operator = OperatorExpr::from(expr);
-                let (_, new_expr) = memo.insert_group_member(&ctx.group, Operator::from(new_operator));
+                let memo_group = memo.get_group(&ctx.group);
+                let group_token = memo_group.to_membership_token();
+                let new_expr = memo.insert_group_member(group_token, Operator::from(new_operator));
+                let new_expr = new_expr.expr_ptr().memo_expr();
 
-                log::debug!(" + Logical expression: {}", &new_expr);
+                log::debug!(" + Logical expression: {}", new_expr);
 
                 runtime_state.tasks.schedule(Task::OptimizeExpr {
                     ctx,
-                    expr: new_expr,
+                    expr: new_expr.clone(),
                     explore,
                 });
             }
             RuleResult::Implementation(expr) => {
                 let new_operator = OperatorExpr::from(expr);
                 let new_operator = Operator::from(new_operator);
-                let (_, new_expr) = memo.insert_group_member(&ctx.group, new_operator);
+                let memo_group = memo.get_group(&ctx.group);
+                let group_token = memo_group.to_membership_token();
+                let new_expr = memo.insert_group_member(group_token, new_operator);
+                let new_expr = new_expr.expr_ptr().memo_expr();
 
-                log::debug!(" + Physical expression: {}", &new_expr);
+                log::debug!(" + Physical expression: {}", new_expr);
 
-                let task = get_optimize_rel_inputs_task(&ctx, &new_expr, &runtime_state.properties_cache, rule_set);
+                let task = get_optimize_rel_inputs_task(&ctx, new_expr, &runtime_state.properties_cache, rule_set);
                 runtime_state.tasks.schedule(task);
             }
         }
@@ -484,7 +495,8 @@ fn enforce_properties<R>(
     );
 
     let (enforcer_expr, remaining_properties) = {
-        let input = RelNode::from_group(ctx.group.clone());
+        let group = memo.get_group(&ctx.group_id());
+        let input = RelNode::from_group(group);
 
         let (enforcer_expr, remaining_properties) = rule_set
             .create_enforcer(&ctx.required_properties, input)
@@ -496,7 +508,8 @@ fn enforce_properties<R>(
         // optimize_inputs on the enforcer which then calls optimize group on the same group and we have an infinite loop.
         // 2) copy_out_best_expr traverses its child expressions recursively so adding an enforcer to a group which
         // is used as its input results an infinite loop during the traversal.
-        let (_, enforcer_expr) = memo.insert_group(Operator::from(enforcer_expr));
+        let enforcer_expr = memo.insert_group(Operator::from(enforcer_expr));
+        let enforcer_expr = enforcer_expr.expr_ptr().memo_expr().clone();
         let remaining_properties = runtime_state.properties_cache.insert(remaining_properties);
 
         (enforcer_expr, remaining_properties)
@@ -507,7 +520,7 @@ fn enforce_properties<R>(
         runtime_state.tasks.schedule(Task::OptimizeInputs {
             ctx: ctx.clone(),
             expr: enforcer_expr,
-            inputs: InputContexts::completed(ctx.group.clone(), remaining_properties.clone()),
+            inputs: InputContexts::completed(ctx.group, remaining_properties.clone()),
         });
 
         let input_ctx = OptimizationContext {
@@ -516,7 +529,7 @@ fn enforce_properties<R>(
         };
         // combine with remaining_properties ???
         let required_properties = expr.expr().as_relational().as_physical().build_required_properties();
-        let num_children = expr.mexpr().num_children();
+        let num_children = expr.children().len();
         let required_properties = runtime_state.properties_cache.insert_list(required_properties, num_children);
         let inputs = InputContexts::with_required_properties(&expr, required_properties);
 
@@ -554,13 +567,12 @@ fn optimize_inputs<T>(
 
         runtime_state.tasks.schedule(Task::OptimizeGroup { ctx: input_ctx })
     } else {
-        let group = &ctx.group;
         let cost = match expr.expr() {
-            OperatorExpr::Relational(expr) => {
-                let logical_properties = group.props().as_relational().logical();
+            OperatorExpr::Relational(rel_expr) => {
+                let logical_properties = expr.props().as_relational().logical();
                 let statistics = logical_properties.statistics();
                 let (cost_ctx, inputs_cost) = new_cost_estimation_ctx(&inputs, &runtime_state.state);
-                let expr_cost = cost_estimator.estimate_cost(expr.as_physical(), &cost_ctx, statistics);
+                let expr_cost = cost_estimator.estimate_cost(rel_expr.as_physical(), &cost_ctx, statistics);
                 expr_cost + inputs_cost
             }
             OperatorExpr::Scalar(_) => {
@@ -614,15 +626,15 @@ where
         // In this case every child expression is optimized using required properties of its memo group.
         let inputs = expr
             .children()
-            .map(|group| {
-                let required_properties = match group.expr() {
+            .map(|child_expr| {
+                let required_properties = match child_expr.expr() {
                     OperatorExpr::Relational(_) => {
-                        properties_cache.insert(group.props().as_relational().required.clone())
+                        properties_cache.insert(child_expr.props().as_relational().required.clone())
                     }
                     OperatorExpr::Scalar(_) => properties_cache.none(),
                 };
                 OptimizationContext {
-                    group,
+                    group: child_expr.group_id(),
                     required_properties,
                 }
             })
@@ -652,7 +664,7 @@ where
         // -> same as the above
 
         // FIXME: MergeSort -> 'provides' conflicts with 'retains'
-        let num_children = expr.mexpr().num_children();
+        let num_children = expr.children().len();
         let required_properties = properties_cache.insert_list(required_properties, num_children);
         let inputs = InputContexts::with_required_properties(expr, required_properties);
         Task::OptimizeInputs {
@@ -677,7 +689,7 @@ fn expr_optimized(runtime_state: &mut RuntimeState, ctx: OptimizationContext, ex
     state.mark_expr_optimized(expr_id);
 }
 
-fn explore_group<R>(runtime_state: &mut RuntimeState, ctx: OptimizationContext, rule_set: &R)
+fn explore_group<R>(runtime_state: &mut RuntimeState, memo: &ExprMemo, ctx: OptimizationContext, rule_set: &R)
 where
     R: RuleSet,
 {
@@ -685,14 +697,15 @@ where
         return;
     }
 
-    if rule_set.can_explore_with_enforcer(ctx.group.expr().as_relational().as_logical(), &ctx.required_properties) {
+    let group = memo.get_group(&ctx.group);
+    if rule_set.can_explore_with_enforcer(group.expr().as_relational().as_logical(), &ctx.required_properties) {
         runtime_state.tasks.schedule(Task::EnforceProperties {
             ctx: ctx.clone(),
             expr: ExprRefOption::none(),
         })
     }
 
-    for expr in ctx.group.mexprs() {
+    for expr in group.mexprs() {
         match expr.expr().as_relational() {
             RelExpr::Logical(_) => runtime_state.tasks.schedule(Task::OptimizeExpr {
                 ctx: ctx.clone(),
@@ -706,19 +719,19 @@ where
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 struct OptimizationContext {
-    group: GroupRef,
+    group: GroupId,
     required_properties: Rc<PhysicalProperties>,
 }
 
 impl OptimizationContext {
     fn group_id(&self) -> GroupId {
-        self.group.id()
+        self.group
     }
 }
 
 impl Display for OptimizationContext {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{{ group: {}", self.group.id())?;
+        write!(f, "{{ group: {}", self.group)?;
         if !self.required_properties.is_empty() {
             write!(f, " {}", self.required_properties)?;
         }
@@ -857,7 +870,7 @@ impl Display for BestExpr {
 pub struct RuleBinding {
     rule_id: RuleId,
     expr: ExprRef,
-    group: Option<GroupRef>,
+    group: Option<GroupId>,
     #[cfg(test)]
     rule_name: String,
 }
@@ -884,7 +897,7 @@ impl AppliedRules {
         self.exprs.insert((*rule_id, expr_id));
 
         if let Some(group) = group {
-            self.groups.insert((*rule_id, group.id()));
+            self.groups.insert((*rule_id, *group));
         }
     }
 }
@@ -900,8 +913,8 @@ impl InputContexts {
         let inputs = expr
             .children()
             .zip(required_properties.into_iter())
-            .map(|(group, required)| OptimizationContext {
-                group,
+            .map(|(child_expr, required)| OptimizationContext {
+                group: child_expr.group_id(),
                 required_properties: required,
             })
             .collect();
@@ -915,8 +928,8 @@ impl InputContexts {
         InputContexts {
             inputs: expr
                 .children()
-                .map(|group| OptimizationContext {
-                    group,
+                .map(|child_expr| OptimizationContext {
+                    group: child_expr.group_id(),
                     required_properties: required_properties.clone(),
                 })
                 .collect(),
@@ -924,7 +937,7 @@ impl InputContexts {
         }
     }
 
-    fn completed(group: GroupRef, required_properties: Rc<PhysicalProperties>) -> Self {
+    fn completed(group: GroupId, required_properties: Rc<PhysicalProperties>) -> Self {
         let mut ctx = InputContexts {
             inputs: vec![OptimizationContext {
                 group,
@@ -964,24 +977,21 @@ impl Display for InputContexts {
 
 fn new_cost_estimation_ctx(inputs: &InputContexts, state: &State) -> (CostEstimationContext, Cost) {
     let capacity = inputs.inputs.len();
-    let mut input_groups = Vec::with_capacity(capacity);
+    let mut best_exprs = Vec::with_capacity(capacity);
     let mut input_cost = 0;
 
     for ctx in inputs.inputs.iter() {
         let group_state = state.get_state(ctx);
-        let cost = group_state.best_expr.as_ref().map(|e| e.cost);
-        match cost {
-            Some(cost) => {
-                let group = ctx.group.clone();
-                input_groups.push(group);
-                input_cost += cost;
-            }
-            //FIXME: Is this really a hard error?
-            None => panic!("No best expr for input group: {:?}", ctx),
-        }
+        let best_expr = group_state
+            .best_expr
+            .as_ref()
+            .unwrap_or_else(|| panic!("No best expr for input group: {:?}", ctx));
+
+        best_exprs.push(best_expr.expr.clone());
+        input_cost += best_expr.cost;
     }
 
-    (CostEstimationContext { input_groups }, input_cost)
+    (CostEstimationContext { inputs: best_exprs }, input_cost)
 }
 
 #[derive(Debug)]
@@ -1050,6 +1060,7 @@ impl PhysicalPropertiesCache {
 struct OptimizerResultCallbackContext<'o> {
     ctx: &'o OptimizationContext,
     best_expr: &'o BestExpr,
+    properties: &'o Properties,
     inputs: &'o [OptimizationContext],
 }
 
@@ -1059,7 +1070,7 @@ impl<'o> BestExprContext for OptimizerResultCallbackContext<'o> {
     }
 
     fn props(&self) -> &Properties {
-        self.ctx.group.props()
+        self.properties
     }
 
     fn group_id(&self) -> GroupId {
@@ -1109,7 +1120,14 @@ where
                 new_inputs.push_back(out);
             }
 
-            let best_expr_ctx = OptimizerResultCallbackContext { ctx, best_expr, inputs };
+            let group = memo.get_group(&ctx.group);
+            let properties = group.props();
+            let best_expr_ctx = OptimizerResultCallbackContext {
+                ctx,
+                best_expr,
+                properties,
+                inputs,
+            };
             result_callback.on_best_expr(best_expr_ref.clone(), &best_expr_ctx);
             //TODO: Copy required properties.
             let mut new_inputs = NewChildExprs::new(new_inputs);

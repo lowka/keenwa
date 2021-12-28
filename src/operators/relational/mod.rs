@@ -1,4 +1,4 @@
-use crate::memo::ExprRef;
+use crate::memo::ExprPtr;
 use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::scalar::expr::NestedExpr;
@@ -55,12 +55,12 @@ impl RelExpr {
 impl NestedExpr for RelNode {
     fn write_to_fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self.expr_ref() {
-            ExprRef::Detached(_) => {
+            ExprPtr::Owned(_) => {
                 // let ptr: *const Operator = &**expr;
                 // write!(f, "ptr {:?}", ptr)
                 write!(f, "*ptr")
             }
-            ExprRef::Memo(group) => write!(f, "{}", group.id()),
+            ExprPtr::Memo(expr) => write!(f, "{}", expr.group_id()),
         }
     }
 }
