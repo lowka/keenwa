@@ -23,6 +23,7 @@ where
         rhs: Box<Expr<T>>,
     },
     Not(Box<Expr<T>>),
+    Alias(Box<Expr<T>>, String),
     Aggregate {
         func: AggregateFunction,
         args: Vec<Expr<T>>,
@@ -64,6 +65,9 @@ where
             Expr::Not(expr) => {
                 expr.accept(visitor)?;
             }
+            Expr::Alias(expr, _) => {
+                expr.accept(visitor)?;
+            }
             Expr::Aggregate { args, filter, .. } => {
                 for arg in args {
                     arg.accept(visitor)?;
@@ -102,6 +106,10 @@ where
                 Expr::BinaryExpr { lhs, op, rhs }
             }
             Expr::Not(expr) => expr.rewrite(rewriter)?,
+            Expr::Alias(expr, name) => {
+                let expr = rewrite_boxed(*expr, rewriter)?;
+                Expr::Alias(expr, name)
+            }
             Expr::Aggregate { func, args, filter } => Expr::Aggregate {
                 func,
                 args: rewrite_vec(args, rewriter)?,
@@ -118,6 +126,90 @@ where
     {
         f.write_name("Expr");
         f.write_value("", self);
+    }
+
+    /// Returns child expressions of this expression.
+    pub fn get_children(&self) -> Vec<Expr<T>> {
+        match self {
+            Expr::Column(_) => vec![],
+            Expr::ColumnName(_) => vec![],
+            Expr::Scalar(_) => vec![],
+            Expr::BinaryExpr { lhs, rhs, .. } => vec![lhs.as_ref().clone(), rhs.as_ref().clone()],
+            Expr::Not(expr) => vec![expr.as_ref().clone()],
+            Expr::Alias(expr, _) => vec![expr.as_ref().clone()],
+            Expr::Aggregate { args, filter, .. } => {
+                let mut children: Vec<_> = args.iter().cloned().collect();
+                if let Some(filter) = filter.clone() {
+                    children.push(filter.as_ref().clone())
+                }
+                children
+            }
+            Expr::SubQuery(_) => vec![],
+        }
+    }
+
+    /// Creates a new expressions that retains all properties of this expression but contains the given child expressions.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if the number of elements in `children` is not equal to the
+    /// number of child expressions of this expression.
+    pub fn with_children(&self, mut children: Vec<Expr<T>>) -> Self {
+        fn expect_children(expr: &str, actual: usize, expected: usize) {
+            assert_eq!(actual, expected, "{}: Unexpected number of child expressions", expr);
+        }
+
+        match self {
+            Expr::Column(id) => {
+                expect_children("Column", children.len(), 0);
+                Expr::Column(*id)
+            }
+            Expr::ColumnName(name) => {
+                expect_children("ColumnName", children.len(), 0);
+                Expr::ColumnName(name.clone())
+            }
+            Expr::Scalar(value) => {
+                expect_children("Scalar", children.len(), 0);
+                Expr::Scalar(value.clone())
+            }
+            Expr::BinaryExpr { op, .. } => {
+                expect_children("BinaryExpr", children.len(), 2);
+                Expr::BinaryExpr {
+                    lhs: Box::new(children.swap_remove(0)),
+                    op: op.clone(),
+                    rhs: Box::new(children.swap_remove(0)),
+                }
+            }
+            Expr::Not(_) => {
+                expect_children("Not", children.len(), 1);
+                Expr::Not(Box::new(children.swap_remove(0)))
+            }
+            Expr::Alias(_, name) => {
+                expect_children("Alias", children.len(), 1);
+                Expr::Alias(Box::new(children.swap_remove(0)), name.clone())
+            }
+            Expr::Aggregate { func, args, filter } => {
+                expect_children("Aggregate", children.len(), args.len() + filter.as_ref().map(|_| 1).unwrap_or(0));
+                let (args, filter) = if let Some(_) = filter {
+                    // filter is the last expression (see Expr::get_children)
+                    let filter = children.remove(args.len() - 1);
+                    // use [0..len-1] expressions as arguments.
+                    let args = children;
+                    (args, Some(Box::new(filter)))
+                } else {
+                    (children, None)
+                };
+                Expr::Aggregate {
+                    func: func.clone(),
+                    args,
+                    filter,
+                }
+            }
+            Expr::SubQuery(node) => {
+                expect_children("SubQuery", children.len(), 0);
+                Expr::SubQuery(node.clone())
+            }
+        }
     }
 }
 
@@ -225,6 +317,7 @@ where
                 Ok(())
             }
             Expr::Not(expr) => write!(f, "NOT {}", &*expr),
+            Expr::Alias(expr, name) => write!(f, "{} AS {}", &*expr, name),
             Expr::SubQuery(expr) => {
                 write!(f, "SubQuery ")?;
                 expr.write_to_fmt(f)
