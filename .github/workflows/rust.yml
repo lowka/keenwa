@@ -37,21 +37,26 @@ jobs:
       - name: rustfmt
         run: cargo fmt --all -- --check
 
-  miri:
-    name: Miri
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v2
-      - name: Install nightly
-        run: rustup install nightly
-      - name: Set toolchain
-        run: rustup default nightly
-      - name: Install xargo
-        run: cargo install xargo
-      - name: Install miri
-        run: rustup component add miri
-      - name: Build
-        run: cargo build --verbose
-      - name: Run tests under miri
-        run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test
+## error: component 'miri' for target 'x86_64-unknown-linux-gnu' is unavailable for download for channel 'nightly'
+# Sometimes not all components are available in any given nightly
+######
+# -Zmiri-disable-isolation is ignored.
+#
+#  miri:
+#    name: Miri
+#    runs-on: ubuntu-latest
+#    timeout-minutes: 10
+#    steps:
+#      - uses: actions/checkout@v2
+#      - name: Install nightly
+#        run: rustup install nightly
+#      - name: Set toolchain
+#        run: rustup default nightly
+#      - name: Install xargo
+#        run: cargo install xargo
+#      - name: Install miri
+#        run: rustup component add miri
+#      - name: Build
+#        run: cargo build --verbose
+#      - name: Run tests under miri
+#        run: MIRIFLAGS="-Zmiri-disable-isolation" cargo miri test
