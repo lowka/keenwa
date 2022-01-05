@@ -63,9 +63,22 @@ fn rewrite(mut state: State, expr: &RelNode) -> RelNode {
                 new_inputs(expr, vec![result])
             }
         }
-        LogicalExpr::Projection(LogicalProjection { input, .. }) => {
-            let result = rewrite(state, input);
+        LogicalExpr::Projection(LogicalProjection {
+            input, exprs, columns, ..
+        }) => {
+            // Rewrite filter expression so they do not contain aliases.
 
+            let projections = prepare_projections(columns, exprs);
+
+            for (filter, columns) in state.filters.iter_mut() {
+                let f = remove_projections(filter.expr(), &projections);
+                let cols = collect_columns(&f);
+
+                *columns = cols.into_iter().collect();
+                *filter = ScalarNode::from(f);
+            }
+
+            let result = rewrite(state, input);
             new_inputs(expr, vec![result])
         }
         LogicalExpr::Aggregate(LogicalAggregate {
@@ -109,14 +122,6 @@ impl State {
     fn from_filters(filters: Vec<Filter>) -> Self {
         let filters = filters.into_iter().map(|f| (f.0.clone(), f.1.clone())).collect();
         State { filters }
-    }
-
-    fn add_filters(&mut self, filters: Vec<ScalarExpr>) {
-        for filter in filters {
-            let filter_columns: HashSet<ColumnId> = collect_columns(&filter).into_iter().collect();
-            let filter = ScalarNode::from(filter);
-            self.filters.push((filter, filter_columns));
-        }
     }
 
     fn get_filters(&self, columns: &[ColumnId]) -> Vec<Filter> {
@@ -164,6 +169,60 @@ fn add_filters(mut state: State, expr: &RelNode, used_columns: &[ColumnId]) -> R
         state.filters = remaining_filters;
         rewrite_inputs(state, &rel_node)
     }
+}
+
+fn prepare_projections(columns: &[ColumnId], exprs: &[ScalarExpr]) -> HashMap<ColumnId, ScalarExpr> {
+    struct RewriteAliasExpr<'a> {
+        projections: &'a HashMap<ColumnId, ScalarExpr>,
+    }
+    impl<'a> ExprRewriter<RelNode> for RewriteAliasExpr<'a> {
+        type Error = Infallible;
+        fn rewrite(&mut self, expr: ScalarExpr) -> Result<ScalarExpr, Self::Error> {
+            if let ScalarExpr::Column(id) = expr {
+                // We must to replace aliased columns with their origins,
+                // otherwise nested alias expressions (eg. "a + b2" where b2 = alias b1 and b1 = alias b)
+                // would not be rewritten correctly.
+                let projection = self.projections.get(&id).expect("Unexpected column in alias expr");
+                if let ScalarExpr::Column(a_id) = projection {
+                    return Ok(ScalarExpr::Column(*a_id));
+                }
+            }
+            Ok(expr)
+        }
+    }
+
+    let mut projections = HashMap::new();
+    for (i, expr) in exprs.iter().enumerate() {
+        let col_id = columns[i];
+        match expr {
+            ScalarExpr::Alias(expr, _) => {
+                let expr = expr.as_ref().clone();
+                let mut rewriter = RewriteAliasExpr {
+                    projections: &projections,
+                };
+                let expr = expr.rewrite(&mut rewriter).unwrap();
+                projections.insert(col_id, expr);
+            }
+            _ => {
+                projections.insert(col_id, expr.clone());
+            }
+        }
+    }
+    projections
+}
+
+fn remove_projections(expr: &ScalarExpr, projection: &HashMap<ColumnId, ScalarExpr>) -> ScalarExpr {
+    let child_exprs = expr.get_children();
+    let child_exprs = child_exprs.into_iter().map(|e| remove_projections(&e, projection)).collect();
+
+    // Replace references to projection items with expressions that do not use other projection items.
+    if let ScalarExpr::Column(id) = expr {
+        if let Some(expr) = projection.get(id) {
+            return expr.clone();
+        }
+    }
+
+    expr.with_children(child_exprs)
 }
 
 fn rewrite_join(
@@ -394,10 +453,59 @@ mod test {
                 Ok(filter_a1)
             },
             r#"
-LogicalProjection cols=[1]
+LogicalProjection cols=[1] exprs=[col:1]
   input: LogicalSelect
       input: LogicalGet A cols=[1, 2]
       filter: Expr col:1 > 100
+"#,
+        );
+    }
+
+    #[test]
+    fn test_push_past_project_with_aliases() {
+        rewrite_expr(
+            |builder| {
+                let from_a = builder.get("A", vec!["a1", "a2"])?;
+                let col_a1 = ScalarExpr::ColumnName("a1".into());
+                let col_a2 = ScalarExpr::ColumnName("a2".into());
+                let col_a3 = expr_alias(cols_add("a1", "a2"), "a3");
+
+                let project = from_a.project(vec![col_a1, col_a2, col_a3])?;
+                let filter = col_gt("a3", 100);
+                let filter_a1 = project.select(Some(filter))?;
+
+                Ok(filter_a1)
+            },
+            r#"
+LogicalProjection cols=[1, 2, 3] exprs=[col:1, col:2, col:1 + col:2 AS a3]
+  input: LogicalSelect
+      input: LogicalGet A cols=[1, 2]
+      filter: Expr col:1 + col:2 > 100
+"#,
+        );
+    }
+
+    #[test]
+    fn test_push_past_project_with_nested_aliases() {
+        rewrite_expr(
+            |builder| {
+                let from_a = builder.get("A", vec!["a1", "a2"])?;
+                let col_a1 = ScalarExpr::ColumnName("a1".into());
+                let col_a2 = ScalarExpr::ColumnName("a2".into());
+                let col_a3 = expr_alias(ScalarExpr::ColumnName("a2".into()), "a3");
+                let col_a4 = expr_alias(cols_add("a1", "a3"), "a4");
+
+                let project = from_a.project(vec![col_a1, col_a2, col_a3, col_a4])?;
+                let filter = expr_and(col_gt("a4", 100), col_gt("a3", 50));
+                let filter_a1 = project.select(Some(filter))?;
+
+                Ok(filter_a1)
+            },
+            r#"
+LogicalProjection cols=[1, 2, 3, 4] exprs=[col:1, col:2, col:2 AS a3, col:1 + col:3 AS a4]
+  input: LogicalSelect
+      input: LogicalGet A cols=[1, 2]
+      filter: Expr col:1 + col:2 > 100 AND col:2 > 50
 "#,
         );
     }
@@ -415,9 +523,9 @@ LogicalProjection cols=[1]
                 Ok(filter_a1)
             },
             r#"
-LogicalProjection cols=[1]
-  input: LogicalProjection cols=[1]
-      input: LogicalProjection cols=[1]
+LogicalProjection cols=[1] exprs=[col:1]
+  input: LogicalProjection cols=[1] exprs=[col:1]
+      input: LogicalProjection cols=[1] exprs=[col:1]
             input: LogicalSelect
                     input: LogicalGet A cols=[1, 2]
                     filter: Expr col:1 > 100
@@ -442,8 +550,8 @@ LogicalProjection cols=[1]
                 Ok(filter_a1)
             },
             r#"
-LogicalProjection cols=[1]
-  input: LogicalProjection cols=[1, 2]
+LogicalProjection cols=[1] exprs=[col:1]
+  input: LogicalProjection cols=[1, 2] exprs=[col:1, col:2]
       input: LogicalSelect
             input: LogicalGet A cols=[1, 2]
             filter: Expr col:1 > 100 AND col:2 > 100
@@ -546,7 +654,7 @@ LogicalJoin using=[(1, 4)]
             },
             r#"
 LogicalJoin using=[(1, 4)]
-  left: LogicalProjection cols=[1, 2]
+  left: LogicalProjection cols=[1, 2] exprs=[col:1, col:2]
       input: LogicalSelect
             input: LogicalGet A cols=[1, 2, 3]
             filter: Expr col:1 > 100
@@ -595,7 +703,7 @@ LogicalJoin using=[(1, 4)]
   left: LogicalSelect
       input: LogicalGet A cols=[1, 2, 3]
       filter: Expr col:1 > 100
-  right: LogicalProjection cols=[4, 5]
+  right: LogicalProjection cols=[4, 5] exprs=[col:4, col:5]
       input: LogicalSelect
             input: LogicalGet B cols=[4, 5, 6]
             filter: Expr col:4 > 100
@@ -682,7 +790,7 @@ LogicalSelect
     }
 
     #[test]
-    fn test_push_past_part_of_the_join() {
+    fn test_push_past_join_partilally() {
         rewrite_expr(
             |builder| {
                 let from_a = builder.clone().get("A", vec!["a1", "a2", "a3"])?;
@@ -790,7 +898,7 @@ LogicalSelect
             },
             r#"
 LogicalAggregate
-  input: LogicalProjection cols=[1]
+  input: LogicalProjection cols=[1] exprs=[col:1]
       input: LogicalSelect
             input: LogicalGet A cols=[1]
             filter: Expr col:1 > 100
@@ -873,6 +981,10 @@ LogicalAggregate
         }
     }
 
+    fn expr_alias(expr: ScalarExpr, name: &str) -> ScalarExpr {
+        ScalarExpr::Alias(Box::new(expr), name.into())
+    }
+
     fn cols_eq(lhs: &str, rhs: &str) -> ScalarExpr {
         ScalarExpr::BinaryExpr {
             lhs: Box::new(ScalarExpr::ColumnName(lhs.into())),
@@ -893,6 +1005,14 @@ LogicalAggregate
         ScalarExpr::BinaryExpr {
             lhs: Box::new(lhs),
             op: BinaryOp::Eq,
+            rhs: Box::new(rhs),
+        }
+    }
+
+    fn expr_and(lhs: ScalarExpr, rhs: ScalarExpr) -> ScalarExpr {
+        ScalarExpr::BinaryExpr {
+            lhs: Box::new(lhs),
+            op: BinaryOp::And,
             rhs: Box::new(rhs),
         }
     }

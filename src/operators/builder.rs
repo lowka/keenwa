@@ -164,10 +164,7 @@ impl OperatorBuilder {
     pub fn select(mut self, filter: Option<ScalarExpr>) -> Result<Self, OptimizerError> {
         let (input, scope) = self.rel_node()?;
         let filter = if let Some(filter) = filter {
-            let mut rewriter = RewriteExprs {
-                scope: &scope,
-                result: Ok(()),
-            };
+            let mut rewriter = RewriteExprs::new(&scope);
             let filter = filter.rewrite(&mut rewriter)?;
             let expr = self.add_scalar_node(filter);
             Some(expr)
@@ -187,20 +184,23 @@ impl OperatorBuilder {
 
         let mut column_ids = Vec::new();
         let mut output_columns = Vec::new();
+        let mut new_exprs = vec![];
+
         for expr in exprs {
-            let mut rewriter = RewriteExprs {
-                scope: &scope,
-                result: Ok(()),
-            };
-            let expr = expr.rewrite(&mut rewriter)?;
-            let (id, name) = match expr {
+            let mut rewriter = RewriteExprs::for_projection(&scope, &output_columns);
+            let expr = expr.clone().rewrite(&mut rewriter)?;
+            let (id, name) = match expr.clone() {
                 ScalarExpr::Column(id) => {
                     // Should never panic because RewriteExprs set an error when encounters an unknown column id.
                     let meta = self.metadata.get_column(&id);
                     (id, meta.name().clone())
                 }
                 _ => {
-                    let name = "?column?".to_string();
+                    let (expr, name) = if let ScalarExpr::Alias(expr, name) = expr.clone() {
+                        (*expr, name)
+                    } else {
+                        (expr.clone(), "?column?".to_string())
+                    };
                     let data_type = resolve_expr_type(&expr, &self.metadata);
                     let column_meta = ColumnMetadata::new_synthetic_column(name.clone(), data_type, Some(expr));
                     let id = self.metadata.add_column(column_meta);
@@ -208,12 +208,13 @@ impl OperatorBuilder {
                 }
             };
             column_ids.push(id);
-            output_columns.push((name, id))
+            output_columns.push((name.clone(), id));
+            new_exprs.push(expr.clone());
         }
 
         let expr = LogicalExpr::Projection(LogicalProjection {
             input,
-            exprs: vec![],
+            exprs: new_exprs,
             columns: column_ids,
         });
 
@@ -282,10 +283,7 @@ impl OperatorBuilder {
             columns: output_columns,
         };
 
-        let mut rewriter = RewriteExprs {
-            scope: &scope,
-            result: Ok(()),
-        };
+        let mut rewriter = RewriteExprs::new(&scope);
         let expr = expr.rewrite(&mut rewriter)?;
         let expr = self.add_scalar_node(expr);
         let condition = JoinCondition::On(JoinOn::new(expr));
@@ -306,10 +304,7 @@ impl OperatorBuilder {
                     expr,
                     descending: _descending,
                 } = option;
-                let mut rewriter = RewriteExprs {
-                    scope: &scope,
-                    result: Ok(()),
-                };
+                let mut rewriter = RewriteExprs::new(&scope);
                 let expr = expr.rewrite(&mut rewriter)?;
                 let column_id = if let ScalarExpr::Column(id) = expr {
                     id
@@ -508,7 +503,18 @@ struct OperatorScope {
 
 struct RewriteExprs<'a> {
     scope: &'a OperatorScope,
-    result: Result<(), OptimizerError>,
+    // Aliased expressions must visible in the projection scope.
+    projection: &'a [(String, ColumnId)],
+}
+
+impl<'a> RewriteExprs<'a> {
+    fn new(scope: &'a OperatorScope) -> Self {
+        RewriteExprs { scope, projection: &[] }
+    }
+
+    fn for_projection(scope: &'a OperatorScope, projection: &'a [(String, ColumnId)]) -> Self {
+        RewriteExprs { scope, projection }
+    }
 }
 
 impl ExprRewriter<RelNode> for RewriteExprs<'_> {
@@ -531,7 +537,10 @@ impl ExprRewriter<RelNode> for RewriteExprs<'_> {
                 Ok(expr)
             }
             ScalarExpr::ColumnName(ref column_name) => {
-                let column_id = self.scope.columns.iter().find(|(name, _id)| column_name == name).map(|(_, id)| *id);
+                let column_id = self.scope.columns.iter().find(|(name, _)| column_name == name).map(|(_, id)| *id);
+                let column_id = column_id
+                    .or_else(|| self.projection.iter().find(|(name, _)| column_name == name).map(|(_, id)| *id));
+
                 match column_id {
                     Some(column_id) => Ok(ScalarExpr::Column(column_id)),
                     None => {
@@ -604,10 +613,7 @@ impl AggregateBuilder<'_> {
             .into_iter()
             .map(|expr| match expr {
                 AggrExpr::Function { func, column } => {
-                    let mut rewriter = RewriteExprs {
-                        scope: &scope,
-                        result: Ok(()),
-                    };
+                    let mut rewriter = RewriteExprs::new(&scope);
                     let expr = ScalarExpr::ColumnName(column);
                     let expr = expr.rewrite(&mut rewriter)?;
 
@@ -627,10 +633,7 @@ impl AggregateBuilder<'_> {
                     Ok((expr, (name, id)))
                 }
                 AggrExpr::Column(name) => {
-                    let mut rewriter = RewriteExprs {
-                        scope: &scope,
-                        result: Ok(()),
-                    };
+                    let mut rewriter = RewriteExprs::new(&scope);
                     let expr = ScalarExpr::ColumnName(name.clone());
                     let expr = expr.rewrite(&mut rewriter)?;
                     let expr = self.builder.add_scalar_node(expr);
@@ -655,10 +658,7 @@ impl AggregateBuilder<'_> {
         let group_exprs: Result<Vec<ScalarNode>, OptimizerError> = group_exprs
             .into_iter()
             .map(|name| {
-                let mut rewriter = RewriteExprs {
-                    scope: &scope,
-                    result: Ok(()),
-                };
+                let mut rewriter = RewriteExprs::new(&scope);
                 let expr = ScalarExpr::ColumnName(name);
                 let expr = expr.rewrite(&mut rewriter)?;
                 let expr = self.builder.add_scalar_node(expr);
@@ -754,6 +754,7 @@ fn resolve_expr_type(expr: &ScalarExpr, metadata: &MutableMetadata) -> DataType 
             assert_eq!(tpe, DataType::Bool, "Invalid argument type for NOT operator");
             tpe
         }
+        ScalarExpr::Alias(expr, _) => resolve_expr_type(expr, metadata),
         ScalarExpr::Aggregate { func, args, .. } => {
             for (i, arg) in args.iter().enumerate() {
                 let arg_tpe = resolve_expr_type(arg, metadata);
@@ -873,23 +874,30 @@ Memo:
         let mut tester = OperatorBuilderTester::new();
 
         tester.build_operator(|builder| {
-            let projection_list =
-                vec![ScalarExpr::ColumnName("a2".into()), ScalarExpr::Scalar(ScalarValue::Int32(100))];
+            let from_a = builder.get("A", vec!["a1", "a2"])?;
 
-            builder.get("A", vec!["a1", "a2"])?.project(projection_list)?.build()
+            let col_a2 = ScalarExpr::ColumnName("a2".into());
+            let val_i100 = ScalarExpr::Scalar(ScalarValue::Int32(100));
+            let alias = ScalarExpr::Alias(Box::new(col_a2.clone()), "a2_alias".into());
+            let use_alias = ScalarExpr::Alias(Box::new(alias.clone()), "a2_alias_alias".into());
+            let projection_list = vec![col_a2, val_i100, alias, use_alias];
+
+            from_a.project(projection_list)?.build()
         });
 
         tester.expect_expr(
             r#"
-LogicalProjection cols=[2, 3]
+LogicalProjection cols=[2, 3, 4, 5] exprs=[col:2, 100, col:2 AS a2_alias, col:2 AS a2_alias AS a2_alias_alias]
   input: LogicalGet A cols=[1, 2]
-  output cols: [2, 3]
+  output cols: [2, 3, 4, 5]
 Metadata:
   col:1 A.a1 Int32
   col:2 A.a2 Int32
   col:3 ?column? Int32, expr: 100
+  col:4 a2_alias Int32, expr: col:2
+  col:5 a2_alias_alias Int32, expr: col:2 AS a2_alias
 Memo:
-  01 LogicalProjection input=00 cols=[2, 3]
+  01 LogicalProjection input=00 cols=[2, 3, 4, 5] exprs=[col:2, 100, col:2 AS a2_alias, col:2 AS a2_alias AS a2_alias_alias]
   00 LogicalGet A cols=[1, 2]
 "#,
         );
@@ -917,8 +925,8 @@ Memo:
 
         tester.expect_expr(
             r#"
-LogicalProjection cols=[2]
-  input: LogicalProjection cols=[2, 3, 1]
+LogicalProjection cols=[2] exprs=[col:2]
+  input: LogicalProjection cols=[2, 3, 1] exprs=[col:2, 100, col:1]
       input: LogicalGet A cols=[1, 2]
   output cols: [2]
 Metadata:
@@ -926,8 +934,8 @@ Metadata:
   col:2 A.a2 Int32
   col:3 ?column? Int32, expr: 100
 Memo:
-  02 LogicalProjection input=01 cols=[2]
-  01 LogicalProjection input=00 cols=[2, 3, 1]
+  02 LogicalProjection input=01 cols=[2] exprs=[col:2]
+  01 LogicalProjection input=00 cols=[2, 3, 1] exprs=[col:2, 100, col:1]
   00 LogicalGet A cols=[1, 2]
 "#,
         );
@@ -1068,7 +1076,7 @@ Memo:
   04 LogicalSelect input=02 filter=03
   03 Expr SubQuery 01 = true
   02 LogicalGet A cols=[1, 2]
-  01 LogicalProjection input=00 cols=[3]
+  01 LogicalProjection input=00 cols=[3] exprs=[true]
   00 LogicalEmpty
 "#,
         );
