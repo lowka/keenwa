@@ -755,7 +755,7 @@ fn test_select_1() {
     let mut tester = OptimizerTester::new();
 
     tester.set_operator(|builder| {
-        let from = builder.empty()?;
+        let from = builder.empty(true)?;
         let project = from.project(vec![ScalarExpr::Scalar(ScalarValue::Int32(1))])?;
         let select = project.select(None)?;
 
@@ -766,7 +766,7 @@ fn test_select_1() {
         r#"
 02 Select [01]
 01 Projection [00] cols=[1]
-00 Empty
+00 Empty return_one_row=true
 "#,
     );
 }

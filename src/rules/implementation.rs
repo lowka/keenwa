@@ -3,8 +3,8 @@ use crate::error::OptimizerError;
 use crate::meta::ColumnId;
 use crate::operators::relational::join::{get_non_empty_join_columns_pair, JoinCondition};
 use crate::operators::relational::logical::{
-    LogicalAggregate, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin, LogicalProjection,
-    LogicalSelect, LogicalUnion,
+    LogicalAggregate, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin,
+    LogicalProjection, LogicalSelect, LogicalUnion,
 };
 use crate::operators::relational::physical::{
     Append, Empty, HashAggregate, HashJoin, HashedSetOp, IndexScan, MergeSortJoin, NestedLoop, PhysicalExpr,
@@ -452,8 +452,10 @@ impl Rule for EmptyRule {
     }
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
-        if matches!(expr, LogicalExpr::Empty(_)) {
-            Ok(Some(RuleResult::Implementation(PhysicalExpr::Empty(Empty {}))))
+        if let LogicalExpr::Empty(LogicalEmpty { return_one_row }) = expr {
+            Ok(Some(RuleResult::Implementation(PhysicalExpr::Empty(Empty {
+                return_one_row: *return_one_row,
+            }))))
         } else {
             Ok(None)
         }
@@ -573,11 +575,11 @@ HashedSetOp intersect=false all=true
     #[test]
     fn test_empty() {
         let mut tester = RuleTester::new(EmptyRule);
-        let expr = LogicalExpr::Empty(LogicalEmpty {});
+        let expr = LogicalExpr::Empty(LogicalEmpty { return_one_row: true });
         tester.apply(
             &expr,
             r#"
-Empty
+Empty return_one_row=true
         "#,
         )
     }

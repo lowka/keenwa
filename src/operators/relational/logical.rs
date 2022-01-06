@@ -601,12 +601,16 @@ impl LogicalExcept {
 }
 
 #[derive(Debug, Clone)]
-pub struct LogicalEmpty {}
+pub struct LogicalEmpty {
+    pub return_one_row: bool,
+}
 
 impl LogicalEmpty {
     fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         inputs.expect_len(0, "LogicalEmpty");
-        LogicalEmpty {}
+        LogicalEmpty {
+            return_one_row: self.return_one_row,
+        }
     }
 
     fn format_expr<F>(&self, f: &mut F)
@@ -614,6 +618,7 @@ impl LogicalEmpty {
         F: MemoExprFormatter,
     {
         f.write_name("LogicalEmpty");
+        f.write_value("return_one_row", &self.return_one_row)
     }
 
     fn num_children(&self) -> usize {
