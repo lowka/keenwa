@@ -337,7 +337,7 @@ mod test {
         let tester = StatisticsTester::new(vec![("A", 10)]);
 
         tester.expect_statistics(
-            &LogicalExpr::Empty(LogicalEmpty {}),
+            &LogicalExpr::Empty(LogicalEmpty { return_one_row: true }),
             Some(Statistics::new(0f64, Statistics::DEFAULT_SELECTIVITY)),
         )
     }

@@ -788,12 +788,16 @@ impl HashedSetOp {
 }
 
 #[derive(Debug, Clone)]
-pub struct Empty {}
+pub struct Empty {
+    pub return_one_row: bool,
+}
 
 impl Empty {
     fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         inputs.expect_len(0, "Empty");
-        Empty {}
+        Empty {
+            return_one_row: self.return_one_row,
+        }
     }
 
     fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
@@ -813,5 +817,6 @@ impl Empty {
         F: MemoExprFormatter,
     {
         f.write_name("Empty");
+        f.write_value("return_one_row", &self.return_one_row)
     }
 }

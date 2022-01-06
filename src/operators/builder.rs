@@ -337,15 +337,19 @@ impl OperatorBuilder {
         Ok(self)
     }
 
-    /// Adds a relation that produces no rows. An empty relation can only be added as a leaf node of an operator tree
+    /// Adds a relation that produces no rows.
+    /// The `return_one_row` flag with value `true` can be used to support queries like `SELECT 1`
+    /// where projection has no input operator.
+    ///
+    /// This operator can only be added as a leaf node of an operator tree
     /// (the first operator build created by an operator builder).
-    pub fn empty(mut self) -> Result<Self, OptimizerError> {
+    pub fn empty(mut self, return_one_row: bool) -> Result<Self, OptimizerError> {
         if self.operator.is_some() {
             return Result::Err(OptimizerError::Internal(
                 "Empty relation can not be added on top of another operator".to_string(),
             ));
         };
-        let expr = LogicalExpr::Empty(LogicalEmpty {});
+        let expr = LogicalExpr::Empty(LogicalEmpty { return_one_row });
         self.add_operator(expr, OperatorScope { columns: vec![] });
         Ok(self)
     }
@@ -1013,15 +1017,15 @@ Memo:
     fn test_empty() {
         let mut tester = OperatorBuilderTester::new();
 
-        tester.build_operator(|builder| builder.empty()?.build());
+        tester.build_operator(|builder| builder.empty(true)?.build());
 
         tester.expect_expr(
             r#"
-LogicalEmpty
+LogicalEmpty return_one_row=true
   output cols: []
 Metadata:
 Memo:
-  00 LogicalEmpty
+  00 LogicalEmpty return_one_row=true
 "#,
         );
     }
@@ -1031,7 +1035,7 @@ Memo:
         let mut tester = OperatorBuilderTester::new();
 
         tester.build_operator(|builder| {
-            builder.get("A", vec!["a1"])?.empty()?;
+            builder.get("A", vec!["a1"])?.empty(false)?;
 
             unreachable!()
         });
@@ -1048,7 +1052,7 @@ Memo:
 
             let sub_query = builder
                 .sub_query_builder()
-                .empty()?
+                .empty(true)?
                 .project(vec![ScalarExpr::Scalar(ScalarValue::Bool(true))])?
                 .to_sub_query()?;
 
@@ -1077,7 +1081,7 @@ Memo:
   03 Expr SubQuery 01 = true
   02 LogicalGet A cols=[1, 2]
   01 LogicalProjection input=00 cols=[3] exprs=[true]
-  00 LogicalEmpty
+  00 LogicalEmpty return_one_row=true
 "#,
         );
     }
@@ -1103,7 +1107,10 @@ Memo:
         tester.build_operator(|builder| {
             let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
 
-            let sub_query = builder.empty()?.project(vec![ScalarExpr::Scalar(ScalarValue::Bool(true))])?.build()?;
+            let sub_query = builder
+                .empty(false)?
+                .project(vec![ScalarExpr::Scalar(ScalarValue::Bool(true))])?
+                .build()?;
             let expr = ScalarExpr::SubQuery(RelNode::from(sub_query));
 
             let filter = ScalarExpr::BinaryExpr {
