@@ -344,7 +344,7 @@ fn rewrite_inputs(state: State, expr: &RelNode) -> RelNode {
     new_inputs(expr, children)
 }
 
-fn new_inputs(expr: &RelNode, mut inputs: Vec<RelNode>) -> RelNode {
+pub fn new_inputs(expr: &RelNode, mut inputs: Vec<RelNode>) -> RelNode {
     if inputs.is_empty() {
         return expr.clone();
     }
@@ -425,29 +425,18 @@ fn split_filter(filter: &ScalarExpr, filters: &mut Vec<ScalarExpr>) {
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::catalog::mutable::MutableCatalog;
-    use crate::catalog::{TableBuilder, DEFAULT_SCHEMA};
-    use crate::datatypes::DataType;
     use crate::error::OptimizerError;
-    use crate::meta::MutableMetadata;
-    use crate::operators::builder::{MemoizeOperatorCallback, OperatorBuilder};
-    use crate::operators::properties::LogicalPropertiesBuilder;
-    use crate::operators::scalar::expr::BinaryOp;
-    use crate::operators::scalar::value::ScalarValue;
-    use crate::operators::scalar::ScalarExpr;
-    use crate::operators::ExprMemo;
-    use crate::optimizer::SetPropertiesCallback;
-    use crate::rules::testing::format_operator_tree;
-    use crate::statistics::simple::{DefaultSelectivityStatistics, SimpleCatalogStatisticsBuilder};
-    use std::rc::Rc;
-    use std::sync::Arc;
+    use crate::operators::builder::OperatorBuilder;
+    use crate::rules::rewrite::testing::{
+        build_and_rewrite_expr, col, col_gt, cols_add, cols_eq, expr_add, expr_alias, expr_and, expr_eq, scalar,
+    };
 
     #[test]
     fn test_push_past_project() {
         rewrite_expr(
             |builder| {
                 let from_a = builder.get("A", vec!["a1", "a2"])?;
-                let project = from_a.project(vec![ScalarExpr::ColumnName("a1".into())])?;
+                let project = from_a.project(vec![col("a1")])?;
                 let filter = col_gt("a1", 100);
                 let filter_a1 = project.select(Some(filter))?;
                 Ok(filter_a1)
@@ -466,8 +455,8 @@ LogicalProjection cols=[1] exprs=[col:1]
         rewrite_expr(
             |builder| {
                 let from_a = builder.get("A", vec!["a1", "a2"])?;
-                let col_a1 = ScalarExpr::ColumnName("a1".into());
-                let col_a2 = ScalarExpr::ColumnName("a2".into());
+                let col_a1 = col("a1");
+                let col_a2 = col("a2");
                 let col_a3 = expr_alias(cols_add("a1", "a2"), "a3");
 
                 let project = from_a.project(vec![col_a1, col_a2, col_a3])?;
@@ -490,9 +479,9 @@ LogicalProjection cols=[1, 2, 3] exprs=[col:1, col:2, col:1 + col:2 AS a3]
         rewrite_expr(
             |builder| {
                 let from_a = builder.get("A", vec!["a1", "a2"])?;
-                let col_a1 = ScalarExpr::ColumnName("a1".into());
-                let col_a2 = ScalarExpr::ColumnName("a2".into());
-                let col_a3 = expr_alias(ScalarExpr::ColumnName("a2".into()), "a3");
+                let col_a1 = col("a1");
+                let col_a2 = col("a2");
+                let col_a3 = expr_alias(col("a2"), "a3");
                 let col_a4 = expr_alias(cols_add("a1", "a3"), "a4");
 
                 let project = from_a.project(vec![col_a1, col_a2, col_a3, col_a4])?;
@@ -515,9 +504,9 @@ LogicalProjection cols=[1, 2, 3, 4] exprs=[col:1, col:2, col:2 AS a3, col:1 + co
         rewrite_expr(
             |builder| {
                 let from_a = builder.get("A", vec!["a1", "a2"])?;
-                let project1 = from_a.project(vec![ScalarExpr::ColumnName("a1".into())])?;
-                let project2 = project1.project(vec![ScalarExpr::ColumnName("a1".into())])?;
-                let project3 = project2.project(vec![ScalarExpr::ColumnName("a1".into())])?;
+                let project1 = from_a.project(vec![col("a1")])?;
+                let project2 = project1.project(vec![col("a1")])?;
+                let project3 = project2.project(vec![col("a1")])?;
                 let filter = col_gt("a1", 100);
                 let filter_a1 = project3.select(Some(filter))?;
                 Ok(filter_a1)
@@ -538,12 +527,11 @@ LogicalProjection cols=[1] exprs=[col:1]
         rewrite_expr(
             |builder| {
                 let from_a = builder.get("A", vec!["a1", "a2"])?;
-                let project =
-                    from_a.project(vec![ScalarExpr::ColumnName("a1".into()), ScalarExpr::ColumnName("a2".into())])?;
+                let project = from_a.project(vec![col("a1"), col("a2")])?;
 
                 let filter = col_gt("a2", 100);
                 let filter_a1 = project.select(Some(filter))?;
-                let project = filter_a1.project(vec![ScalarExpr::ColumnName("a1".into())])?;
+                let project = filter_a1.project(vec![col("a1")])?;
 
                 let filter = col_gt("a1", 100);
                 let filter_a1 = project.select(Some(filter))?;
@@ -644,8 +632,7 @@ LogicalJoin using=[(1, 4)]
         rewrite_expr(
             |builder| {
                 let from_a = builder.clone().get("A", vec!["a1", "a2", "a3"])?;
-                let project_a =
-                    from_a.project(vec![ScalarExpr::ColumnName("a1".into()), ScalarExpr::ColumnName("a2".into())])?;
+                let project_a = from_a.project(vec![col("a1"), col("a2")])?;
                 let from_b = builder.get("B", vec!["b1", "b2", "b3"])?;
                 let join = project_a.join_using(from_b, vec![("a1", "b1")])?;
                 let filter = col_gt("a1", 100);
@@ -691,8 +678,7 @@ LogicalJoin using=[(1, 4)]
             |builder| {
                 let from_a = builder.clone().get("A", vec!["a1", "a2", "a3"])?;
                 let from_b = builder.get("B", vec!["b1", "b2", "b3"])?;
-                let project_b =
-                    from_b.project(vec![ScalarExpr::ColumnName("b1".into()), ScalarExpr::ColumnName("b2".into())])?;
+                let project_b = from_b.project(vec![col("b1"), col("b2")])?;
                 let join = from_a.join_using(project_b, vec![("a1", "b1")])?;
                 let filter = col_gt("a1", 100);
                 let select = join.select(Some(filter))?;
@@ -884,7 +870,7 @@ LogicalSelect
             |builder| {
                 let from_a = builder.get("A", vec!["a1"])?;
                 let sum_a1 = from_a
-                    .project(vec![ScalarExpr::ColumnName("a1".into())])?
+                    .project(vec![col("a1")])?
                     .aggregate_builder()
                     .add_column("a1")?
                     .add_func("sum", "a1")?
@@ -913,111 +899,6 @@ LogicalAggregate
     where
         F: FnOnce(OperatorBuilder) -> Result<OperatorBuilder, OptimizerError>,
     {
-        let catalog = Arc::new(MutableCatalog::new());
-        let selectivity_provider = Rc::new(DefaultSelectivityStatistics);
-        let metadata = Rc::new(MutableMetadata::new());
-        let statistics_builder = SimpleCatalogStatisticsBuilder::new(catalog.clone(), selectivity_provider.clone());
-        let properties_builder = Rc::new(LogicalPropertiesBuilder::new(statistics_builder));
-
-        let memoization = Rc::new(MemoizeOperatorCallback::new(ExprMemo::with_callback(
-            metadata.clone(),
-            Rc::new(SetPropertiesCallback::new(properties_builder.clone())),
-        )));
-
-        catalog.add_table(
-            DEFAULT_SCHEMA,
-            TableBuilder::new("A")
-                .add_column("a1", DataType::Int32)
-                .add_column("a2", DataType::Int32)
-                .add_column("a3", DataType::Int32)
-                .add_column("a4", DataType::Int32)
-                .add_row_count(100)
-                .build(),
-        );
-        catalog.add_table(
-            DEFAULT_SCHEMA,
-            TableBuilder::new("B")
-                .add_column("b1", DataType::Int32)
-                .add_column("b2", DataType::Int32)
-                .add_column("b3", DataType::Int32)
-                .add_column("b4", DataType::Int32)
-                .add_row_count(50)
-                .build(),
-        );
-
-        let builder = OperatorBuilder::new(memoization.clone(), catalog, metadata.clone());
-
-        let result = (f)(builder).expect("Operator setup function failed");
-        let expr = result.build().expect("Failed to build an operator");
-
-        println!("{}", format_operator_tree(&expr).as_str());
-        println!(">>>");
-
-        let expr = predicate_push_down(&RelNode::from(expr)).expect("Rewrite rule has not been applied");
-
-        let mut buf = String::new();
-        buf.push('\n');
-        buf.push_str(format_operator_tree(expr.mexpr()).as_str());
-        buf.push('\n');
-        assert_eq!(buf, expected, "expected expr");
-
-        // Expressions should not outlive the memo.
-        let _ = Rc::try_unwrap(memoization).unwrap();
-    }
-
-    fn cols_add(lhs: &str, rhs: &str) -> ScalarExpr {
-        ScalarExpr::BinaryExpr {
-            lhs: Box::new(ScalarExpr::ColumnName(lhs.into())),
-            op: BinaryOp::Add,
-            rhs: Box::new(ScalarExpr::ColumnName(rhs.into())),
-        }
-    }
-
-    fn col_gt(lhs: &str, val: i32) -> ScalarExpr {
-        ScalarExpr::BinaryExpr {
-            lhs: Box::new(ScalarExpr::ColumnName(lhs.into())),
-            op: BinaryOp::Gt,
-            rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Int32(val))),
-        }
-    }
-
-    fn expr_alias(expr: ScalarExpr, name: &str) -> ScalarExpr {
-        ScalarExpr::Alias(Box::new(expr), name.into())
-    }
-
-    fn cols_eq(lhs: &str, rhs: &str) -> ScalarExpr {
-        ScalarExpr::BinaryExpr {
-            lhs: Box::new(ScalarExpr::ColumnName(lhs.into())),
-            op: BinaryOp::Eq,
-            rhs: Box::new(ScalarExpr::ColumnName(rhs.into())),
-        }
-    }
-
-    fn expr_add(lhs: ScalarExpr, rhs: ScalarExpr) -> ScalarExpr {
-        ScalarExpr::BinaryExpr {
-            lhs: Box::new(lhs),
-            op: BinaryOp::And,
-            rhs: Box::new(rhs),
-        }
-    }
-
-    fn expr_eq(lhs: ScalarExpr, rhs: ScalarExpr) -> ScalarExpr {
-        ScalarExpr::BinaryExpr {
-            lhs: Box::new(lhs),
-            op: BinaryOp::Eq,
-            rhs: Box::new(rhs),
-        }
-    }
-
-    fn expr_and(lhs: ScalarExpr, rhs: ScalarExpr) -> ScalarExpr {
-        ScalarExpr::BinaryExpr {
-            lhs: Box::new(lhs),
-            op: BinaryOp::And,
-            rhs: Box::new(rhs),
-        }
-    }
-
-    fn scalar(value: i32) -> ScalarExpr {
-        ScalarExpr::Scalar(ScalarValue::Int32(value))
+        build_and_rewrite_expr(f, predicate_push_down, expected)
     }
 }
