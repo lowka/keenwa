@@ -92,7 +92,7 @@ impl OperatorExpr {
     /// # Panics
     ///
     /// This method panics if this is not a relational expression.
-    pub fn as_relational(&self) -> &RelExpr {
+    pub fn relational(&self) -> &RelExpr {
         match self {
             OperatorExpr::Relational(expr) => expr,
             OperatorExpr::Scalar(expr) => panic!("Expected a relational expression but got {:?}", expr),
@@ -104,7 +104,7 @@ impl OperatorExpr {
     /// # Panics
     ///
     /// This method panics if this is not a scalar expression.
-    pub fn as_scalar(&self) -> &ScalarExpr {
+    pub fn scalar(&self) -> &ScalarExpr {
         match self {
             OperatorExpr::Relational(expr) => panic!("Expected a scalar expression but got {:?}", expr),
             OperatorExpr::Scalar(expr) => expr,
@@ -154,14 +154,14 @@ impl Props for Properties {
         Properties::Scalar(props)
     }
 
-    fn as_relational(&self) -> &Self::RelProps {
+    fn relational(&self) -> &Self::RelProps {
         match self {
             Properties::Relational(props) => props,
             Properties::Scalar(_) => panic!("Expected relational properties"),
         }
     }
 
-    fn as_scalar(&self) -> &Self::ScalarProps {
+    fn scalar(&self) -> &Self::ScalarProps {
         match self {
             Properties::Relational(_) => panic!("Expected scalar properties"),
             Properties::Scalar(props) => props,
@@ -213,18 +213,12 @@ impl crate::memo::Expr for OperatorExpr {
         OperatorExpr::Scalar(expr)
     }
 
-    fn as_relational(&self) -> &Self::RelExpr {
-        match self {
-            OperatorExpr::Relational(expr) => expr,
-            OperatorExpr::Scalar(_) => panic!("Expected a relational expression"),
-        }
+    fn relational(&self) -> &Self::RelExpr {
+        OperatorExpr::relational(self)
     }
 
-    fn as_scalar(&self) -> &Self::ScalarExpr {
-        match self {
-            OperatorExpr::Relational(_) => panic!("Expected a scalar expression"),
-            OperatorExpr::Scalar(expr) => expr,
-        }
+    fn scalar(&self) -> &Self::ScalarExpr {
+        OperatorExpr::scalar(self)
     }
 
     fn is_scalar(&self) -> bool {
@@ -287,7 +281,7 @@ impl MemoExpr for Operator {
         match self.expr() {
             OperatorExpr::Relational(RelExpr::Logical(e)) => e.num_children(),
             OperatorExpr::Relational(RelExpr::Physical(e)) => e.num_children(),
-            OperatorExpr::Scalar(_) => self.props().as_scalar().nested_sub_queries.len(),
+            OperatorExpr::Scalar(_) => self.props().scalar().nested_sub_queries.len(),
         }
     }
 
@@ -295,8 +289,8 @@ impl MemoExpr for Operator {
         match self.expr() {
             OperatorExpr::Relational(RelExpr::Logical(e)) => e.get_child(i),
             OperatorExpr::Relational(RelExpr::Physical(e)) => e.get_child(i),
-            OperatorExpr::Scalar(_) if i < self.props().as_scalar().nested_sub_queries().len() => {
-                self.props().as_scalar().nested_sub_queries.get(i)
+            OperatorExpr::Scalar(_) if i < self.props().scalar().nested_sub_queries().len() => {
+                self.props().scalar().nested_sub_queries.get(i)
             }
             OperatorExpr::Scalar(_) => None,
         }

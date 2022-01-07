@@ -45,7 +45,7 @@ where
 
         log::debug!("Optimizing expression: {:?}", expr);
 
-        let required_property = expr.props().as_relational().required().clone();
+        let required_property = expr.props().relational().required().clone();
         let root_expr = memo.insert_group(expr);
         let root_group_id = root_expr.group_ptr().memo_group_id();
 
@@ -307,7 +307,7 @@ where
 
         for expr in group.mexprs() {
             let expr_id = expr.id();
-            match expr.expr().as_relational() {
+            match expr.expr().relational() {
                 RelExpr::Logical(_) => {
                     assert!(!state.is_expr_optimized(&expr_id), "already optimized");
 
@@ -367,7 +367,7 @@ fn optimize_expr<R>(
         if !explore && rule.group_rule() {
             continue;
         }
-        if let Some(rule_match) = rule.matches(&rule_ctx, expr.expr().as_relational().as_logical()) {
+        if let Some(rule_match) = rule.matches(&rule_ctx, expr.expr().relational().logical()) {
             let binding = RuleBinding {
                 rule_id: *rule_id,
                 expr: expr.clone(),
@@ -438,7 +438,7 @@ fn apply_rule<R>(
 
         let rule_ctx = RuleContext::new(ctx.required_properties.clone(), metadata);
         rule_set
-            .apply_rule(&rule_id, &rule_ctx, operator.as_relational().as_logical())
+            .apply_rule(&rule_id, &rule_ctx, operator.relational().logical())
             .expect("Failed to apply a rule")
     };
 
@@ -528,7 +528,7 @@ fn enforce_properties<R>(
             required_properties: remaining_properties,
         };
         // combine with remaining_properties ???
-        let required_properties = expr.expr().as_relational().as_physical().build_required_properties();
+        let required_properties = expr.expr().relational().physical().build_required_properties();
         let num_children = expr.children().len();
         let required_properties = runtime_state.properties_cache.insert_list(required_properties, num_children);
         let inputs = InputContexts::with_required_properties(&expr, required_properties);
@@ -569,10 +569,10 @@ fn optimize_inputs<T>(
     } else {
         let cost = match expr.expr() {
             OperatorExpr::Relational(rel_expr) => {
-                let logical_properties = expr.props().as_relational().logical();
+                let logical_properties = expr.props().relational().logical();
                 let statistics = logical_properties.statistics();
                 let (cost_ctx, inputs_cost) = new_cost_estimation_ctx(&inputs, &runtime_state.state);
-                let expr_cost = cost_estimator.estimate_cost(rel_expr.as_physical(), &cost_ctx, statistics);
+                let expr_cost = cost_estimator.estimate_cost(rel_expr.physical(), &cost_ctx, statistics);
                 expr_cost + inputs_cost
             }
             OperatorExpr::Scalar(_) => {
@@ -614,7 +614,7 @@ fn get_optimize_rel_inputs_task<R>(
 where
     R: RuleSet,
 {
-    let physical_expr = expr.expr().as_relational().as_physical();
+    let physical_expr = expr.expr().relational().physical();
     let required_properties = physical_expr.build_required_properties();
     let (provides_property, retains_property) = rule_set
         .evaluate_properties(physical_expr, &ctx.required_properties)
@@ -629,7 +629,7 @@ where
             .map(|child_expr| {
                 let required_properties = match child_expr.expr() {
                     OperatorExpr::Relational(_) => {
-                        properties_cache.insert(child_expr.props().as_relational().required.clone())
+                        properties_cache.insert(child_expr.props().relational().required.clone())
                     }
                     OperatorExpr::Scalar(_) => properties_cache.none(),
                 };
@@ -698,7 +698,7 @@ where
     }
 
     let group = memo.get_group(&ctx.group);
-    if rule_set.can_explore_with_enforcer(group.expr().as_relational().as_logical(), &ctx.required_properties) {
+    if rule_set.can_explore_with_enforcer(group.expr().relational().logical(), &ctx.required_properties) {
         runtime_state.tasks.schedule(Task::EnforceProperties {
             ctx: ctx.clone(),
             expr: ExprRefOption::none(),
@@ -706,7 +706,7 @@ where
     }
 
     for expr in group.mexprs() {
-        match expr.expr().as_relational() {
+        match expr.expr().relational() {
             RelExpr::Logical(_) => runtime_state.tasks.schedule(Task::OptimizeExpr {
                 ctx: ctx.clone(),
                 expr: expr.clone(),

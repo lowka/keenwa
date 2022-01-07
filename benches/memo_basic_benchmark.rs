@@ -46,11 +46,11 @@ impl Props for TestProps {
         props
     }
 
-    fn as_relational(&self) -> &Self::RelProps {
+    fn relational(&self) -> &Self::RelProps {
         self
     }
 
-    fn as_scalar(&self) -> &Self::ScalarProps {
+    fn scalar(&self) -> &Self::ScalarProps {
         self
     }
 }
@@ -67,11 +67,11 @@ impl Expr for TestExpr {
         expr
     }
 
-    fn as_relational(&self) -> &Self::RelExpr {
+    fn relational(&self) -> &Self::RelExpr {
         unreachable!()
     }
 
-    fn as_scalar(&self) -> &Self::ScalarExpr {
+    fn scalar(&self) -> &Self::ScalarExpr {
         unreachable!()
     }
 

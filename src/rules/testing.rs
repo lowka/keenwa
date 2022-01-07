@@ -59,7 +59,7 @@ impl RuleTester {
         assert!(rule_match.is_some(), "Rule does not match: {:?}", self.rule);
 
         let expr = memo_expr.expr();
-        let result = self.rule.apply(&ctx, expr.as_relational().as_logical());
+        let result = self.rule.apply(&ctx, expr.relational().logical());
         let expr = match result {
             Ok(Some(RuleResult::Substitute(expr))) => Operator::from(OperatorExpr::from(expr)),
             Ok(Some(RuleResult::Implementation(expr))) => Operator::from(OperatorExpr::from(expr)),

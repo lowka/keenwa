@@ -412,14 +412,14 @@ pub trait Expr: Clone {
     /// # Panics
     ///
     /// This method panics if the underlying expression is not a relational expression.
-    fn as_relational(&self) -> &Self::RelExpr;
+    fn relational(&self) -> &Self::RelExpr;
 
     /// Returns a reference to the underlying scalar expression.
     ///
     /// # Panics
     ///
     /// This method panics if the underlying expression is not a scalar expression.
-    fn as_scalar(&self) -> &Self::ScalarExpr;
+    fn scalar(&self) -> &Self::ScalarExpr;
 
     /// Returns `true` if this is a scalar expression.
     fn is_scalar(&self) -> bool;
@@ -444,14 +444,14 @@ pub trait Props: Clone {
     /// # Panics
     ///
     /// This method panics if the underlying properties are not relational.
-    fn as_relational(&self) -> &Self::RelProps;
+    fn relational(&self) -> &Self::RelProps;
 
     /// Return a reference to the scalar properties.
     ///
     /// # Panics
     ///
     /// This method panics if the underlying properties are not scalar.
-    fn as_scalar(&self) -> &Self::ScalarProps;
+    fn scalar(&self) -> &Self::ScalarProps;
 }
 
 /// `ExprPtr` is a pointer to an expression.
@@ -732,7 +732,7 @@ where
     {
         let expr = self.0.expr_ptr();
         let expr = expr.expr();
-        expr.as_relational()
+        expr.relational()
     }
 
     /// Returns a reference to properties associated with this node:
@@ -747,7 +747,7 @@ where
         T: 'e,
         P: 'e,
     {
-        self.0.props().as_relational()
+        self.0.props().relational()
     }
 
     /// Returns an [self::ExprPtr] of the underlying memo expression.
@@ -860,7 +860,7 @@ where
     {
         let expr = self.0.expr_ptr();
         let expr = expr.expr();
-        expr.as_scalar()
+        expr.scalar()
     }
 
     /// Returns a reference to properties associated with this node:
@@ -871,7 +871,7 @@ where
         T: 'e,
         P: 'e,
     {
-        self.0.props().as_scalar()
+        self.0.props().scalar()
     }
 
     /// Returns an [self::ExprPtr] of the underlying memo expression.
@@ -1957,14 +1957,14 @@ mod test {
             TestExpr::Scalar(expr)
         }
 
-        fn as_relational(&self) -> &Self::RelExpr {
+        fn relational(&self) -> &Self::RelExpr {
             match self {
                 TestExpr::Relational(expr) => expr,
                 TestExpr::Scalar(_) => panic!(),
             }
         }
 
-        fn as_scalar(&self) -> &Self::ScalarExpr {
+        fn scalar(&self) -> &Self::ScalarExpr {
             match self {
                 TestExpr::Relational(_) => panic!(),
                 TestExpr::Scalar(expr) => expr,
@@ -1975,22 +1975,6 @@ mod test {
             match self {
                 TestExpr::Relational(_) => false,
                 TestExpr::Scalar(_) => true,
-            }
-        }
-    }
-
-    impl TestExpr {
-        fn as_relational(&self) -> &TestRelExpr {
-            match self {
-                TestExpr::Relational(expr) => expr,
-                TestExpr::Scalar(_) => panic!("Expected a relational expr"),
-            }
-        }
-
-        fn as_scalar(&self) -> &TestScalarExpr {
-            match self {
-                TestExpr::Relational(_) => panic!("Expected relational expr"),
-                TestExpr::Scalar(expr) => expr,
             }
         }
     }
@@ -2086,7 +2070,7 @@ mod test {
 
         fn copy_in_nested(&mut self, expr_ctx: &mut ExprContext<TestOperator>, expr: &TestOperator) {
             let nested_ctx = CopyInNestedExprs::new(self.ctx, expr_ctx);
-            let scalar = expr.expr().as_scalar();
+            let scalar = expr.expr().scalar();
             nested_ctx.execute(scalar, |expr, collect: &mut CopyInNestedExprs<TestOperator, D>| {
                 expr.copy_in_nested(collect);
             })
@@ -2140,14 +2124,14 @@ mod test {
             TestProps::Scalar(props)
         }
 
-        fn as_relational(&self) -> &RelProps {
+        fn relational(&self) -> &RelProps {
             match self {
                 TestProps::Rel(expr) => expr,
                 TestProps::Scalar(_) => panic!("Expected relational properties"),
             }
         }
 
-        fn as_scalar(&self) -> &ScalarProps {
+        fn scalar(&self) -> &ScalarProps {
             match self {
                 TestProps::Rel(_) => panic!("Expected scalar properties"),
                 TestProps::Scalar(expr) => expr,
@@ -2245,7 +2229,7 @@ mod test {
                     TestRelExpr::Nodes { inputs } => inputs.len(),
                     TestRelExpr::Filter { .. } => 2,
                 },
-                TestExpr::Scalar(_) => self.group.props().as_scalar().sub_queries.len(),
+                TestExpr::Scalar(_) => self.group.props().scalar().sub_queries.len(),
             }
         }
 
@@ -2262,7 +2246,7 @@ mod test {
                     TestRelExpr::Filter { .. } => None,
                 },
                 TestExpr::Scalar(_) => {
-                    let props = self.group.props().as_scalar();
+                    let props = self.group.props().scalar();
                     props.sub_queries.get(i)
                 }
             }
@@ -2309,7 +2293,7 @@ mod test {
         let (group_id, expr) = insert_group(&mut memo, expr1);
         let group = memo.get_group(&group_id);
 
-        assert_eq!(group.props().as_relational(), &RelProps { a: 100 }, "group properties");
+        assert_eq!(group.props().relational(), &RelProps { a: 100 }, "group properties");
         assert_eq!(expr.group_id(), group.id(), "expr group");
 
         let expr_by_id = memo.get_expr_ref(&expr.id());
@@ -2358,15 +2342,15 @@ mod test {
         });
         let (_, expr) = insert_group(&mut memo, expr);
 
-        match expr.expr().as_relational() {
+        match expr.expr().relational() {
             TestRelExpr::Node { input } => {
                 let children: Vec<_> = expr.children().collect();
                 assert_eq!(
                     format!("{:?}", input.expr()),
-                    format!("{:?}", children[0].expr().as_relational()),
+                    format!("{:?}", children[0].expr().relational()),
                     "child expr"
                 );
-                assert_eq!(input.props(), leaf.props().as_relational(), "input props");
+                assert_eq!(input.props(), leaf.props().relational(), "input props");
             }
             _ => panic!("Unexpected expression: {:?}", expr),
         }
@@ -2845,8 +2829,8 @@ mod test {
                 } else {
                     TestOperator::format_expr(expr.expr(), expr.props(), &mut f);
 
-                    if include_props && group.props_ref.get().as_relational() != &RelProps::default() {
-                        let props = group.props_ref.get().as_relational();
+                    if include_props && group.props_ref.get().relational() != &RelProps::default() {
+                        let props = group.props_ref.get().relational();
                         f.write_value("a", props.a)
                     }
                 }

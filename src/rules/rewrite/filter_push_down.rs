@@ -23,7 +23,7 @@ use std::convert::Infallible;
 /// * When this rule passes filter through the join it adds redundant filter expressions.
 ///
 pub fn predicate_push_down(expr: &RelNode) -> Option<RelNode> {
-    if let LogicalExpr::Select(_) = expr.expr().as_logical() {
+    if let LogicalExpr::Select(_) = expr.expr().logical() {
         let state = State { filters: Vec::new() };
         Some(rewrite(state, expr))
     } else {
@@ -32,7 +32,7 @@ pub fn predicate_push_down(expr: &RelNode) -> Option<RelNode> {
 }
 
 fn rewrite(mut state: State, expr: &RelNode) -> RelNode {
-    match expr.expr().as_logical() {
+    match expr.expr().logical() {
         LogicalExpr::Select(LogicalSelect { input, filter }) => {
             if let Some(filter) = filter {
                 let mut filters = Vec::new();

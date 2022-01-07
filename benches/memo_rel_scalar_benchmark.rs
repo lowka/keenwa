@@ -33,11 +33,11 @@ impl Expr for TestExpr {
         TestExpr::Scalar(expr)
     }
 
-    fn as_relational(&self) -> &Self::RelExpr {
+    fn relational(&self) -> &Self::RelExpr {
         unreachable!()
     }
 
-    fn as_scalar(&self) -> &Self::ScalarExpr {
+    fn scalar(&self) -> &Self::ScalarExpr {
         unreachable!()
     }
 
@@ -162,11 +162,11 @@ impl Props for TestProps {
         TestProps::Scalar(props)
     }
 
-    fn as_relational(&self) -> &Self::RelProps {
+    fn relational(&self) -> &Self::RelProps {
         unreachable!()
     }
 
-    fn as_scalar(&self) -> &Self::ScalarProps {
+    fn scalar(&self) -> &Self::ScalarProps {
         unreachable!()
     }
 }
@@ -261,7 +261,7 @@ impl MemoExpr for TestOperator {
                 TestRelExpr::Filter { .. } => 2,
                 TestRelExpr::Join { .. } => 2,
             },
-            TestExpr::Scalar(_) => self.props().as_scalar().sub_queries.len(),
+            TestExpr::Scalar(_) => self.props().scalar().sub_queries.len(),
         }
     }
 

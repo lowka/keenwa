@@ -129,7 +129,7 @@ impl Rule for JoinAssociativityRule {
                 right: top_right,
                 condition: top_condition,
             }) => {
-                match (top_left.expr().as_logical(), top_right.expr().as_logical()) {
+                match (top_left.expr().logical(), top_right.expr().logical()) {
                     // [AxB]xC -> Ax[BxC]
                     (
                         LogicalExpr::Join(LogicalJoin {

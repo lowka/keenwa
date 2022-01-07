@@ -128,7 +128,7 @@ impl LogicalExpr {
 
             fn post_visit(&mut self, expr: &ScalarExpr) -> Result<(), Self::Error> {
                 if let ScalarExpr::SubQuery(rel_node) = expr {
-                    rel_node.expr().as_logical().accept(self.visitor)?;
+                    rel_node.expr().logical().accept(self.visitor)?;
                 }
                 Ok(())
             }
@@ -140,13 +140,13 @@ impl LogicalExpr {
                 for expr in exprs {
                     expr.accept(&mut expr_visitor)?;
                 }
-                input.expr().as_logical().accept(visitor)?;
+                input.expr().logical().accept(visitor)?;
             }
             LogicalExpr::Select(LogicalSelect { input, filter }) => {
                 if let Some(expr) = filter.as_ref() {
                     expr.expr().accept(&mut expr_visitor)?;
                 }
-                input.expr().as_logical().accept(visitor)?;
+                input.expr().logical().accept(visitor)?;
             }
             LogicalExpr::Aggregate(LogicalAggregate {
                 input,
@@ -160,18 +160,18 @@ impl LogicalExpr {
                 for group_expr in group_exprs {
                     group_expr.expr().accept(&mut expr_visitor)?;
                 }
-                input.expr().as_logical().accept(visitor)?;
+                input.expr().logical().accept(visitor)?;
             }
             LogicalExpr::Join(LogicalJoin { left, right, .. }) => {
-                left.expr().as_logical().accept(visitor)?;
-                right.expr().as_logical().accept(visitor)?;
+                left.expr().logical().accept(visitor)?;
+                right.expr().logical().accept(visitor)?;
             }
             LogicalExpr::Get(_) => {}
             LogicalExpr::Union(LogicalUnion { left, right, .. })
             | LogicalExpr::Intersect(LogicalIntersect { left, right, .. })
             | LogicalExpr::Except(LogicalExcept { left, right, .. }) => {
-                left.expr().as_logical().accept(visitor)?;
-                right.expr().as_logical().accept(visitor)?;
+                left.expr().logical().accept(visitor)?;
+                right.expr().logical().accept(visitor)?;
             }
             LogicalExpr::Empty(_) => {}
         }

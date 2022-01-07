@@ -28,7 +28,7 @@ impl RelExpr {
     /// # Panics
     ///
     /// If this expression is not a logical expression this methods panics.
-    pub fn as_logical(&self) -> &LogicalExpr {
+    pub fn logical(&self) -> &LogicalExpr {
         match self {
             RelExpr::Logical(expr) => expr.as_ref(),
             RelExpr::Physical(_) => {
@@ -42,7 +42,7 @@ impl RelExpr {
     /// # Panics
     ///
     /// If this expression is not a physical expression this methods panics.
-    pub fn as_physical(&self) -> &PhysicalExpr {
+    pub fn physical(&self) -> &PhysicalExpr {
         match self {
             RelExpr::Logical(_) => {
                 panic!("Expected a physical expression but got: {:?}", self)
