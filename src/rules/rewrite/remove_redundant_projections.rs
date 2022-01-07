@@ -26,11 +26,11 @@ pub fn remove_redundant_projections(expr: &RelNode) -> Option<RelNode> {
 }
 
 fn rewrite(expr: &RelNode) -> RelNode {
-    if let LogicalExpr::Projection(parent @ LogicalProjection { input, columns, .. }) = expr.expr().as_logical() {
+    if let LogicalExpr::Projection(parent @ LogicalProjection { input, columns, .. }) = expr.expr().logical() {
         // We exploit the fact that output columns of a projection ([col:1, col:2, col:2 as c3]) are [col:1, col:2, col:3]
         // Because of that we can simply compare output columns of a projection operator and its child operator
         // and if those columns are equal then the projection is redundant and can be removed.
-        match input.expr().as_logical() {
+        match input.expr().logical() {
             LogicalExpr::Projection(LogicalProjection {
                 columns: child_columns,
                 input: child_input,
