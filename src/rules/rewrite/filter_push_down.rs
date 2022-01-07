@@ -5,8 +5,8 @@ use crate::operators::relational::logical::{
     LogicalAggregate, LogicalExpr, LogicalGet, LogicalJoin, LogicalProjection, LogicalSelect,
 };
 use crate::operators::relational::RelNode;
-use crate::operators::scalar::expr::{BinaryOp, ExprRewriter, ExprVisitor};
-use crate::operators::scalar::{ScalarExpr, ScalarNode};
+use crate::operators::scalar::expr::{BinaryOp, ExprRewriter};
+use crate::operators::scalar::{exprs, ScalarExpr, ScalarNode};
 use crate::operators::Operator;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::Infallible;
@@ -42,7 +42,7 @@ fn rewrite(mut state: State, expr: &RelNode) -> RelNode {
                 let mut constant_filters = Vec::new();
 
                 for filter in filters {
-                    let columns = collect_columns(&filter);
+                    let columns = exprs::collect_columns(&filter);
                     if columns.is_empty() {
                         constant_filters.push(filter);
                     } else {
@@ -66,16 +66,15 @@ fn rewrite(mut state: State, expr: &RelNode) -> RelNode {
         LogicalExpr::Projection(LogicalProjection {
             input, exprs, columns, ..
         }) => {
-            // Rewrite filter expression so they do not contain aliases.
-
+            // Rewrite filter expressions so they do not contain aliases.
             let projections = prepare_projections(columns, exprs);
 
             for (filter, columns) in state.filters.iter_mut() {
-                let f = remove_projections(filter.expr(), &projections);
-                let cols = collect_columns(&f);
+                let filter_expr = remove_projections(filter.expr(), &projections);
+                let cols = exprs::collect_columns(&filter_expr);
 
                 *columns = cols.into_iter().collect();
-                *filter = ScalarNode::from(f);
+                *filter = ScalarNode::from(filter_expr);
             }
 
             let result = rewrite(state, input);
@@ -362,27 +361,6 @@ pub fn new_inputs(expr: &RelNode, mut inputs: Vec<RelNode>) -> RelNode {
 
     let expr = Operator::expr_with_new_children(expr.mexpr().expr(), NewChildExprs::new(new_children));
     RelNode::from(Operator::from(expr))
-}
-
-fn collect_columns(expr: &ScalarExpr) -> Vec<ColumnId> {
-    let mut columns = Vec::new();
-    struct CollectColumns<'a> {
-        columns: &'a mut Vec<ColumnId>,
-    }
-    impl ExprVisitor<RelNode> for CollectColumns<'_> {
-        type Error = Infallible;
-
-        fn post_visit(&mut self, expr: &ScalarExpr) -> Result<(), Self::Error> {
-            if let ScalarExpr::Column(id) = expr {
-                self.columns.push(*id);
-            }
-            Ok(())
-        }
-    }
-    let mut visitor = CollectColumns { columns: &mut columns };
-    // Never returns an error
-    expr.accept(&mut visitor).unwrap();
-    columns
 }
 
 fn replace_columns(expr: &ScalarExpr, columns: &HashMap<ColumnId, ColumnId>) -> ScalarExpr {

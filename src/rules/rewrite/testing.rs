@@ -24,12 +24,12 @@ where
     let catalog = Arc::new(MutableCatalog::new());
     let selectivity_provider = Rc::new(DefaultSelectivityStatistics);
     let metadata = Rc::new(MutableMetadata::new());
-    let statistics_builder = SimpleCatalogStatisticsBuilder::new(catalog.clone(), selectivity_provider.clone());
+    let statistics_builder = SimpleCatalogStatisticsBuilder::new(catalog.clone(), selectivity_provider);
     let properties_builder = Rc::new(LogicalPropertiesBuilder::new(statistics_builder));
 
     let memoization = Rc::new(MemoizeOperatorCallback::new(ExprMemo::with_callback(
         metadata.clone(),
-        Rc::new(SetPropertiesCallback::new(properties_builder.clone())),
+        Rc::new(SetPropertiesCallback::new(properties_builder)),
     )));
 
     catalog.add_table(
@@ -53,7 +53,7 @@ where
             .build(),
     );
 
-    let builder = OperatorBuilder::new(memoization.clone(), catalog, metadata.clone());
+    let builder = OperatorBuilder::new(memoization.clone(), catalog, metadata);
 
     let result = (f)(builder).expect("Operator setup function failed");
     let expr = result.build().expect("Failed to build an operator");

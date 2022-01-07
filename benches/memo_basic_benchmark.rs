@@ -121,7 +121,7 @@ impl MemoExpr for TestOperator {
         match expr {
             TestExpr::Scan { src } => {
                 inputs.expect_len(0, "Scan");
-                TestExpr::Scan { src: src.clone() }
+                TestExpr::Scan { src }
             }
             TestExpr::Filter { filter, .. } => {
                 inputs.expect_len(1, "Filter");

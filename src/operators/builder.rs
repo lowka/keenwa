@@ -507,7 +507,7 @@ struct OperatorScope {
 
 struct RewriteExprs<'a> {
     scope: &'a OperatorScope,
-    // Aliased expressions must visible in the projection scope.
+    // Aliased expressions must be visible inside a scope of a projection.
     projection: &'a [(String, ColumnId)],
 }
 
@@ -558,7 +558,7 @@ impl ExprRewriter<RelNode> for RewriteExprs<'_> {
             ScalarExpr::SubQuery(ref rel_node) => {
                 match rel_node.expr_ref() {
                     ExprPtr::Owned(_) => {
-                        //FIXME: Add a method to handle nested relational expressions to OperatorCallback?
+                        //FIXME: Add method to handle nested relational expressions to OperatorCallback?
                         Err(OptimizerError::Internal(
                             "Use OperatorBuilder::sub_query_builder to build a nested sub query".to_string(),
                         ))

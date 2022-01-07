@@ -1274,7 +1274,7 @@ where
         ExprContext {
             children: VecDeque::new(),
             parent: self.parent.take(),
-            // TODO: Add a method that splits MemoExpr into Self::Expr and Self::Props
+            // TODO: Add method that splits MemoExpr into Self::Expr and Self::Props
             //  this will allow to remove the clone() call below .
             props: expr.props().clone(),
         }
