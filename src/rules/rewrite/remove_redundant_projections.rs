@@ -26,10 +26,13 @@ pub fn remove_redundant_projections(expr: &RelNode) -> Option<RelNode> {
 }
 
 fn rewrite(expr: &RelNode) -> RelNode {
-    if let LogicalExpr::Projection(parent @ LogicalProjection { input, columns, .. }) = expr.expr().logical() {
+    if let LogicalExpr::Projection(projection) = expr.expr().logical() {
         // We exploit the fact that output columns of a projection ([col:1, col:2, col:2 as c3]) are [col:1, col:2, col:3]
         // Because of that we can simply compare output columns of a projection operator and its child operator
         // and if those columns are equal then the projection is redundant and can be removed.
+        let input = &projection.input;
+        let columns = &projection.columns;
+
         match input.expr().logical() {
             LogicalExpr::Projection(LogicalProjection {
                 columns: child_columns,
@@ -49,14 +52,14 @@ fn rewrite(expr: &RelNode) -> RelNode {
                     // gets rewritten into:
                     //      Projection: cols=[1, 2] exprs=[col1: 1, col:1 as c2]
                     //
-                    let mut new_projection = parent.clone();
+                    let mut new_projection = projection.clone();
                     new_projection.input = child_input.clone();
-                    new_projection.exprs = child_exprs[0..parent.exprs.len()].to_vec();
+                    new_projection.exprs = child_exprs[0..projection.exprs.len()].to_vec();
 
                     let new_projection = RelNode::from(LogicalExpr::Projection(new_projection));
                     rewrite(&new_projection)
                 } else {
-                    rewrite_inputs(&expr)
+                    rewrite_inputs(expr)
                 }
             }
             LogicalExpr::Join(LogicalJoin { condition, .. }) => {
@@ -66,14 +69,14 @@ fn rewrite(expr: &RelNode) -> RelNode {
                         let join_columns: Vec<_> = left.into_iter().chain(right.into_iter()).collect();
                         if join_columns.len() == columns.len() && columns.iter().all(|c| join_columns.contains(c)) {
                             // Projection contains only columns from the join condition -> projection is redundant.
-                            rewrite_inputs(&input)
+                            rewrite_inputs(input)
                         } else {
-                            rewrite_inputs(&expr)
+                            rewrite_inputs(expr)
                         }
                     }
                     JoinCondition::On(_) => {
                         //TODO: support ON condition
-                        rewrite_inputs(&expr)
+                        rewrite_inputs(expr)
                     }
                 }
             }
@@ -82,9 +85,9 @@ fn rewrite(expr: &RelNode) -> RelNode {
             }) => {
                 if child_columns == columns {
                     // Projection contains only columns produced by the aggregation -> projection is redundant.
-                    rewrite_inputs(&input)
+                    rewrite_inputs(input)
                 } else {
-                    rewrite_inputs(&expr)
+                    rewrite_inputs(expr)
                 }
             }
             LogicalExpr::Get(LogicalGet {
@@ -94,7 +97,7 @@ fn rewrite(expr: &RelNode) -> RelNode {
                     // Projection contains only columns from the scan -> projection is redundant.
                     input.clone()
                 } else {
-                    rewrite_inputs(&expr)
+                    rewrite_inputs(expr)
                 }
             }
             _ => rewrite_inputs(expr),

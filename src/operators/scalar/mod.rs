@@ -5,6 +5,7 @@ use crate::operators::Operator;
 use std::convert::Infallible;
 
 pub mod expr;
+pub mod exprs;
 pub mod value;
 
 /// The type of scalar expressions supported by the optimizer.

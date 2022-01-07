@@ -3,7 +3,7 @@ use crate::memo::MemoExprFormatter;
 use crate::meta::ColumnId;
 use crate::operators::scalar::value::ScalarValue;
 use itertools::Itertools;
-use std::convert::{Infallible, TryFrom};
+use std::convert::TryFrom;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 
@@ -138,7 +138,7 @@ where
             Expr::Not(expr) => vec![expr.as_ref().clone()],
             Expr::Alias(expr, _) => vec![expr.as_ref().clone()],
             Expr::Aggregate { args, filter, .. } => {
-                let mut children: Vec<_> = args.iter().cloned().collect();
+                let mut children: Vec<_> = args.to_vec();
                 if let Some(filter) = filter.clone() {
                     children.push(filter.as_ref().clone())
                 }
@@ -190,7 +190,7 @@ where
             }
             Expr::Aggregate { func, args, filter } => {
                 expect_children("Aggregate", children.len(), args.len() + filter.as_ref().map(|_| 1).unwrap_or(0));
-                let (args, filter) = if let Some(_) = filter {
+                let (args, filter) = if filter.is_some() {
                     // filter is the last expression (see Expr::get_children)
                     let filter = children.remove(args.len() - 1);
                     // use [0..len-1] expressions as arguments.
@@ -399,6 +399,7 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::convert::Infallible;
     use std::hash::Hasher;
 
     #[derive(Debug, Clone)]

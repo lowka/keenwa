@@ -1,8 +1,7 @@
 use crate::meta::ColumnId;
 use crate::operators::relational::RelNode;
-use crate::operators::scalar::expr::{BinaryOp, ExprVisitor};
-use crate::operators::scalar::{ScalarExpr, ScalarNode};
-use std::convert::Infallible;
+use crate::operators::scalar::expr::BinaryOp;
+use crate::operators::scalar::{exprs, ScalarExpr, ScalarNode};
 use std::fmt::{Display, Formatter};
 
 //TODO:
@@ -97,27 +96,6 @@ impl JoinOn {
     pub fn expr(&self) -> &ScalarNode {
         &self.expr
     }
-
-    /// Returns columns used by the expression.
-    pub fn get_columns(&self) -> Vec<ColumnId> {
-        let mut columns = Vec::new();
-        struct CollectColumns<'a> {
-            columns: &'a mut Vec<ColumnId>,
-        }
-        impl ExprVisitor<RelNode> for CollectColumns<'_> {
-            type Error = Infallible;
-
-            fn post_visit(&mut self, expr: &ScalarExpr) -> Result<(), Self::Error> {
-                if let ScalarExpr::Column(id) = expr {
-                    self.columns.push(*id);
-                }
-                Ok(())
-            }
-        }
-        let mut visitor = CollectColumns { columns: &mut columns };
-        self.expr.expr().accept(&mut visitor);
-        columns
-    }
 }
 
 impl Display for JoinOn {
@@ -147,7 +125,7 @@ pub fn get_join_columns_pair(
         JoinCondition::On(on) => {
             let left_columns = left.props().logical().output_columns();
             let right_columns = right.props().logical().output_columns();
-            let columns = on.get_columns();
+            let columns = exprs::collect_columns(on.expr.expr());
 
             if !columns.is_empty() {
                 let left: Vec<ColumnId> = columns.iter().filter(|c| left_columns.contains(*c)).copied().collect();
