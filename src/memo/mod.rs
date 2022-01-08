@@ -375,6 +375,15 @@ pub trait MemoExpr: Clone {
     /// Returns the i-th child expression of this memo expression.
     fn get_child(&self, i: usize) -> Option<&Self>;
 
+    /// Returns an iterator over child expressions of this memo expression.
+    fn children(&self) -> MemoExprChildIter<Self> {
+        MemoExprChildIter {
+            expr: self,
+            position: 0,
+            num_children: self.num_children(),
+        }
+    }
+
     /// Builds a textual representation of the given expression.
     fn format_expr<F>(expr: &Self::Expr, props: &Self::Props, f: &mut F)
     where
@@ -1124,14 +1133,13 @@ where
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.position < self.num_children {
-            let position = self.position;
+        if let Some(expr) = self.expr.get_child(self.position) {
             self.position += 1;
-            self.expr.get_child(position).map(|e| match e.expr_ptr() {
+            match expr.expr_ptr() {
                 // MemoExprRef.expr store a memo expression whose child expressions are replaced with references.
                 ExprPtr::Owned(_) => unreachable!(),
-                ExprPtr::Memo(expr_ref) => expr_ref.clone(),
-            })
+                ExprPtr::Memo(expr_ref) => Some(expr_ref.clone()),
+            }
         } else {
             None
         }
@@ -1153,6 +1161,38 @@ where
 }
 
 impl<'a, E> ExactSizeIterator for MemoExprInputsIter<'a, E>
+where
+    E: MemoExpr,
+{
+    fn len(&self) -> usize {
+        self.num_children
+    }
+}
+
+/// Iterator over child expressions of a memo expression.
+pub struct MemoExprChildIter<'a, E> {
+    expr: &'a E,
+    position: usize,
+    num_children: usize,
+}
+
+impl<'a, E> Iterator for MemoExprChildIter<'a, E>
+where
+    E: MemoExpr,
+{
+    type Item = &'a E;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if let Some(expr) = self.expr.get_child(self.position) {
+            self.position += 1;
+            Some(expr)
+        } else {
+            None
+        }
+    }
+}
+
+impl<'a, E> ExactSizeIterator for MemoExprChildIter<'a, E>
 where
     E: MemoExpr,
 {

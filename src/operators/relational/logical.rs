@@ -401,7 +401,7 @@ impl LogicalJoin {
             0 => Some(self.left.mexpr()),
             1 => Some(self.right.mexpr()),
             2 => match &self.condition {
-                JoinCondition::Using(_) => unreachable!(),
+                JoinCondition::Using(_) => None,
                 JoinCondition::On(on) => Some((&on.expr).mexpr()),
             },
             _ => None,

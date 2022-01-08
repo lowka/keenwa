@@ -1,4 +1,3 @@
-use crate::memo::{MemoExpr, NewChildExprs};
 use crate::meta::ColumnId;
 use crate::operators::relational::join::{JoinCondition, JoinUsing};
 use crate::operators::relational::logical::{
@@ -7,8 +6,8 @@ use crate::operators::relational::logical::{
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::{BinaryOp, ExprRewriter};
 use crate::operators::scalar::{exprs, ScalarExpr, ScalarNode};
-use crate::operators::Operator;
-use std::collections::{HashMap, HashSet, VecDeque};
+use crate::rules::rewrite::{rewrite_rel_inputs, with_new_rel_inputs};
+use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 
 /// Rewrites the operator tree rooted at the given expression.
@@ -64,7 +63,7 @@ fn rewrite(mut state: State, expr: &RelNode) -> RelNode {
             } else {
                 // Keep select without filter it should be removed by another rule.
                 let result = rewrite(state, input);
-                new_inputs(expr, vec![result])
+                with_new_rel_inputs(expr, vec![result])
             }
         }
         LogicalExpr::Projection(LogicalProjection {
@@ -82,7 +81,7 @@ fn rewrite(mut state: State, expr: &RelNode) -> RelNode {
             }
 
             let result = rewrite(state, input);
-            new_inputs(expr, vec![result])
+            with_new_rel_inputs(expr, vec![result])
         }
         LogicalExpr::Aggregate(LogicalAggregate {
             aggr_exprs, columns, ..
@@ -258,7 +257,7 @@ fn rewrite_join(
     let right_state = State::from_filters(right_filters);
     let new_right = rewrite(right_state, right);
 
-    let expr = new_inputs(expr, vec![new_left, new_right]);
+    let expr = with_new_rel_inputs(expr, vec![new_left, new_right]);
 
     if remaining_filters.is_empty() {
         expr
@@ -335,38 +334,7 @@ fn get_join_filters<'a>(
 }
 
 fn rewrite_inputs(state: State, expr: &RelNode) -> RelNode {
-    let mut children = vec![];
-
-    for i in 0..expr.mexpr().num_children() {
-        let child_expr = expr.mexpr().get_child(i).unwrap();
-        if child_expr.expr().is_relational() {
-            let child_expr = RelNode::from(child_expr.clone());
-            let result = rewrite(state.clone(), &child_expr);
-            children.push(result);
-        }
-    }
-
-    new_inputs(expr, children)
-}
-
-pub fn new_inputs(expr: &RelNode, mut inputs: Vec<RelNode>) -> RelNode {
-    if inputs.is_empty() {
-        return expr.clone();
-    }
-
-    let mut new_children = VecDeque::new();
-    for i in 0..expr.mexpr().num_children() {
-        let child_expr = expr.mexpr().get_child(i).unwrap();
-        let child_expr = if child_expr.expr().is_relational() {
-            inputs.swap_remove(0).into_inner()
-        } else {
-            child_expr.clone()
-        };
-        new_children.push_back(child_expr);
-    }
-
-    let expr = Operator::expr_with_new_children(expr.mexpr().expr(), NewChildExprs::new(new_children));
-    RelNode::from(Operator::from(expr))
+    rewrite_rel_inputs(expr, |child_expr| rewrite(state.clone(), child_expr))
 }
 
 fn replace_columns(expr: &ScalarExpr, columns: &HashMap<ColumnId, ColumnId>) -> ScalarExpr {
