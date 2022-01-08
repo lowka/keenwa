@@ -426,7 +426,6 @@ pub trait Expr: Clone {
 }
 
 /// A trait for properties of the expression.
-// FIXME: Rename to Props.
 pub trait Props: Clone {
     /// The type of relational properties.
     type RelProps;
@@ -669,7 +668,6 @@ where
 }
 
 /// Callback that is called when a new memo group is added to a memo.
-//FIXME: rename to MemoGroupCallback
 pub trait MemoGroupCallback {
     /// The type of expression.
     type Expr: Expr;
@@ -680,8 +678,6 @@ pub trait MemoGroupCallback {
 
     /// Called when a new memo group is added to memo and returns properties to be shared among all expressions in this group.
     /// Where `expr` is the expression that created the memo group and `props` are properties associated with that expression.
-    // If no properties has been provided contains empty properties (see [`MemoExpr::empty_props`](self::MemoExpr::empty_props) ).
-    //FIXME: should accept a context to pass extra stuff.
     fn new_group(&self, expr: &Self::Expr, props: &Self::Props, metadata: &Self::Metadata) -> Self::Props;
 }
 
