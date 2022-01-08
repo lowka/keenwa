@@ -117,7 +117,7 @@ where
             },
             Expr::SubQuery(_) => rewriter.rewrite(self)?,
         };
-        Ok(expr)
+        rewriter.post_rewrite(expr)
     }
 
     pub fn format_expr<F>(&self, f: &mut F)
@@ -249,6 +249,10 @@ where
 
     /// Rewrites the given expression. Called after all children of the given expression are rewritten.
     fn rewrite(&mut self, expr: Expr<T>) -> Result<Expr<T>, Self::Error>;
+
+    fn post_rewrite(&mut self, expr: Expr<T>) -> Result<Expr<T>, Self::Error> {
+        Ok(expr)
+    }
 }
 
 fn rewrite_boxed<T, V>(expr: Expr<T>, rewriter: &mut V) -> Result<Box<Expr<T>>, V::Error>
@@ -399,8 +403,10 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
+    use std::cell::Cell;
     use std::convert::Infallible;
     use std::hash::Hasher;
+    use std::rc::Rc;
 
     #[derive(Debug, Clone)]
     struct DummyRelExpr;
@@ -495,6 +501,7 @@ mod test {
     fn rewriter() {
         struct ColumnRewriter {
             skip_column: ColumnId,
+            post_rewrites: Rc<Cell<usize>>,
         }
         impl ExprRewriter<DummyRelExpr> for ColumnRewriter {
             type Error = Infallible;
@@ -514,6 +521,12 @@ mod test {
                     Ok(expr)
                 }
             }
+
+            fn post_rewrite(&mut self, expr: Expr) -> Result<Expr, Self::Error> {
+                let cell = self.post_rewrites.as_ref();
+                cell.set(cell.get() + 1);
+                Ok(expr)
+            }
         }
 
         let expr = Expr::BinaryExpr {
@@ -526,11 +539,21 @@ mod test {
             }),
         };
 
-        let rewriter = ColumnRewriter { skip_column: 0 };
+        let post_rewrites = Rc::new(Cell::new(0));
+        let rewriter = ColumnRewriter {
+            skip_column: 0,
+            post_rewrites: post_rewrites.clone(),
+        };
         expect_rewritten(expr.clone(), rewriter, "col:2 OR col:3 AND col:2");
+        assert_eq!(post_rewrites.get(), 5, "post rewrite calls");
 
-        let rewriter = ColumnRewriter { skip_column: 1 };
+        let post_rewrites = Rc::new(Cell::new(0));
+        let rewriter = ColumnRewriter {
+            skip_column: 1,
+            post_rewrites: post_rewrites.clone(),
+        };
         expect_rewritten(expr, rewriter, "col:1 OR col:3 AND col:1");
+        assert_eq!(post_rewrites.get(), 3, "post rewrite calls");
     }
 
     #[test]

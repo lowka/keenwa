@@ -1,10 +1,9 @@
-use crate::memo::MemoExpr;
 use crate::operators::relational::join::JoinCondition;
 use crate::operators::relational::logical::{
     LogicalAggregate, LogicalExpr, LogicalGet, LogicalJoin, LogicalProjection,
 };
 use crate::operators::relational::RelNode;
-use crate::rules::rewrite::filter_push_down::new_inputs;
+use crate::rules::rewrite::rewrite_rel_inputs;
 
 /// A basic implementation of a redundant projection removal rule.
 ///
@@ -108,18 +107,7 @@ fn rewrite(expr: &RelNode) -> RelNode {
 }
 
 fn rewrite_inputs(expr: &RelNode) -> RelNode {
-    let mut children = vec![];
-
-    for i in 0..expr.mexpr().num_children() {
-        let child_expr = expr.mexpr().get_child(i).unwrap();
-        if child_expr.expr().is_relational() {
-            let child_expr = RelNode::from(child_expr.clone());
-            let child_expr = rewrite(&child_expr);
-            children.push(child_expr);
-        }
-    }
-
-    new_inputs(expr, children)
+    rewrite_rel_inputs(expr, rewrite)
 }
 
 #[cfg(test)]

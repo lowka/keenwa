@@ -34,6 +34,7 @@ where
 
 #[cfg(test)]
 mod test {
+    use crate::meta::ColumnId;
     use crate::operators::scalar::expr::{BinaryOp, NestedExpr};
     use crate::operators::scalar::exprs::collect_columns;
     use crate::operators::scalar::value::ScalarValue;
@@ -67,6 +68,7 @@ mod test {
 
         let expr = Expr::Scalar(ScalarValue::Int32(1));
         let columns = collect_columns(&expr);
-        assert_eq!(columns, vec![], "no columns");
+        let empty = Vec::<ColumnId>::new();
+        assert_eq!(columns, empty, "no columns");
     }
 }
