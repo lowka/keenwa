@@ -250,6 +250,9 @@ where
     /// Rewrites the given expression. Called after all children of the given expression are rewritten.
     fn rewrite(&mut self, expr: Expr<T>) -> Result<Expr<T>, Self::Error>;
 
+    /// Called after all child expressions are rewritten. `expr` contains the expression produced by [ExprRewriter::rewrite].
+    ///
+    /// Default implementation always returns the provided expression.
     fn post_rewrite(&mut self, expr: Expr<T>) -> Result<Expr<T>, Self::Error> {
         Ok(expr)
     }
@@ -310,7 +313,7 @@ where
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             Expr::Column(column_id) => write!(f, "col:{}", column_id),
-            Expr::ColumnName(alias) => write!(f, "col:{}", alias),
+            Expr::ColumnName(name) => write!(f, "col:{}", name),
             Expr::Scalar(value) => write!(f, "{}", value),
             Expr::BinaryExpr { lhs, op, rhs } => write!(f, "{} {} {}", lhs, op, rhs),
             Expr::Aggregate { func, args, filter } => {
