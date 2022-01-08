@@ -1201,6 +1201,20 @@ where
     }
 }
 
+impl<'a, E> Debug for MemoExprChildIter<'a, E>
+where
+    E: MemoExpr + Debug,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let iter = MemoExprChildIter {
+            expr: self.expr,
+            position: self.position,
+            num_children: self.num_children,
+        };
+        f.debug_list().entries(iter).finish()
+    }
+}
+
 /// Uniquely identifies a memo group in a memo.
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct GroupId(StoreElementId);
@@ -2641,11 +2655,15 @@ mod test {
         assert_eq!(format!("{:?}", expr), "MemoExprRef { id: ExprId(0) }");
 
         let group = memo.get_group(&group_id);
-        let mut mexpr_iter = group.mexprs();
+        assert_eq!(format!("{:?}", group.mexprs()), "[MemoExprRef { id: ExprId(0) }]");
 
-        assert_eq!(format!("{:?}", mexpr_iter), "[MemoExprRef { id: ExprId(0) }]");
-        mexpr_iter.next();
-        assert_eq!(format!("{:?}", mexpr_iter), "[]");
+        let expr = TestOperator::from(TestRelExpr::Node {
+            input: RelNode::from(group.to_memo_expr()),
+        });
+        assert_eq!(
+            format!("{:?}", expr.children()),
+            "[TestOperator { expr: Memo(MemoExprRef { id: ExprId(0) }), group: Memo(GroupId(0)) }]"
+        );
     }
 
     #[test]
