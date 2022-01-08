@@ -1,6 +1,6 @@
 use crate::memo::{MemoExpr, NewChildExprs};
 use crate::meta::ColumnId;
-use crate::operators::relational::join::JoinCondition;
+use crate::operators::relational::join::{JoinCondition, JoinUsing};
 use crate::operators::relational::logical::{
     LogicalAggregate, LogicalExpr, LogicalGet, LogicalJoin, LogicalProjection, LogicalSelect,
 };
@@ -22,6 +22,10 @@ use std::convert::Infallible;
 /// * Does not support UNION, INTERSECT, EXCEPT operators.
 /// * When this rule passes filter through the join it adds redundant filter expressions.
 ///
+/// # Note
+///
+/// The implementation does not rely on logical properties because logical properties are not set
+/// for new expressions created by this rule.
 pub fn predicate_push_down(expr: &RelNode) -> Option<RelNode> {
     if let LogicalExpr::Select(_) = expr.expr().logical() {
         let state = State { filters: Vec::new() };
@@ -45,7 +49,7 @@ fn rewrite(mut state: State, expr: &RelNode) -> RelNode {
                     let columns = exprs::collect_columns(&filter);
                     if columns.is_empty() {
                         constant_filters.push(filter);
-                    } else {
+                    } else if !state.filters.iter().any(|f| f.0.expr() == &filter) {
                         state.filters.push((ScalarNode::from(filter), columns.into_iter().collect()))
                     }
                 }
@@ -231,10 +235,23 @@ fn rewrite_join(
     right: &RelNode,
     condition: &JoinCondition,
 ) -> RelNode {
-    let additional_filters = duplicate_filters(&state, condition);
-    state.filters.extend(additional_filters);
+    let join_using = match condition {
+        JoinCondition::Using(using) => using,
+        JoinCondition::On(_) => {
+            //TODO: support ON condition
+            return rewrite_inputs(state, expr);
+        }
+    };
 
-    let (left_filters, right_filters, remaining_filters) = get_join_filters(&state, left, right, condition);
+    let additional_filters = duplicate_filters(&state, join_using);
+    for (add_filter, cols) in additional_filters {
+        if state.filters.iter().any(|f| f.0.expr() == add_filter.expr()) {
+            continue;
+        }
+        state.filters.push((add_filter, cols));
+    }
+
+    let (left_filters, right_filters, remaining_filters) = get_join_filters(&state, join_using);
     let left_state = State::from_filters(left_filters);
     let new_left = rewrite(left_state, left);
 
@@ -254,7 +271,7 @@ fn rewrite_join(
     }
 }
 
-fn duplicate_filters(state: &State, condition: &JoinCondition) -> Vec<(ScalarNode, HashSet<ColumnId>)> {
+fn duplicate_filters(state: &State, condition: &JoinUsing) -> Vec<(ScalarNode, HashSet<ColumnId>)> {
     let current_filters: HashSet<_> = state.filters.iter().map(|f| f.0.expr()).collect();
     state
         .filters
@@ -262,20 +279,13 @@ fn duplicate_filters(state: &State, condition: &JoinCondition) -> Vec<(ScalarNod
         .filter_map(|(filter, columns)| {
             let mut columns_to_replace = HashMap::new();
             for col_id in columns {
-                match condition {
-                    JoinCondition::Using(using) => {
-                        for (l, r) in using.columns() {
-                            if col_id == l {
-                                columns_to_replace.insert(*col_id, *r);
-                                break;
-                            } else if col_id == r {
-                                columns_to_replace.insert(*col_id, *l);
-                                break;
-                            }
-                        }
-                    }
-                    JoinCondition::On(_) => {
-                        //TODO: Support On condition in joins.
+                for (l, r) in condition.columns() {
+                    if col_id == l {
+                        columns_to_replace.insert(*col_id, *r);
+                        break;
+                    } else if col_id == r {
+                        columns_to_replace.insert(*col_id, *l);
+                        break;
                     }
                 }
             }
@@ -296,15 +306,11 @@ fn duplicate_filters(state: &State, condition: &JoinCondition) -> Vec<(ScalarNod
 
 fn get_join_filters<'a>(
     state: &'a State,
-    left: &RelNode,
-    right: &RelNode,
-    _condition: &JoinCondition,
+    condition: &JoinUsing,
 ) -> (Vec<Filter<'a>>, Vec<Filter<'a>>, Vec<Filter<'a>>) {
-    let left_columns = left.props().logical.output_columns();
-    let left_filters = state.get_filters(left_columns);
-
-    let right_columns = right.props().logical.output_columns();
-    let right_filters = state.get_filters(right_columns);
+    let (left_columns, right_columns) = condition.get_columns_pair();
+    let left_filters = state.get_filters(&left_columns);
+    let right_filters = state.get_filters(&right_columns);
 
     // Remaining filters must only include filters which use columns from both sides of the join.
     let remaining_filters: Vec<_> = state
