@@ -23,7 +23,7 @@ use std::{
 // TODO: Examples
 // TODO: add generic implementation of a copy-out method.
 // TODO: Document ExprPtr, ExprGroupPtr - memo expression parts.
-//  MemoExprRef, MemoGroupRef, MemoExprGroupRef
+//  MemoExprRef, MemoGroupRef
 pub struct Memo<E, T>
 where
     E: MemoExpr,
@@ -106,9 +106,9 @@ where
     /// # Panics
     ///
     /// This method panics if group with the given id does not exist.
-    pub fn get_group(&self, group_id: &GroupId) -> MemoExprGroupRef<E> {
+    pub fn get_group(&self, group_id: &GroupId) -> MemoGroupRef<E> {
         let group_ref = self.get_group_ref(group_id);
-        MemoExprGroupRef {
+        MemoGroupRef {
             id: *group_id,
             data_ref: group_ref.inner,
             marker: Default::default(),
@@ -131,12 +131,16 @@ where
 
     fn add_group(&mut self, group: MemoGroupData<E>) -> MemoGroupToken<E> {
         let (id, elem_ref) = self.groups.insert(group);
-        let group_ref = MemoGroupRef::new(GroupId(id), elem_ref);
+        let group_ref = InternalGroupRef::new(GroupId(id), elem_ref);
 
         MemoGroupToken(group_ref)
     }
 
-    fn add_expr(&mut self, expr: E::Expr, membership_token: MemoGroupToken<E>) -> (MemoGroupRef<E>, MemoExprRef<E>) {
+    fn add_expr(
+        &mut self,
+        expr: E::Expr,
+        membership_token: MemoGroupToken<E>,
+    ) -> (InternalGroupRef<E>, MemoExprRef<E>) {
         // SAFETY:
         // An expression can only be added to a group if a caller owns a membership token.
         // That token can be obtained in two ways:
@@ -145,7 +149,7 @@ where
         // which is then passed to this method - no references to MemoGroupData exists
         // and we can safely obtain a mutable reference to via groups.get_mut
         //
-        // 2) by consuming MemoExprGroupRef (public API) - in this case borrow checker will reject a program
+        // 2) by consuming MemoGroupRef (public API) - in this case borrow checker will reject a program
         // in which both a reference to the underlying MemoGroupData and the MemoGroupToken to that MemoGroupData
         // exists at the same time.
         let group_ref = membership_token.into_inner();
@@ -177,36 +181,24 @@ where
         (group_ref, expr_ref)
     }
 
-    // WARNING: &mut is required here see the "SAFETY" comment bellow.
-    fn get_first_memo_expr(&mut self, group_id: &GroupId) -> E {
-        let group_ref = self.get_group_ref(group_id);
-        // SAFETY:
-        // At this point no mutable reference to the group data exists
-        // because this method is called by an owner of the mutable reference to a memo.
-        let expr_ref = unsafe {
-            let group_data = group_ref.inner.get();
-            group_data.exprs[0].clone()
-        };
-
-        E::from_memo_refs(group_ref, expr_ref, internal::Private)
-        // No other reference to the group data exists.
+    fn get_first_memo_expr(&self, group_id: &GroupId) -> E {
+        let group_ref = self.get_group(group_id);
+        group_ref.to_memo_expr()
     }
 
-    fn get_group_ref(&self, group_id: &GroupId) -> MemoGroupRef<E> {
+    fn get_group_ref(&self, group_id: &GroupId) -> InternalGroupRef<E> {
         let group_ref = self
             .groups
             .get(group_id.index())
             .unwrap_or_else(|| panic!("group id is invalid: {}", group_id));
 
-        MemoGroupRef::new(*group_id, group_ref)
+        InternalGroupRef::new(*group_id, group_ref)
     }
 }
 
 /// A borrowed memo group. A memo group is a group of logically equivalent expressions.
 /// Expressions are logically equivalent when they produce the same result.
-///
-/// In contrast to [MemoGroupRef] this reference provides methods for iteration over memo expressions.
-pub struct MemoExprGroupRef<'a, E>
+pub struct MemoGroupRef<'a, E>
 where
     E: MemoExpr,
 {
@@ -215,7 +207,7 @@ where
     marker: std::marker::PhantomData<&'a E>,
 }
 
-impl<'a, E> MemoExprGroupRef<'a, E>
+impl<'a, E> MemoGroupRef<'a, E>
 where
     E: MemoExpr,
 {
@@ -251,10 +243,10 @@ where
     /// Consumes this borrowed group and returns a [membership token]('MemoGroupToken') that can be used
     /// to add an expression to this memo group.
     pub fn to_membership_token(self) -> MemoGroupToken<E> {
-        MemoGroupToken(MemoGroupRef::new(self.id, self.data_ref))
+        MemoGroupToken(InternalGroupRef::new(self.id, self.data_ref))
     }
 
-    /// Convert this borrowed memo group to the first memo expression in that group.
+    /// Convert this borrowed memo group to the first memo expression in this group.
     pub fn to_memo_expr(self) -> E {
         let data = self.get_memo_group();
         let group_id = self.id;
@@ -266,18 +258,18 @@ where
     }
 
     fn get_memo_group(&self) -> &MemoGroupData<E> {
-        // SAFETY: Making a reference to the group data should be safe because MemoExprGroupRef
+        // SAFETY: Making a reference to the group data should be safe because MemoGroupRef
         // was immutably borrowed from a memo.
         unsafe { self.data_ref.get() }
     }
 }
 
-impl<'a, E> Debug for MemoExprGroupRef<'a, E>
+impl<'a, E> Debug for MemoGroupRef<'a, E>
 where
     E: MemoExpr,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MemoExprGroupRef").field("id", &self.id).finish()
+        f.debug_struct("MemoGroupRef").field("id", &self.id).finish()
     }
 }
 
@@ -300,9 +292,9 @@ where
 
 /// A group membership token that allows the owner to add an expression into a memo group this token was obtained from.
 ///
-/// A Membership token can be obtained from a memo group by calling [to_membership_token](MemoExprGroupRef::to_membership_token)
+/// A Membership token can be obtained from a memo group by calling [to_membership_token](MemoGroupRef::to_membership_token)
 /// of that memo group.
-pub struct MemoGroupToken<E>(MemoGroupRef<E>)
+pub struct MemoGroupToken<E>(InternalGroupRef<E>)
 where
     E: MemoExpr;
 
@@ -310,7 +302,7 @@ impl<E> MemoGroupToken<E>
 where
     E: MemoExpr,
 {
-    fn into_inner(self) -> MemoGroupRef<E> {
+    fn into_inner(self) -> InternalGroupRef<E> {
         self.0
     }
 }
@@ -388,19 +380,6 @@ pub trait MemoExpr: Clone {
     fn format_expr<F>(expr: &Self::Expr, props: &Self::Props, f: &mut F)
     where
         F: MemoExprFormatter;
-
-    /// Internal API.
-    ///
-    /// Creates a memo expression from the given group and expression.
-    #[doc(hidden)]
-    fn from_memo_refs(group: MemoGroupRef<Self>, expr: MemoExprRef<Self>, _private: internal::Private) -> Self {
-        let group_id = group.id;
-        let group_ref = group.inner;
-        // SAFETY no other reference to the underlying group data exists so we can safely access the group data.
-        let props_ref = unsafe { group_ref.get().props_ref.clone() };
-
-        Self::from_parts(ExprPtr::Memo(expr), ExprGroupPtr::from_memo_group(group_id, props_ref))
-    }
 }
 
 /// A trait for the expression type.
@@ -489,7 +468,7 @@ where
 
     /// Returns a reference to an expression.
     /// * In the owned state this method returns a reference to the underlying expression.
-    /// * In the memo state this method returns a reference to the first expression in the [memo group](self::MemoGroupRef).
+    /// * In the memo state this method returns a reference to the first expression in the [memo group][self::MemoGroupRef].
     pub fn expr(&self) -> &E::Expr {
         match self {
             ExprPtr::Owned(expr) => expr.as_ref(),
@@ -572,7 +551,7 @@ where
 ///
 /// * In the `Owned` state an expression has not been copied into a memo and an instance of `ExprGroupPtr`
 /// owns properties and stores a pointer to a heap allocation.
-/// * In the `Memo` state it stores a reference to a [memo group](self::MemoGroupRef).
+/// * In the `Memo` state it stores a reference to properties of a memo group and id of that group.
 pub struct ExprGroupPtr<E>
 where
     E: MemoExpr,
@@ -615,7 +594,7 @@ where
     ///
     /// # Panics
     ///
-    /// This method panics if this `ExprGroupPtr` owns the properties instead of holding a [MemoGroupRef](self::MemoGroupRef).
+    /// This method panics if this `ExprGroupPtr` is in the `Owned` state.
     pub fn memo_group_id(&self) -> GroupId {
         match self.inner() {
             ExprGroupPtrState::Owned(_) => panic!("This should only be called on memoized expressions"),
@@ -671,8 +650,7 @@ where
     // -> this means that it also requires a heap allocation.
     // Add MemoExpr::empty_props(?) and Owned state (Box<PropsRef> | Empty(const T)).
     Owned(Box<E::Props>),
-    /// `ExprGroupPtr` holds a reference to a [memo group](self::MemoGroupRef) an expression belongs to.
-    //TODO: Store instead (GroupId, StoreRef<Props>) because MemoGroupRef could alias
+    /// `ExprGroupPtr` holds a reference to properties of a memo group an expression belongs to.
     Memo((GroupId, ImmutableRef<E::Props>)),
 }
 
@@ -721,7 +699,7 @@ where
     /// # Note
     ///
     /// Caller must guarantee that the given group is a group of relational expressions.
-    pub fn from_group(group: MemoExprGroupRef<'_, E>) -> Self {
+    pub fn from_group(group: MemoGroupRef<'_, E>) -> Self {
         let expr = group.to_memo_expr();
         RelNode(expr)
     }
@@ -849,7 +827,7 @@ where
     /// # Note
     ///
     /// Caller must guarantee that the given group is a group of relational expressions.
-    pub fn from_group(group: MemoExprGroupRef<'_, E>) -> Self {
+    pub fn from_group(group: MemoGroupRef<'_, E>) -> Self {
         let expr = group.to_memo_expr();
         ScalarNode(expr)
     }
@@ -942,59 +920,6 @@ where
     }
 }
 
-/// `MemoGroupRef` is a reference to a memo group. In contrast to [MemoExprGroupRef],
-/// users of public API can only use this reference as a holder of an identifier of some group.
-pub struct MemoGroupRef<E>
-where
-    E: MemoExpr,
-{
-    id: GroupId,
-    inner: StoreElementRef<MemoGroupData<E>>,
-}
-
-impl<E> MemoGroupRef<E>
-where
-    E: MemoExpr,
-{
-    fn new(id: GroupId, inner: StoreElementRef<MemoGroupData<E>>) -> Self {
-        MemoGroupRef { id, inner }
-    }
-
-    /// Returns an opaque identifier of this memo group.
-    pub fn id(&self) -> GroupId {
-        self.id
-    }
-}
-
-impl<E> PartialEq for MemoGroupRef<E>
-where
-    E: MemoExpr,
-{
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id && self.inner == other.inner
-    }
-}
-
-impl<E> Eq for MemoGroupRef<E> where E: MemoExpr {}
-
-impl<E> Hash for MemoGroupRef<E>
-where
-    E: MemoExpr,
-{
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        state.write_usize(self.id.0 .0);
-    }
-}
-
-impl<E> Debug for MemoGroupRef<E>
-where
-    E: MemoExpr,
-{
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MemoGroupRef").field("id", &self.id).finish()
-    }
-}
-
 /// An iterator over expressions of a memo group.
 pub struct MemoGroupIter<'m, E>
 where
@@ -1030,7 +955,8 @@ where
     }
 }
 
-/// A reference to a [memo expression](self::MemoExpr).
+/// A reference to a [memo expression](self::MemoExpr). Since [memo expression](self::MemoExpr) is immutable
+/// a reference to it can be cheaply cloned (internally its just [an identifier](self::ExprId) and a pointer).
 ///
 /// # Safety
 ///
@@ -1428,9 +1354,13 @@ where
 
             (group_ref, expr_ref)
         };
-        // At this point no reference to the data behind group_ref exists and we can safely
+        // SAFETY: At this point no reference to the data behind group_ref exists and we can safely
         // dereference this group_ref.
-        let expr = E::from_memo_refs(group_ref, expr_ref, internal::Private);
+        let expr = unsafe {
+            let group_id = group_ref.id;
+            let props_ref = group_ref.inner.get().props_ref.clone();
+            E::from_parts(ExprPtr::Memo(expr_ref), ExprGroupPtr::from_memo_group(group_id, props_ref))
+        };
         // Reference to the group data no longer exists.
         self.result = Some(expr);
     }
@@ -1670,6 +1600,23 @@ where
     }
 }
 
+struct InternalGroupRef<E>
+where
+    E: MemoExpr,
+{
+    id: GroupId,
+    inner: StoreElementRef<MemoGroupData<E>>,
+}
+
+impl<E> InternalGroupRef<E>
+where
+    E: MemoExpr,
+{
+    fn new(id: GroupId, inner: StoreElementRef<MemoGroupData<E>>) -> Self {
+        InternalGroupRef { id, inner }
+    }
+}
+
 /// Builds a textual representation of the given memo.
 pub(crate) fn format_memo<E, T>(memo: &Memo<E, T>) -> String
 where
@@ -1679,15 +1626,12 @@ where
     let mut f = StringMemoFormatter::new(&mut buf);
 
     for group in memo.groups.iter().rev() {
-        // SAFETY: No mutable references to the underlying group data exists.
-        // let group = unsafe { group.get() };
         f.push_str(format!("{} ", group.group_id).as_str());
         for (i, expr) in group.exprs.iter().enumerate() {
             if i > 0 {
                 // newline + 3 spaces
                 f.push_str("\n   ");
             }
-            // expr.mexpr().format_expr(&mut f);
             E::format_expr(expr.expr(), expr.props(), &mut f);
         }
         f.push('\n');
@@ -1938,7 +1882,8 @@ where
 
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next().map(|e| GroupDataRef {
-            // SAFETY: This is safe because there is no mutable reference to the underlying group data.
+            // SAFETY: This is safe because there is no mutable reference to the underlying group data
+            // because this iterator is used when a caller has an owned reference to a memo.
             inner: unsafe { &*e.get_ptr() },
         })
     }
@@ -1966,11 +1911,6 @@ impl<E> Deref for GroupDataRef<'_, E> {
     fn deref(&self) -> &Self::Target {
         self.inner
     }
-}
-
-mod internal {
-    #[doc(hidden)]
-    pub struct Private;
 }
 
 #[cfg(test)]
@@ -2848,7 +2788,7 @@ mod test {
         assert_eq!(group.mexprs().count(), size, "group#{}", group_id);
     }
 
-    fn expect_group_exprs(group: &MemoExprGroupRef<TestOperator>, expected: Vec<MemoExprRef<TestOperator>>) {
+    fn expect_group_exprs(group: &MemoGroupRef<TestOperator>, expected: Vec<MemoExprRef<TestOperator>>) {
         let actual: Vec<MemoExprRef<TestOperator>> = group.mexprs().cloned().collect();
         assert_eq!(actual, expected, "group#{} exprs", group.id());
     }

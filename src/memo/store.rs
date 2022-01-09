@@ -165,6 +165,11 @@ impl<T> StoreElementRef<T> {
     }
 
     /// Returns a raw pointer to the underlying element.
+    ///
+    /// # Safety
+    ///
+    /// Caller must guarantee that there no mutable references to the underlying data.
+    /// See [Store::get_mut].
     pub unsafe fn get_ptr(&self) -> *const T {
         self.ptr.as_ptr()
     }
