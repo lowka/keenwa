@@ -103,7 +103,9 @@ fn rewrite(mut state: State, expr: &RelNode) -> RelNode {
 
             add_filters(state, expr, &aggr_columns)
         }
-        LogicalExpr::Join(LogicalJoin { left, right, condition }) => rewrite_join(state, expr, left, right, condition),
+        LogicalExpr::Join(LogicalJoin {
+            left, right, condition, ..
+        }) => rewrite_join(state, expr, left, right, condition),
         LogicalExpr::Get(LogicalGet { columns, .. }) => add_filters(state, expr, columns),
         LogicalExpr::Union(_) => rewrite_inputs(state, expr),
         LogicalExpr::Intersect(_) => rewrite_inputs(state, expr),

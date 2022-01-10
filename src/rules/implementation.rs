@@ -1,7 +1,7 @@
 use crate::catalog::{CatalogRef, IndexRef};
 use crate::error::OptimizerError;
 use crate::meta::ColumnId;
-use crate::operators::relational::join::{get_non_empty_join_columns_pair, JoinCondition};
+use crate::operators::relational::join::{get_non_empty_join_columns_pair, JoinCondition, JoinType};
 use crate::operators::relational::logical::{
     LogicalAggregate, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin,
     LogicalProjection, LogicalSelect, LogicalUnion,
@@ -146,19 +146,24 @@ impl Rule for HashJoinRule {
         RuleType::Implementation
     }
 
-    fn matches(&self, _ctx: &RuleContext, operator: &LogicalExpr) -> Option<RuleMatch> {
-        if matches!(operator, LogicalExpr::Join { .. }) {
-            Some(RuleMatch::Expr)
-        } else {
-            None
+    fn matches(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Option<RuleMatch> {
+        match expr {
+            LogicalExpr::Join(LogicalJoin { join_type, .. }) if join_type != &JoinType::Cross => Some(RuleMatch::Expr),
+            _ => None,
         }
     }
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
-            LogicalExpr::Join(LogicalJoin { left, right, condition }) => {
+            LogicalExpr::Join(LogicalJoin {
+                join_type,
+                left,
+                right,
+                condition,
+            }) if join_type != &JoinType::Cross => {
                 if get_non_empty_join_columns_pair(left, right, condition).is_some() {
                     let expr = PhysicalExpr::HashJoin(HashJoin {
+                        join_type: join_type.clone(),
                         left: left.clone(),
                         right: right.clone(),
                         condition: condition.clone(),
@@ -185,19 +190,24 @@ impl Rule for MergeSortJoinRule {
         RuleType::Implementation
     }
 
-    fn matches(&self, _ctx: &RuleContext, operator: &LogicalExpr) -> Option<RuleMatch> {
-        if matches!(operator, LogicalExpr::Join { .. }) {
-            Some(RuleMatch::Expr)
-        } else {
-            None
+    fn matches(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Option<RuleMatch> {
+        match expr {
+            LogicalExpr::Join(LogicalJoin { join_type, .. }) if join_type != &JoinType::Cross => Some(RuleMatch::Expr),
+            _ => None,
         }
     }
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
-            LogicalExpr::Join(LogicalJoin { left, right, condition }) => {
+            LogicalExpr::Join(LogicalJoin {
+                join_type,
+                left,
+                right,
+                condition,
+            }) if join_type != &JoinType::Cross => {
                 if get_non_empty_join_columns_pair(left, right, condition).is_some() {
                     let expr = PhysicalExpr::MergeSortJoin(MergeSortJoin {
+                        join_type: join_type.clone(),
                         left: left.clone(),
                         right: right.clone(),
                         condition: condition.clone(),
@@ -212,11 +222,12 @@ impl Rule for MergeSortJoinRule {
     }
 }
 
-pub struct NestedLoopJoin;
+#[derive(Debug)]
+pub struct NestedLoopJoinRule;
 
-impl Rule for NestedLoopJoin {
+impl Rule for NestedLoopJoinRule {
     fn name(&self) -> String {
-        "NestedLoopJoin".into()
+        "NestedLoopJoinRule".into()
     }
 
     fn rule_type(&self) -> RuleType {
@@ -224,7 +235,13 @@ impl Rule for NestedLoopJoin {
     }
 
     fn matches(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Option<RuleMatch> {
-        if matches!(expr, LogicalExpr::Join { .. }) {
+        if matches!(
+            expr,
+            LogicalExpr::Join(LogicalJoin {
+                join_type: JoinType::Inner | JoinType::Cross,
+                ..
+            })
+        ) {
             Some(RuleMatch::Expr)
         } else {
             None
@@ -232,20 +249,27 @@ impl Rule for NestedLoopJoin {
     }
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
-        if let LogicalExpr::Join(LogicalJoin { left, right, condition }) = expr {
-            let condition = match condition {
-                JoinCondition::Using(using) => using.get_expr(),
-                JoinCondition::On(on) => on.expr().clone(),
-            };
+        match expr {
+            LogicalExpr::Join(LogicalJoin {
+                join_type: JoinType::Inner | JoinType::Cross,
+                left,
+                right,
+                condition,
+                ..
+            }) => {
+                let condition = match condition {
+                    JoinCondition::Using(using) => using.get_expr(),
+                    JoinCondition::On(on) => on.expr().clone(),
+                };
 
-            let expr = PhysicalExpr::NestedLoop(NestedLoop {
-                left: left.clone(),
-                right: right.clone(),
-                condition: Some(condition),
-            });
-            Ok(Some(RuleResult::Implementation(expr)))
-        } else {
-            Ok(None)
+                let expr = PhysicalExpr::NestedLoop(NestedLoop {
+                    left: left.clone(),
+                    right: right.clone(),
+                    condition: Some(condition),
+                });
+                Ok(Some(RuleResult::Implementation(expr)))
+            }
+            _ => Ok(None),
         }
     }
 }
@@ -313,6 +337,7 @@ impl Rule for IndexOnlyScanRule {
     }
 }
 
+#[derive(Debug)]
 pub struct HashAggregateRule;
 
 impl Rule for HashAggregateRule {
@@ -466,9 +491,72 @@ impl Rule for EmptyRule {
 mod test {
     use super::*;
     use crate::meta::ColumnId;
+    use crate::operators::relational::join::JoinOn;
+    use crate::operators::relational::join::JoinType::Inner;
     use crate::operators::relational::logical::LogicalEmpty;
     use crate::operators::relational::RelNode;
-    use crate::rules::testing::RuleTester;
+    use crate::operators::scalar::value::ScalarValue;
+    use crate::operators::scalar::{ScalarExpr, ScalarNode};
+    use crate::rules::testing::{expect_apply, expect_no_match, RuleTester};
+
+    fn join_expr(join_type: JoinType) -> LogicalExpr {
+        let condition = if join_type == JoinType::Cross {
+            let expr = ScalarExpr::Scalar(ScalarValue::Bool(true));
+            JoinCondition::On(JoinOn::new(ScalarNode::from(expr)))
+        } else {
+            JoinCondition::using(vec![(1, 3)])
+        };
+        let join = LogicalJoin {
+            join_type,
+            left: new_get("A", vec![1, 2]),
+            right: new_get("B", vec![3, 4]),
+            condition,
+        };
+        LogicalExpr::Join(join)
+    }
+
+    #[test]
+    fn test_nested_loop_join() {
+        let expr = r#"
+NestedLoopJoin
+  left: LogicalGet A cols=[1, 2]
+  right: LogicalGet B cols=[3, 4]
+  condition: Expr :condition
+"#;
+        expect_apply(NestedLoopJoinRule, &join_expr(JoinType::Inner), expr.replace(":condition", "col:1 = col:3"));
+        expect_apply(NestedLoopJoinRule, &join_expr(JoinType::Cross), expr.replace(":condition", "true"));
+        expect_no_match(NestedLoopJoinRule, &join_expr(JoinType::Left));
+        expect_no_match(NestedLoopJoinRule, &join_expr(JoinType::Right));
+        expect_no_match(NestedLoopJoinRule, &join_expr(JoinType::Full));
+    }
+
+    #[test]
+    fn test_hash_join() {
+        let expr = r#"
+HashJoin:type using=[(1, 3)]
+  left: LogicalGet A cols=[1, 2]
+  right: LogicalGet B cols=[3, 4]
+"#;
+        expect_apply(HashJoinRule, &join_expr(JoinType::Inner), expr.replace(":type", ""));
+        expect_no_match(HashJoinRule, &join_expr(JoinType::Cross));
+        expect_apply(HashJoinRule, &join_expr(JoinType::Left), expr.replace(":type", " type=Left"));
+        expect_apply(HashJoinRule, &join_expr(JoinType::Right), expr.replace(":type", " type=Right"));
+        expect_apply(HashJoinRule, &join_expr(JoinType::Full), expr.replace(":type", " type=Full"));
+    }
+
+    #[test]
+    fn test_merge_join() {
+        let expr = r#"
+MergeSortJoin:type using=[(1, 3)]
+  left: LogicalGet A cols=[1, 2]
+  right: LogicalGet B cols=[3, 4]
+"#;
+        expect_apply(MergeSortJoinRule, &join_expr(JoinType::Inner), expr.replace(":type", ""));
+        expect_no_match(MergeSortJoinRule, &join_expr(JoinType::Cross));
+        expect_apply(MergeSortJoinRule, &join_expr(JoinType::Left), expr.replace(":type", " type=Left"));
+        expect_apply(MergeSortJoinRule, &join_expr(JoinType::Right), expr.replace(":type", " type=Right"));
+        expect_apply(MergeSortJoinRule, &join_expr(JoinType::Full), expr.replace(":type", " type=Full"));
+    }
 
     #[test]
     fn test_sorted_inputs_union() {

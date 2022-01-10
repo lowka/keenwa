@@ -1,6 +1,6 @@
 use crate::error::OptimizerError;
 use crate::meta::{ColumnId, MetadataRef};
-use crate::operators::relational::join::JoinCondition;
+use crate::operators::relational::join::{JoinCondition, JoinType};
 use crate::operators::relational::logical::{
     LogicalAggregate, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin,
     LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
@@ -67,6 +67,7 @@ where
     /// Builds logical properties for a join operator.
     pub fn build_join(
         &self,
+        _join_type: &JoinType,
         left: &RelNode,
         right: &RelNode,
         _condition: &JoinCondition,
@@ -179,9 +180,12 @@ where
                     LogicalExpr::Aggregate(LogicalAggregate { input, columns, .. }) => {
                         self.build_aggregate(input, columns)
                     }
-                    LogicalExpr::Join(LogicalJoin { left, right, condition }) => {
-                        self.build_join(left, right, condition)
-                    }
+                    LogicalExpr::Join(LogicalJoin {
+                        join_type,
+                        left,
+                        right,
+                        condition,
+                    }) => self.build_join(join_type, left, right, condition),
                     LogicalExpr::Get(LogicalGet { source, columns }) => self.build_get(source, columns),
                     LogicalExpr::Union(LogicalUnion {
                         left,

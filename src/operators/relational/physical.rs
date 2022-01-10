@@ -1,6 +1,6 @@
 use crate::memo::{ExprContext, MemoExprFormatter, NewChildExprs};
 use crate::meta::ColumnId;
-use crate::operators::relational::join::{get_join_columns_pair, JoinCondition, JoinOn};
+use crate::operators::relational::join::{get_join_columns_pair, JoinCondition, JoinOn, JoinType};
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::ScalarNode;
 use crate::operators::{Operator, OperatorCopyIn};
@@ -308,6 +308,7 @@ impl HashAggregate {
 
 #[derive(Debug, Clone)]
 pub struct HashJoin {
+    pub join_type: JoinType,
     pub left: RelNode,
     pub right: RelNode,
     pub condition: JoinCondition,
@@ -328,6 +329,7 @@ impl HashJoin {
         inputs.expect_len(2 + num_opt, "HashJoin");
 
         HashJoin {
+            join_type: self.join_type.clone(),
             left: inputs.rel_node(),
             right: inputs.rel_node(),
             condition: match &self.condition {
@@ -366,6 +368,10 @@ impl HashJoin {
         F: MemoExprFormatter,
     {
         f.write_name("HashJoin");
+        match &self.join_type {
+            JoinType::Inner => {}
+            _ => f.write_value("type", &self.join_type),
+        };
         f.write_expr("left", &self.left);
         f.write_expr("right", &self.right);
         match &self.condition {
@@ -377,6 +383,7 @@ impl HashJoin {
 
 #[derive(Debug, Clone)]
 pub struct MergeSortJoin {
+    pub join_type: JoinType,
     pub left: RelNode,
     pub right: RelNode,
     pub condition: JoinCondition,
@@ -397,6 +404,7 @@ impl MergeSortJoin {
         inputs.expect_len(2 + num_opt, "MergeSortJoin");
 
         MergeSortJoin {
+            join_type: self.join_type.clone(),
             left: inputs.rel_node(),
             right: inputs.rel_node(),
             condition: match &self.condition {
@@ -443,6 +451,10 @@ impl MergeSortJoin {
         F: MemoExprFormatter,
     {
         f.write_name("MergeSortJoin");
+        match &self.join_type {
+            JoinType::Inner => {}
+            _ => f.write_value("type", &self.join_type),
+        };
         f.write_expr("left", &self.left);
         f.write_expr("right", &self.right);
         match &self.condition {

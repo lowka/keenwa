@@ -12,6 +12,26 @@ use rand::seq::SliceRandom;
 use std::fmt::Display;
 use std::rc::Rc;
 
+/// Expects that given expression does not match the given rule. See [RuleTester::no_match].
+pub fn expect_no_match<T>(rule: T, expr: &LogicalExpr)
+where
+    T: Rule + 'static,
+{
+    let mut tester = RuleTester::new(rule);
+    tester.no_match(&expr)
+}
+
+/// Expects that given rule can be applied to the given expression and compares the result
+/// expression with the expected value. See [RuleTester::apply].
+pub fn expect_apply<T, S>(rule: T, expr: &LogicalExpr, expected: S)
+where
+    T: Rule + 'static,
+    S: AsRef<str>,
+{
+    let mut tester = RuleTester::new(rule);
+    tester.apply(expr, expected.as_ref())
+}
+
 /// Provides methods to test [optimization rules].
 ///
 /// [optimization rules]: crate::rules::Rule
@@ -70,6 +90,34 @@ impl RuleTester {
         let actual_expr = format_operator_tree(&new_expr);
 
         assert_eq!(actual_expr.trim_end(), expected.trim());
+    }
+
+    /// Matches the given expression to the rule and expects it not to match. If the match is unsuccessful this method
+    /// then calls [Rule::apply](crate::rules::Rule::apply) on the given expression.
+    /// If that call does not return `Ok(None)` this methods fails.
+    pub fn no_match(&mut self, expr: &LogicalExpr) {
+        let memo_expr = self.memo.insert_group(Operator::from(OperatorExpr::from(expr.clone())));
+        let expr_str = format_operator_tree(&memo_expr);
+
+        let ctx = RuleContext::new(Rc::new(PhysicalProperties::none()), self.metadata.get_ref());
+        let rule_match = self.rule.matches(&ctx, expr);
+        assert!(
+            rule_match.is_none(),
+            "Rule should not have matched. Rule: {:?} match: {:?} expr:\n{}",
+            self.rule,
+            rule_match,
+            expr_str
+        );
+
+        let expr = memo_expr.expr();
+        let result = self.rule.apply(&ctx, expr.relational().logical());
+        assert!(
+            matches!(result, Ok(None)),
+            "Rule should have not been applied. Rule: {:?} result: {:?} expr:\n{}",
+            self.rule,
+            result,
+            expr_str
+        )
     }
 }
 

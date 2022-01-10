@@ -1,5 +1,5 @@
 use crate::error::OptimizerError;
-use crate::operators::relational::join::{get_non_empty_join_columns_pair, JoinCondition};
+use crate::operators::relational::join::{get_non_empty_join_columns_pair, JoinCondition, JoinType};
 use crate::operators::relational::logical::{LogicalExpr, LogicalJoin};
 use crate::rules::{Rule, RuleContext, RuleMatch, RuleResult, RuleType};
 
@@ -16,7 +16,13 @@ impl Rule for JoinCommutativityRule {
     }
 
     fn matches(&self, _ctx: &RuleContext, operator: &LogicalExpr) -> Option<RuleMatch> {
-        if matches!(operator, LogicalExpr::Join { .. }) {
+        if matches!(
+            operator,
+            LogicalExpr::Join(LogicalJoin {
+                join_type: JoinType::Inner,
+                ..
+            })
+        ) {
             Some(RuleMatch::Expr)
         } else {
             None
@@ -25,9 +31,15 @@ impl Rule for JoinCommutativityRule {
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
-            LogicalExpr::Join(LogicalJoin { left, right, condition }) => {
+            LogicalExpr::Join(LogicalJoin {
+                join_type,
+                left,
+                right,
+                condition,
+            }) => {
                 if let Some((left_columns, right_columns)) = get_non_empty_join_columns_pair(left, right, condition) {
                     let expr = LogicalExpr::Join(LogicalJoin {
+                        join_type: join_type.clone(),
                         left: right.clone(),
                         right: left.clone(),
                         condition: JoinCondition::using(
@@ -112,6 +124,7 @@ impl Rule for JoinAssociativityRule {
         if matches!(
             expr,
             LogicalExpr::Join(LogicalJoin {
+                join_type: JoinType::Inner,
                 condition: JoinCondition::Using(..),
                 ..
             })
@@ -125,6 +138,7 @@ impl Rule for JoinAssociativityRule {
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
             LogicalExpr::Join(LogicalJoin {
+                join_type: JoinType::Inner,
                 left: top_left,
                 right: top_right,
                 condition: top_condition,
@@ -133,6 +147,7 @@ impl Rule for JoinAssociativityRule {
                     // [AxB]xC -> Ax[BxC]
                     (
                         LogicalExpr::Join(LogicalJoin {
+                            join_type: JoinType::Inner,
                             left: inner_left,
                             right: inner_right,
                             condition: inner_condition,
@@ -143,8 +158,10 @@ impl Rule for JoinAssociativityRule {
                             Self::left_side_condition(top_condition, inner_condition)
                         {
                             let expr = LogicalExpr::Join(LogicalJoin {
+                                join_type: JoinType::Inner,
                                 left: inner_left.clone(),
                                 right: LogicalExpr::Join(LogicalJoin {
+                                    join_type: JoinType::Inner,
                                     left: inner_right.clone(),
                                     right: top_right.clone(),
                                     condition: new_inner_condition,
@@ -159,6 +176,7 @@ impl Rule for JoinAssociativityRule {
                     (
                         _,
                         LogicalExpr::Join(LogicalJoin {
+                            join_type: JoinType::Inner,
                             left: inner_left,
                             right: inner_right,
                             condition: inner_condition,
@@ -168,7 +186,9 @@ impl Rule for JoinAssociativityRule {
                             Self::right_side_condition(top_condition, inner_condition)
                         {
                             let expr = LogicalExpr::Join(LogicalJoin {
+                                join_type: JoinType::Inner,
                                 left: LogicalExpr::Join(LogicalJoin {
+                                    join_type: JoinType::Inner,
                                     left: top_left.clone(),
                                     right: inner_left.clone(),
                                     condition: new_inner_condition,
@@ -199,6 +219,7 @@ mod tests {
     #[test]
     fn test_join_commutativity_rule() {
         let expr = LogicalExpr::Join(LogicalJoin {
+            join_type: JoinType::Inner,
             left: LogicalExpr::Get(LogicalGet {
                 source: "A".into(),
                 columns: vec![1, 2],
@@ -226,7 +247,9 @@ LogicalJoin using=[(3, 1)]
     #[test]
     fn test_join_associativity_rule1() {
         let expr = LogicalExpr::Join(LogicalJoin {
+            join_type: JoinType::Inner,
             left: LogicalExpr::Join(LogicalJoin {
+                join_type: JoinType::Inner,
                 left: LogicalExpr::Get(LogicalGet {
                     source: "A".into(),
                     columns: vec![1, 2],
@@ -265,12 +288,14 @@ LogicalJoin using=[(1, 4)]
     #[test]
     fn test_join_associativity_rule2() {
         let expr = LogicalExpr::Join(LogicalJoin {
+            join_type: JoinType::Inner,
             left: LogicalExpr::Get(LogicalGet {
                 source: "A".into(),
                 columns: vec![1, 2],
             })
             .into(),
             right: LogicalExpr::Join(LogicalJoin {
+                join_type: JoinType::Inner,
                 left: LogicalExpr::Get(LogicalGet {
                     source: "B".into(),
                     columns: vec![3, 4],

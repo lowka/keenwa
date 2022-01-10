@@ -1,7 +1,7 @@
 use crate::error::OptimizerError;
 use crate::memo::{ExprContext, MemoExprFormatter, NewChildExprs};
 use crate::meta::ColumnId;
-use crate::operators::relational::join::{JoinCondition, JoinOn};
+use crate::operators::relational::join::{JoinCondition, JoinOn, JoinType};
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::expr::ExprVisitor;
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
@@ -359,6 +359,7 @@ impl LogicalAggregate {
 
 #[derive(Debug, Clone)]
 pub struct LogicalJoin {
+    pub join_type: JoinType,
     pub left: RelNode,
     pub right: RelNode,
     pub condition: JoinCondition,
@@ -379,6 +380,7 @@ impl LogicalJoin {
         inputs.expect_len(2 + num_opt, "LogicalJoin");
 
         LogicalJoin {
+            join_type: self.join_type.clone(),
             left: inputs.rel_node(),
             right: inputs.rel_node(),
             condition: match &self.condition {
@@ -413,6 +415,10 @@ impl LogicalJoin {
         F: MemoExprFormatter,
     {
         f.write_name("LogicalJoin");
+        match &self.join_type {
+            JoinType::Inner => {}
+            _ => f.write_value("type", &self.join_type),
+        };
         f.write_expr("left", &self.left);
         f.write_expr("right", &self.right);
         match &self.condition {
