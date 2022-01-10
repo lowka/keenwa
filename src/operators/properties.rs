@@ -166,7 +166,10 @@ where
             OperatorExpr::Relational(RelExpr::Logical(expr)) => {
                 let RelationalProperties { required, .. } = match manual_props {
                     Properties::Relational(props) => props,
-                    Properties::Scalar(_) => return Err(OptimizerError::Internal("a".into())),
+                    Properties::Scalar(props) => {
+                        // We always panic when expression does not match its properties and vice versa.
+                        panic!("Relational expression has scalar properties. Expr: {:?}. \n Props: {:?}", expr, props)
+                    }
                 };
                 let LogicalProperties {
                     output_columns,
