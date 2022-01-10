@@ -734,7 +734,7 @@ fn test_nested_loop_join() {
         projection.build()
     });
 
-    tester.add_rules(|_| vec![Box::new(NestedLoopJoin)]);
+    tester.add_rules(|_| vec![Box::new(NestedLoopJoinRule)]);
 
     tester.set_table_row_count("A", 100);
     tester.set_table_row_count("B", 120);

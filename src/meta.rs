@@ -183,7 +183,7 @@ struct MutableMetadataInner {
 }
 
 /// A reference to an instance of mutable metadata.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct MetadataRef<'a> {
     metadata: &'a MutableMetadata,
 }

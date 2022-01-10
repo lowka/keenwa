@@ -3,7 +3,7 @@ use crate::datatypes::DataType;
 use crate::error::OptimizerError;
 use crate::memo::ExprPtr;
 use crate::meta::{ColumnId, ColumnMetadata, MutableMetadata};
-use crate::operators::relational::join::{JoinCondition, JoinOn};
+use crate::operators::relational::join::{JoinCondition, JoinOn, JoinType};
 use crate::operators::relational::logical::{
     LogicalAggregate, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin,
     LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
@@ -260,7 +260,12 @@ impl OperatorBuilder {
         output_columns.extend_from_slice(&right_scope.columns);
 
         let condition = JoinCondition::using(columns_ids);
-        let expr = LogicalExpr::Join(LogicalJoin { left, right, condition });
+        let expr = LogicalExpr::Join(LogicalJoin {
+            join_type: JoinType::Inner,
+            left,
+            right,
+            condition,
+        });
 
         self.add_operator(
             expr,
@@ -287,7 +292,12 @@ impl OperatorBuilder {
         let expr = expr.rewrite(&mut rewriter)?;
         let expr = self.add_scalar_node(expr);
         let condition = JoinCondition::On(JoinOn::new(expr));
-        let expr = LogicalExpr::Join(LogicalJoin { left, right, condition });
+        let expr = LogicalExpr::Join(LogicalJoin {
+            join_type: JoinType::Inner,
+            left,
+            right,
+            condition,
+        });
 
         self.add_operator(expr, scope);
         Ok(self)

@@ -107,8 +107,8 @@ impl<'m> RuleContext<'m> {
         self.required_properties.as_ref()
     }
 
-    pub fn metadata(&self) -> MetadataRef {
-        self.metadata.clone()
+    pub fn metadata(&self) -> &MetadataRef {
+        &self.metadata
     }
 }
 

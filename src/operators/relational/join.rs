@@ -4,8 +4,27 @@ use crate::operators::scalar::expr::BinaryOp;
 use crate::operators::scalar::{exprs, ScalarExpr, ScalarNode};
 use std::fmt::{Display, Formatter};
 
-//TODO:
-// - Add join types
+/// Type of a join.
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub enum JoinType {
+    Inner,
+    Left,
+    Right,
+    Full,
+    Cross,
+}
+
+impl Display for JoinType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            JoinType::Inner => write!(f, "Inner"),
+            JoinType::Left => write!(f, "Left"),
+            JoinType::Right => write!(f, "Right"),
+            JoinType::Full => write!(f, "Full"),
+            JoinType::Cross => write!(f, "Cross"),
+        }
+    }
+}
 
 /// Join condition.
 #[derive(Debug, Clone)]
