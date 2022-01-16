@@ -47,7 +47,7 @@ where
 
         let required_property = expr.props().relational().required().clone();
         let root_expr = memo.insert_group(expr);
-        let root_group_id = root_expr.group_ptr().memo_group_id();
+        let root_group_id = root_expr.state().memo_group_id();
 
         let ctx = OptimizationContext {
             group: root_group_id,
@@ -449,7 +449,7 @@ fn apply_rule<R>(
                 let memo_group = memo.get_group(&ctx.group);
                 let group_token = memo_group.to_membership_token();
                 let new_expr = memo.insert_group_member(group_token, Operator::from(new_operator));
-                let new_expr = new_expr.expr_ptr().memo_expr();
+                let new_expr = new_expr.state().memo_expr();
 
                 log::debug!(" + Logical expression: {}", new_expr);
 
@@ -465,7 +465,7 @@ fn apply_rule<R>(
                 let memo_group = memo.get_group(&ctx.group);
                 let group_token = memo_group.to_membership_token();
                 let new_expr = memo.insert_group_member(group_token, new_operator);
-                let new_expr = new_expr.expr_ptr().memo_expr();
+                let new_expr = new_expr.state().memo_expr();
 
                 log::debug!(" + Physical expression: {}", new_expr);
 
@@ -509,7 +509,7 @@ fn enforce_properties<R>(
         // 2) copy_out_best_expr traverses its child expressions recursively so adding an enforcer to a group which
         // is used as its input results an infinite loop during the traversal.
         let enforcer_expr = memo.insert_group(Operator::from(enforcer_expr));
-        let enforcer_expr = enforcer_expr.expr_ptr().memo_expr().clone();
+        let enforcer_expr = enforcer_expr.state().memo_expr().clone();
         let remaining_properties = runtime_state.properties_cache.insert(remaining_properties);
 
         (enforcer_expr, remaining_properties)

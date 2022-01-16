@@ -12,6 +12,7 @@ use std::{
     collections::{hash_map::Entry, HashMap},
     fmt::Debug,
 };
+use triomphe::Arc;
 
 /// `Memo` is the primary data structure used by the cost-based optimizer:
 ///  * It stores each expression as a group of logically equivalent expressions.
@@ -161,7 +162,13 @@ where
             group_data.props_ref.clone()
         };
         // At this point no references to the group data exists.
-        let expr = E::from_parts(ExprPtr::Owned(Box::new(expr)), ExprGroupPtr::from_memo_group(group_id, props_ref));
+        let state = MemoExprState::Memo(MemoizedExpr {
+            // We can store ExprPtr in the owned state and ExprGroupPtr in the memo state
+            // because there is no direct way to retrieve this expression.
+            expr: ExprPtr::Owned(Arc::new(expr)),
+            group: ExprGroupPtr::Memo((group_id, props_ref)),
+        });
+        let expr = E::from_state(state);
 
         let (id, elem_ref) = self.exprs.insert(expr);
         let expr_id = ExprId(id);
@@ -254,7 +261,11 @@ where
         let expr_ref = data.exprs[0].clone();
         let props_ref = data.props_ref.clone();
 
-        E::from_parts(ExprPtr::Memo(expr_ref), ExprGroupPtr::from_memo_group(group_id, props_ref))
+        let state = MemoExprState::Memo(MemoizedExpr {
+            expr: ExprPtr::Memo(expr_ref),
+            group: ExprGroupPtr::Memo((group_id, props_ref)),
+        });
+        E::from_state(state)
     }
 
     fn get_memo_group(&self) -> &MemoGroupData<E> {
@@ -329,23 +340,20 @@ pub trait MemoExpr: Clone {
     /// Returns the expression this memo expression stores.
     /// This method is a shorthand for `memo_expr.expr_ptr().expr()`.
     fn expr(&self) -> &Self::Expr {
-        self.expr_ptr().expr()
+        self.state().expr()
     }
 
     /// Returns properties associated with this expression.
     /// This method is a shorthand for `memo_expr.group_ptr().props()`.
     fn props(&self) -> &Self::Props {
-        self.group_ptr().props()
+        self.state().props()
     }
 
-    /// Creates a new memo expression from the given expression and group.
-    fn from_parts(expr: ExprPtr<Self>, group: ExprGroupPtr<Self>) -> Self;
+    /// Returns a reference to the state of this memo expression.
+    fn state(&self) -> &MemoExprState<Self>;
 
-    /// Returns a pointer to the underlying expression.
-    fn expr_ptr(&self) -> &ExprPtr<Self>;
-
-    /// Returns a pointer to a group this memo expression belongs to.
-    fn group_ptr(&self) -> &ExprGroupPtr<Self>;
+    /// Creates a new memo expression from the given state.
+    fn from_state(state: MemoExprState<Self>) -> Self;
 
     /// Recursively traverses this expression and copies it into a memo.
     fn copy_in<T>(&self, visitor: &mut CopyInExprs<Self, T>);
@@ -441,29 +449,29 @@ pub trait Props: Clone {
     fn scalar(&self) -> &Self::ScalarProps;
 }
 
-/// `ExprPtr` is a pointer to an expression.
+/// Represents a state of a memo expression.
 ///
-/// `ExprPtr` reference has two states `owned` and `memo`:
-/// * In the `Owned` state this reference owns an expression and that expression is stored in the heap.
-/// * In the `Memo` is a reference to a [memo expression](self::MemoExprRef).
+/// In the `Owned` state a memo expression stores expression and properties.
+/// In the `Memo` state a memo expression stores a reference to expression stored in a memo.
 #[derive(Clone)]
-pub enum ExprPtr<E>
+pub enum MemoExprState<E>
 where
     E: MemoExpr,
 {
-    /// `ExprPtr` owns the expression.
-    Owned(Box<E::Expr>),
-    /// `ExprPtr` holds reference to a [memo expression](self::MemoExprRef).
-    Memo(MemoExprRef<E>),
+    Owned(OwnedExpr<E>),
+    Memo(MemoizedExpr<E>),
 }
 
-impl<E> ExprPtr<E>
+impl<E> MemoExprState<E>
 where
     E: MemoExpr,
 {
-    /// Creates an instance of `ExprPtr` that owns the given expression.
-    pub fn new(expr: E::Expr) -> Self {
-        ExprPtr::Owned(Box::new(expr))
+    /// Creates an owned state with the given expression and properties.
+    pub fn new(expr: E::Expr, props: E::Props) -> Self {
+        MemoExprState::Owned(OwnedExpr {
+            expr: Arc::new(expr),
+            props: Arc::new(props),
+        })
     }
 
     /// Returns a reference to an expression.
@@ -471,33 +479,57 @@ where
     /// * In the memo state this method returns a reference to the first expression in the [memo group][self::MemoGroupRef].
     pub fn expr(&self) -> &E::Expr {
         match self {
-            ExprPtr::Owned(expr) => expr.as_ref(),
-            ExprPtr::Memo(expr) => expr.expr(),
+            MemoExprState::Owned(state) => state.expr.as_ref(),
+            MemoExprState::Memo(state) => &state.expr.expr(),
         }
     }
 
-    /// Returns `true` if this `ExprPtr` is in the `Memo` state.
+    /// Returns a reference to properties.
+    ///
+    /// * In the owned state this method returns a reference to the underlying properties.
+    /// * In the memo state this method returns a reference to properties of a memo group the expression belongs to.
+    pub fn props(&self) -> &E::Props {
+        match self {
+            MemoExprState::Owned(state) => state.props.as_ref(),
+            MemoExprState::Memo(state) => &state.group.props(),
+        }
+    }
+
+    /// Returns `true` if this `MemoExprState` is in the `Memo` state.
     pub fn is_memo(&self) -> bool {
         match self {
-            ExprPtr::Owned(_) => false,
-            ExprPtr::Memo(_) => true,
+            MemoExprState::Owned(_) => false,
+            MemoExprState::Memo(_) => true,
         }
     }
 
-    /// Returns a reference to a memo expression or panics if this `ExpGroupRef` is not in the memo state.
+    /// Returns a reference to a memo expression or panics if this `MemoExprState` is not in the memo state.
     /// This method should only be called on memoized expressions.
     ///
     /// # Panics
     ///
-    /// This method panics if this `ExpGroupRef` owns the properties instead of holding a [MemoExprRef](self::MemoExprRef).
+    /// This method panics if this `MemoExprState` is in the owned state.
     pub fn memo_expr(&self) -> &MemoExprRef<E> {
         match self {
-            ExprPtr::Owned(_) => panic!("This should only be called on memoized expressions"),
-            ExprPtr::Memo(expr) => expr,
+            MemoExprState::Owned(_) => panic!("This should only be called on memoized expressions"),
+            MemoExprState::Memo(state) => state.expr.memo_expr(),
         }
     }
 
-    fn equal(&self, other: &ExprPtr<E>) -> bool {
+    /// Returns an identifier of a memo group or panics if this `MemoExprState` is not in the `Memo` state.
+    /// This method should only be called on memoized expressions.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if this `MemoExprState` is in the `Owned` state.
+    pub fn memo_group_id(&self) -> GroupId {
+        match self {
+            MemoExprState::Owned(_) => panic!("This should only be called on memoized expressions"),
+            MemoExprState::Memo(state) => state.group.memo_group_id(),
+        }
+    }
+
+    fn equal(&self, other: &Self) -> bool {
         let this = self.get_eq_state();
         let that = other.get_eq_state();
         // Expressions are equal if their expr pointers point to the same expression.
@@ -512,11 +544,11 @@ where
 
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
-            ExprPtr::Owned(expr) => {
-                let ptr: *const E::Expr = &**expr;
+            MemoExprState::Owned(s) => {
+                let ptr: *const E::Expr = s.expr.as_ptr();
                 ptr.hash(state)
             }
-            ExprPtr::Memo(expr) => expr.id().hash(state),
+            MemoExprState::Memo(s) => s.expr.memo_expr().id.hash(state),
         }
     }
 
@@ -525,133 +557,85 @@ where
         E: MemoExpr,
     {
         match self {
-            ExprPtr::Owned(expr) => {
-                let ptr: *const E::Expr = &**expr;
+            MemoExprState::Owned(state) => {
+                let ptr: *const E::Expr = state.expr.as_ptr();
                 (Some(ptr), None)
             }
-            ExprPtr::Memo(expr) => (None, Some(expr.id())),
+            MemoExprState::Memo(state) => (None, Some(state.expr.memo_expr().id)),
         }
     }
 }
 
-impl<E, T> Debug for ExprPtr<E>
+impl<E, T, P> Debug for MemoExprState<E>
 where
-    E: MemoExpr<Expr = T>,
-    T: Debug,
+    E: MemoExpr<Expr = T, Props = P> + Debug,
+    T: Expr + Debug,
+    P: Props + Debug,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            ExprPtr::Owned(expr) => f.debug_tuple("Owned").field(&*expr).finish(),
-            ExprPtr::Memo(expr) => f.debug_tuple("Memo").field(expr).finish(),
+            MemoExprState::Owned(state) => f.debug_tuple("Owned").field(state).finish(),
+            MemoExprState::Memo(state) => f.debug_tuple("Memo").field(state).finish(),
         }
     }
 }
 
-/// `ExprGroupPtr` is a pointer to a memo group an expression belongs to. It has two states `Owned` and `Memo`:
-///
-/// * In the `Owned` state an expression has not been copied into a memo and an instance of `ExprGroupPtr`
-/// owns properties and stores a pointer to a heap allocation.
-/// * In the `Memo` state it stores a reference to properties of a memo group and id of that group.
-pub struct ExprGroupPtr<E>
+/// Represents an expression not stored in a memo.
+#[derive(Clone)]
+pub struct OwnedExpr<E>
 where
     E: MemoExpr,
 {
-    inner: ExprGroupPtrState<E>,
+    expr: Arc<E::Expr>,
+    props: Arc<E::Props>,
 }
 
-impl<E> ExprGroupPtr<E>
+impl<E, T, P> Debug for OwnedExpr<E>
 where
-    E: MemoExpr,
-{
-    /// Creates an instance of `ExprGroupPtr` that owns the given properties.
-    pub fn new(props: E::Props) -> Self {
-        ExprGroupPtr {
-            inner: ExprGroupPtrState::Owned(Box::new(props)),
-        }
-    }
-
-    /// Returns a reference to properties of a memo group behind this pointer.
-    ///
-    /// * In the owned state this method returns a reference to properties owned by this pointer.
-    /// * In the memo state this method returns a reference of a memo group the expression belongs to.
-    pub fn props(&self) -> &E::Props {
-        match self.inner() {
-            ExprGroupPtrState::Owned(props) => props.as_ref(),
-            ExprGroupPtrState::Memo((_, props)) => props.get(),
-        }
-    }
-
-    /// Returns `true` if this `ExprGroupPtr` is in the `Memo` state.
-    pub fn is_memo(&self) -> bool {
-        match self.inner() {
-            ExprGroupPtrState::Owned(_) => false,
-            ExprGroupPtrState::Memo(_) => true,
-        }
-    }
-
-    /// Returns an identifier of a memo group or panics if this `ExprGroupPtr` is not in the `Memo` state.
-    /// This method should only be called on memoized expressions.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if this `ExprGroupPtr` is in the `Owned` state.
-    pub fn memo_group_id(&self) -> GroupId {
-        match self.inner() {
-            ExprGroupPtrState::Owned(_) => panic!("This should only be called on memoized expressions"),
-            ExprGroupPtrState::Memo((group, _)) => *group,
-        }
-    }
-
-    fn from_memo_group(group_id: GroupId, props: ImmutableRef<E::Props>) -> Self {
-        ExprGroupPtr {
-            inner: ExprGroupPtrState::Memo((group_id, props)),
-        }
-    }
-
-    fn inner(&self) -> &ExprGroupPtrState<E> {
-        &self.inner
-    }
-}
-
-impl<E, P> Debug for ExprGroupPtr<E>
-where
-    E: MemoExpr<Props = P>,
-    P: Debug,
+    E: MemoExpr<Expr = T, Props = P>,
+    T: Expr + Debug,
+    P: Props + Debug,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match &self.inner {
-            ExprGroupPtrState::Owned(props) => f.debug_tuple("Owned").field(&*props).finish(),
-            ExprGroupPtrState::Memo((group_id, _)) => f.debug_tuple("Memo").field(group_id).finish(),
-        }
+        f.debug_struct("OwnedExpr")
+            .field("expr", self.expr.as_ref())
+            .field("props", &self.props.as_ref())
+            .finish()
     }
 }
 
-impl<E> Clone for ExprGroupPtr<E>
+/// Represents an expression stored in a memo.
+#[derive(Clone)]
+pub struct MemoizedExpr<E>
 where
     E: MemoExpr,
 {
-    fn clone(&self) -> Self {
-        let inner = match &self.inner {
-            ExprGroupPtrState::Owned(props) => ExprGroupPtrState::Owned(props.clone()),
-            ExprGroupPtrState::Memo(group) => ExprGroupPtrState::Memo(group.clone()),
-        };
-        ExprGroupPtr { inner }
+    expr: ExprPtr<E>,
+    group: ExprGroupPtr<E>,
+}
+
+impl<E> MemoizedExpr<E>
+where
+    E: MemoExpr,
+{
+    /// Returns an identifier of a group this expression belongs to.
+    pub fn group_id(&self) -> GroupId {
+        self.group.memo_group_id()
     }
 }
 
-enum ExprGroupPtrState<E>
+impl<E, T, P> Debug for MemoizedExpr<E>
 where
-    E: MemoExpr,
+    E: MemoExpr<Expr = T, Props = P> + Debug,
+    T: Expr + Debug,
+    P: Props + Debug,
 {
-    /// Owned state.
-    //TODO: Since transformation rules do not use properties => they should not pay the cost of a heap allocation of an
-    // empty properties object.
-    // Copying an alternative expression into a memo also requires MemoExpr which consists of an expression and properties
-    // -> this means that it also requires a heap allocation.
-    // Add MemoExpr::empty_props(?) and Owned state (Box<PropsRef> | Empty(const T)).
-    Owned(Box<E::Props>),
-    /// `ExprGroupPtr` holds a reference to properties of a memo group an expression belongs to.
-    Memo((GroupId, ImmutableRef<E::Props>)),
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemoizedExpr")
+            .field("expr_id", &self.expr.memo_expr().id())
+            .field("group_id", &self.group.memo_group_id())
+            .finish()
+    }
 }
 
 /// Callback that is called when a new memo group is added to a memo.
@@ -679,9 +663,8 @@ where
 {
     /// Creates a relational node of an expression tree from the given relational expression and properties.
     pub fn new(expr: RelExpr, props: RelProps) -> Self {
-        let expr = ExprPtr::new(T::new_rel(expr));
-        let group = ExprGroupPtr::new(P::new_rel(props));
-        let expr = E::from_parts(expr, group);
+        let state = MemoExprState::new(T::new_rel(expr), P::new_rel(props));
+        let expr = E::from_state(state);
         RelNode(expr)
     }
 
@@ -713,9 +696,7 @@ where
     where
         T: 'e,
     {
-        let expr = self.0.expr_ptr();
-        let expr = expr.expr();
-        expr.relational()
+        self.0.expr().relational()
     }
 
     /// Returns a reference to properties associated with this node:
@@ -733,9 +714,9 @@ where
         self.0.props().relational()
     }
 
-    /// Returns an [self::ExprPtr] of the underlying memo expression.
-    pub fn expr_ref(&self) -> &ExprPtr<E> {
-        self.0.expr_ptr()
+    /// Returns an [self::MemoExprState] of the underlying memo expression.
+    pub fn state(&self) -> &MemoExprState<E> {
+        self.0.state()
     }
 
     /// Returns a reference to the underlying memo expression.
@@ -781,7 +762,7 @@ where
     E: MemoExpr,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.0.expr_ptr().equal(other.0.expr_ptr())
+        self.0.state().equal(other.0.state())
     }
 }
 
@@ -792,7 +773,7 @@ where
     E: MemoExpr,
 {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.expr_ptr().hash(state)
+        self.0.state().hash(state)
     }
 }
 
@@ -807,9 +788,8 @@ where
 {
     /// Creates a scalar node of an expression tree from the given scalar expression and properties.
     pub fn new(expr: ScalarExpr, props: ScalarProps) -> Self {
-        let expr = ExprPtr::new(T::new_scalar(expr));
-        let group = ExprGroupPtr::new(P::new_scalar(props));
-        let expr = E::from_parts(expr, group);
+        let state = MemoExprState::new(T::new_scalar(expr), P::new_scalar(props));
+        let expr = E::from_state(state);
         ScalarNode(expr)
     }
 
@@ -841,9 +821,7 @@ where
     where
         T: 'e,
     {
-        let expr = self.0.expr_ptr();
-        let expr = expr.expr();
-        expr.scalar()
+        self.0.expr().scalar()
     }
 
     /// Returns a reference to properties associated with this node:
@@ -857,9 +835,9 @@ where
         self.0.props().scalar()
     }
 
-    /// Returns an [self::ExprPtr] of the underlying memo expression.
-    pub fn expr_ref(&self) -> &ExprPtr<E> {
-        self.0.expr_ptr()
+    /// Returns an [self::MemoExprState] of the underlying memo expression.
+    pub fn state(&self) -> &MemoExprState<E> {
+        self.0.state()
     }
 
     /// Returns a reference to the underlying memo expression.
@@ -905,7 +883,7 @@ where
     E: MemoExpr,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.0.expr_ptr().equal(other.0.expr_ptr())
+        self.0.state().equal(other.0.state())
     }
 }
 
@@ -916,7 +894,7 @@ where
     E: MemoExpr,
 {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.expr_ptr().hash(state)
+        self.0.state().hash(state)
     }
 }
 
@@ -991,13 +969,13 @@ where
     /// Returns an identifier of a memo group this memo expression belongs to.
     pub fn group_id(&self) -> GroupId {
         let expr = self.get_memo_expr();
-        expr.group_ptr().memo_group_id()
+        expr.state().memo_group_id()
     }
 
     /// Returns a reference to the properties of the memo group this expression belongs to.
     pub fn props(&self) -> &E::Props {
         let expr = self.get_memo_expr();
-        expr.group_ptr().props()
+        expr.state().props()
     }
 
     /// Returns an iterator over child expressions of this memo expression.
@@ -1061,10 +1039,10 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         if let Some(expr) = self.expr.get_child(self.position) {
             self.position += 1;
-            match expr.expr_ptr() {
+            match expr.state() {
                 // MemoExprRef.expr store a memo expression whose child expressions are replaced with references.
-                ExprPtr::Owned(_) => unreachable!(),
-                ExprPtr::Memo(expr_ref) => Some(expr_ref.clone()),
+                MemoExprState::Owned(_) => unreachable!(),
+                MemoExprState::Memo(state) => Some(state.expr.memo_expr().clone()),
             }
         } else {
             None
@@ -1185,6 +1163,75 @@ impl Debug for ExprId {
     }
 }
 
+#[derive(Clone)]
+enum ExprPtr<E>
+where
+    E: MemoExpr,
+{
+    // Used for new expressions and for expressions is stored in a memo (see Memo::add_expr).
+    // In later case such ExprPtr should not be accessible to via public API.
+    Owned(Arc<E::Expr>),
+    Memo(MemoExprRef<E>),
+}
+
+impl<E> ExprPtr<E>
+where
+    E: MemoExpr,
+{
+    fn expr(&self) -> &E::Expr {
+        match self {
+            ExprPtr::Owned(expr) => expr.as_ref(),
+            ExprPtr::Memo(expr) => expr.expr(),
+        }
+    }
+
+    fn is_memo(&self) -> bool {
+        match self {
+            ExprPtr::Owned(_) => false,
+            ExprPtr::Memo(_) => true,
+        }
+    }
+
+    fn memo_expr(&self) -> &MemoExprRef<E> {
+        match self {
+            ExprPtr::Owned(_) => panic!("This should only be called on memoized expressions"),
+            ExprPtr::Memo(expr) => expr,
+        }
+    }
+}
+
+#[derive(Clone)]
+enum ExprGroupPtr<E>
+where
+    E: MemoExpr,
+{
+    Owned(Arc<E::Props>),
+    Memo((GroupId, ImmutableRef<E::Props>)),
+}
+
+impl<E> ExprGroupPtr<E>
+where
+    E: MemoExpr,
+{
+    pub fn props(&self) -> &E::Props {
+        match self {
+            ExprGroupPtr::Owned(props) => props.as_ref(),
+            ExprGroupPtr::Memo((_, props)) => props.get(),
+        }
+    }
+
+    fn memo_group_id(&self) -> GroupId {
+        match self {
+            ExprGroupPtr::Owned(_) => panic!("This should only be called on memoized expressions"),
+            ExprGroupPtr::Memo((group, _)) => *group,
+        }
+    }
+
+    fn from_memo_group(group_id: GroupId, props: ImmutableRef<E::Props>) -> Self {
+        ExprGroupPtr::Memo((group_id, props))
+    }
+}
+
 struct MemoGroupData<E>
 where
     E: MemoExpr,
@@ -1261,8 +1308,8 @@ where
     /// * If the child expression is a group this method returns a reference to that group.
     pub fn visit_expr_node(&mut self, expr_ctx: &mut ExprContext<E>, expr_node: impl AsRef<E>) {
         let input = expr_node.as_ref();
-        let child_expr = match input.group_ptr().inner() {
-            ExprGroupPtrState::Owned(_) => {
+        let child_expr = match input.state() {
+            MemoExprState::Owned(_) => {
                 let copy_in = CopyIn {
                     memo: self.memo,
                     parent: None,
@@ -1270,7 +1317,7 @@ where
                 };
                 copy_in.execute(input)
             }
-            ExprGroupPtrState::Memo((group_id, _)) => self.memo.get_first_memo_expr(group_id),
+            MemoExprState::Memo(state) => self.memo.get_first_memo_expr(&state.group_id()),
         };
         expr_ctx.children.push_back(child_expr);
     }
@@ -1302,11 +1349,11 @@ where
             // Collect nested relational expressions from a scalar expression and store them in group properties.
             E::new_properties_with_nested_sub_queries(
                 props,
-                children.iter().map(|e| match e.expr_ptr() {
-                    ExprPtr::Owned(_) => {
+                children.iter().map(|e| match e.state() {
+                    MemoExprState::Owned(_) => {
                         unreachable!("ExprContext.children must contain only references to memo groups")
                     }
-                    ExprPtr::Memo(_) => e.clone(),
+                    MemoExprState::Memo(_) => e.clone(),
                 }),
             )
         } else {
@@ -1359,7 +1406,13 @@ where
         let expr = unsafe {
             let group_id = group_ref.id;
             let props_ref = group_ref.inner.get().props_ref.clone();
-            E::from_parts(ExprPtr::Memo(expr_ref), ExprGroupPtr::from_memo_group(group_id, props_ref))
+            let state = MemoExprState::Memo(MemoizedExpr {
+                // Both ExprPtr and ExprGroupPtr should be in the memo state
+                // Because memo.exprs stores ExprPtr in the Owned state.
+                expr: ExprPtr::Memo(expr_ref),
+                group: ExprGroupPtr::Memo((group_id, props_ref)),
+            });
+            E::from_state(state)
         };
         // Reference to the group data no longer exists.
         self.result = Some(expr);
@@ -1561,14 +1614,14 @@ where
     /// Copies the given nested expression into a memo.
     pub fn visit_expr(&mut self, expr: impl AsRef<E>) {
         let expr = expr.as_ref();
-        match expr.group_ptr().inner() {
-            ExprGroupPtrState::Owned(_) => {
+        match expr.state() {
+            MemoExprState::Owned(_) => {
                 expr.copy_in(self.ctx);
                 let child_expr = std::mem::take(&mut self.ctx.result).expect("Failed to copy in a nested expressions");
                 self.add_child_expr(child_expr);
             }
-            ExprGroupPtrState::Memo((group_id, _)) => {
-                let child_expr = self.ctx.memo.get_first_memo_expr(group_id);
+            MemoExprState::Memo(state) => {
+                let child_expr = self.ctx.memo.get_first_memo_expr(&state.group_id());
                 self.add_child_expr(child_expr)
             }
         }
@@ -1802,13 +1855,13 @@ fn format_node_ref<T>(input: &T) -> String
 where
     T: MemoExpr,
 {
-    match input.expr_ptr() {
-        ExprPtr::Owned(expr) => {
+    match input.state() {
+        MemoExprState::Owned(state) => {
             // This only happens when expression has not been added to a memo.
-            let ptr: *const T::Expr = &**expr;
+            let ptr: *const T::Expr = state.expr.as_ptr();
             format!("{:?}", ptr)
         }
-        ExprPtr::Memo(group) => format!("{}", group.id()),
+        MemoExprState::Memo(_) => format!("{}", input.state().memo_group_id()),
     }
 }
 
@@ -2028,13 +2081,13 @@ mod test {
                 TestScalarExpr::Gt { lhs, rhs } => {
                     write!(f, "({} > {})", lhs, rhs)
                 }
-                TestScalarExpr::SubQuery(query) => match query.expr_ref() {
-                    ExprPtr::Owned(expr) => {
-                        let ptr: *const TestExpr = expr.as_ref();
+                TestScalarExpr::SubQuery(query) => match query.state() {
+                    MemoExprState::Owned(state) => {
+                        let ptr: *const TestExpr = state.expr.as_ptr();
                         write!(f, "SubQuery expr_ptr {:?}", ptr)
                     }
-                    ExprPtr::Memo(expr) => {
-                        write!(f, "SubQuery {}", expr.group_id())
+                    MemoExprState::Memo(state) => {
+                        write!(f, "SubQuery {}", state.group_id())
                     }
                 },
             }
@@ -2073,15 +2126,13 @@ mod test {
 
     #[derive(Debug, Clone)]
     struct TestOperator {
-        expr: ExprPtr<TestOperator>,
-        group: ExprGroupPtr<TestOperator>,
+        state: MemoExprState<TestOperator>,
     }
 
     impl From<TestRelExpr> for TestOperator {
         fn from(expr: TestRelExpr) -> Self {
             TestOperator {
-                expr: ExprPtr::new(TestExpr::Relational(expr)),
-                group: ExprGroupPtr::new(TestProps::Rel(RelProps::default())),
+                state: MemoExprState::new(TestExpr::Relational(expr), TestProps::Rel(RelProps::default())),
             }
         }
     }
@@ -2131,10 +2182,14 @@ mod test {
 
     impl TestOperator {
         fn with_rel_props(self, a: i32) -> Self {
-            TestOperator {
-                expr: self.expr,
-                group: ExprGroupPtr::new(TestProps::Rel(RelProps { a })),
-            }
+            let state = match self.state {
+                MemoExprState::Owned(mut state) => {
+                    state.props = Arc::new(TestProps::Rel(RelProps { a }));
+                    MemoExprState::Owned(state)
+                }
+                MemoExprState::Memo(_) => unimplemented!(),
+            };
+            TestOperator { state }
         }
     }
 
@@ -2142,16 +2197,12 @@ mod test {
         type Expr = TestExpr;
         type Props = TestProps;
 
-        fn from_parts(expr: ExprPtr<Self>, group: ExprGroupPtr<Self>) -> Self {
-            TestOperator { expr, group }
+        fn state(&self) -> &MemoExprState<Self> {
+            &self.state
         }
 
-        fn expr_ptr(&self) -> &ExprPtr<Self> {
-            &self.expr
-        }
-
-        fn group_ptr(&self) -> &ExprGroupPtr<Self> {
-            &self.group
+        fn from_state(state: MemoExprState<Self>) -> Self {
+            TestOperator { state }
         }
 
         fn copy_in<T>(&self, ctx: &mut CopyInExprs<Self, T>) {
@@ -2219,7 +2270,7 @@ mod test {
                     TestRelExpr::Nodes { inputs } => inputs.len(),
                     TestRelExpr::Filter { .. } => 2,
                 },
-                TestExpr::Scalar(_) => self.group.props().scalar().sub_queries.len(),
+                TestExpr::Scalar(_) => self.props().scalar().sub_queries.len(),
             }
         }
 
@@ -2236,7 +2287,7 @@ mod test {
                     TestRelExpr::Filter { .. } => None,
                 },
                 TestExpr::Scalar(_) => {
-                    let props = self.group.props().scalar();
+                    let props = self.props().scalar();
                     props.sub_queries.get(i)
                 }
             }
@@ -2602,7 +2653,7 @@ mod test {
         });
         assert_eq!(
             format!("{:?}", expr.children()),
-            "[TestOperator { expr: Memo(MemoExprRef { id: ExprId(0) }), group: Memo(GroupId(0)) }]"
+            "[TestOperator { state: Memo(MemoizedExpr { expr_id: ExprId(0), group_id: GroupId(0) }) }]"
         );
     }
 
@@ -2614,8 +2665,7 @@ mod test {
             rhs: Box::new(TestScalarExpr::SubQuery(sub_expr.into())),
         };
         let expr = TestOperator {
-            expr: ExprPtr::new(TestExpr::Scalar(expr)),
-            group: ExprGroupPtr::new(TestProps::Scalar(ScalarProps::default())),
+            state: MemoExprState::new(TestExpr::Scalar(expr), TestProps::Scalar(ScalarProps::default())),
         };
 
         let mut memo = new_memo();
@@ -2763,8 +2813,8 @@ mod test {
 
     fn insert_group(memo: &mut Memo<TestOperator, ()>, expr: TestOperator) -> (GroupId, MemoExprRef<TestOperator>) {
         let expr = memo.insert_group(expr);
-        let group_id = expr.group_ptr().memo_group_id();
-        let expr_ref = expr.expr_ptr().memo_expr();
+        let group_id = expr.state().memo_group_id();
+        let expr_ref = expr.state().memo_expr();
 
         (group_id, expr_ref.clone())
     }
@@ -2778,7 +2828,7 @@ mod test {
         let token = group.to_membership_token();
         let expr = memo.insert_group_member(token, expr);
 
-        let expr_ref = expr.expr_ptr().memo_expr();
+        let expr_ref = expr.state().memo_expr();
 
         (group_id, expr_ref.clone())
     }
