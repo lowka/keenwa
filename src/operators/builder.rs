@@ -1,7 +1,7 @@
 use crate::catalog::CatalogRef;
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
-use crate::memo::ExprPtr;
+use crate::memo::MemoExprState;
 use crate::meta::{ColumnId, ColumnMetadata, MutableMetadata};
 use crate::operators::relational::join::{JoinCondition, JoinOn, JoinType};
 use crate::operators::relational::logical::{
@@ -566,14 +566,14 @@ impl ExprRewriter<RelNode> for RewriteExprs<'_> {
                 }
             }
             ScalarExpr::SubQuery(ref rel_node) => {
-                match rel_node.expr_ref() {
-                    ExprPtr::Owned(_) => {
+                match rel_node.state() {
+                    MemoExprState::Owned(_) => {
                         //FIXME: Add method to handle nested relational expressions to OperatorCallback?
                         Err(OptimizerError::Internal(
                             "Use OperatorBuilder::sub_query_builder to build a nested sub query".to_string(),
                         ))
                     }
-                    ExprPtr::Memo(_) => Ok(expr),
+                    MemoExprState::Memo(_) => Ok(expr),
                 }
             }
             _ => Ok(expr),

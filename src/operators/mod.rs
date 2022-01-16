@@ -1,5 +1,5 @@
 use crate::memo::{
-    CopyInExprs, CopyInNestedExprs, ExprContext, ExprGroupPtr, MemoExpr, MemoExprFormatter, MemoGroupCallback,
+    CopyInExprs, CopyInNestedExprs, ExprContext, MemoExpr, MemoExprFormatter, MemoExprState, MemoGroupCallback,
     NewChildExprs, Props,
 };
 use crate::meta::MutableMetadata;
@@ -31,44 +31,46 @@ pub type ExprCallback = dyn MemoGroupCallback<Expr = Operator, Props = Propertie
 // TODO: Docs
 #[derive(Debug, Clone)]
 pub struct Operator {
-    pub(crate) expr: crate::memo::ExprPtr<Operator>,
-    pub(crate) group: crate::memo::ExprGroupPtr<Operator>,
+    pub state: MemoExprState<Operator>,
 }
 
 impl Operator {
     /// Creates a new operator from the given expression and properties.
     pub fn new(expr: OperatorExpr, properties: Properties) -> Self {
         Operator {
-            expr: crate::memo::ExprPtr::new(expr),
-            group: crate::memo::ExprGroupPtr::new(properties),
+            state: MemoExprState::new(expr, properties),
         }
     }
 
     /// Returns an expression associated with this operator.
     pub fn expr(&self) -> &OperatorExpr {
-        self.expr.expr()
+        self.state.expr()
     }
 
     /// Returns a reference properties associated with this operator (see [MemoExpr#props](crate::memo::MemoExpr::props)).
     pub fn props(&self) -> &Properties {
-        self.group.props()
+        self.state.props()
     }
 
     /// Creates a new operator from this one but with new required properties.
     pub fn with_required(self, required: PhysicalProperties) -> Self {
-        let Operator { expr, group, .. } = self;
-        assert!(expr.expr().is_relational(), "Scalar expressions do not support physical properties: {:?}", expr);
-        let old_properties = match group.props().clone() {
+        let Operator { state } = self;
+        assert!(
+            state.expr().is_relational(),
+            "Scalar expressions do not support physical properties: {:?}",
+            state.expr()
+        );
+        let old_properties = match state.props().clone() {
             Properties::Relational(props) => props,
             Properties::Scalar(_) => panic!("Relational operator with scalar properties"),
         };
+        let expr = state.expr().clone();
         let props = RelationalProperties {
             logical: old_properties.logical,
             required,
         };
         Operator {
-            expr,
-            group: crate::memo::ExprGroupPtr::new(Properties::Relational(props)),
+            state: MemoExprState::new(expr, Properties::Relational(props)),
         }
     }
 }
@@ -233,16 +235,12 @@ impl MemoExpr for Operator {
     type Expr = OperatorExpr;
     type Props = Properties;
 
-    fn from_parts(expr: crate::memo::ExprPtr<Self>, group: crate::memo::ExprGroupPtr<Self>) -> Self {
-        Operator { expr, group }
+    fn state(&self) -> &MemoExprState<Self> {
+        &self.state
     }
 
-    fn expr_ptr(&self) -> &crate::memo::ExprPtr<Self> {
-        &self.expr
-    }
-
-    fn group_ptr(&self) -> &ExprGroupPtr<Self> {
-        &self.group
+    fn from_state(state: MemoExprState<Self>) -> Self {
+        Operator { state }
     }
 
     fn copy_in<T>(&self, visitor: &mut CopyInExprs<Self, T>) {
@@ -397,8 +395,7 @@ impl From<OperatorExpr> for Operator {
             OperatorExpr::Scalar(_) => Properties::Scalar(ScalarProperties::default()),
         };
         Operator {
-            expr: crate::memo::ExprPtr::new(expr),
-            group: crate::memo::ExprGroupPtr::new(props),
+            state: MemoExprState::new(expr, props),
         }
     }
 }

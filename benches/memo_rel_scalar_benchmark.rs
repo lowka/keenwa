@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use keenwa::memo::{
-    CopyInExprs, CopyInNestedExprs, Expr, ExprContext, ExprGroupPtr, ExprPtr, Memo, MemoExpr, MemoExprFormatter,
-    NewChildExprs, Props,
+    CopyInExprs, CopyInNestedExprs, Expr, ExprContext, Memo, MemoExpr, MemoExprFormatter, MemoExprState, NewChildExprs,
+    Props,
 };
 use std::fmt::{Display, Formatter};
 
@@ -66,13 +66,13 @@ impl Display for TestScalarExpr {
             TestScalarExpr::Gt { lhs, rhs } => {
                 write!(f, "{} > {}", lhs, rhs)
             }
-            TestScalarExpr::SubQuery(rel_node) => match rel_node.expr_ref() {
-                ExprPtr::Owned(expr) => {
-                    let ptr: *const TestExpr = &**expr;
+            TestScalarExpr::SubQuery(rel_node) => match rel_node.state() {
+                MemoExprState::Owned(_) => {
+                    let ptr: *const TestExpr = &*rel_node.state().expr();
                     write!(f, "SubQuery expr_ptr {:?}", ptr)
                 }
-                ExprPtr::Memo(group) => {
-                    write!(f, "SubQuery {}", group.id())
+                MemoExprState::Memo(state) => {
+                    write!(f, "SubQuery {}", state.group_id())
                 }
             },
         }
@@ -140,8 +140,7 @@ impl<T> TraversalWrapper<'_, '_, T> {
 
 #[derive(Debug, Clone)]
 struct TestOperator {
-    expr: ExprPtr<TestOperator>,
-    group: ExprGroupPtr<TestOperator>,
+    state: MemoExprState<TestOperator>,
 }
 
 #[derive(Debug, Clone)]
@@ -184,16 +183,12 @@ impl MemoExpr for TestOperator {
     type Expr = TestExpr;
     type Props = TestProps;
 
-    fn from_parts(expr: ExprPtr<Self>, group: ExprGroupPtr<Self>) -> Self {
-        TestOperator { expr, group }
+    fn state(&self) -> &MemoExprState<Self> {
+        &self.state
     }
 
-    fn expr_ptr(&self) -> &ExprPtr<Self> {
-        &self.expr
-    }
-
-    fn group_ptr(&self) -> &ExprGroupPtr<Self> {
-        &self.group
+    fn from_state(state: MemoExprState<Self>) -> Self {
+        TestOperator { state }
     }
 
     fn copy_in<T>(&self, ctx: &mut CopyInExprs<Self, T>) {
@@ -316,8 +311,7 @@ impl From<TestExpr> for TestOperator {
             TestExpr::Scalar(_) => TestProps::Scalar(ScalarProps::default()),
         };
         TestOperator {
-            expr: ExprPtr::new(expr),
-            group: ExprGroupPtr::new(props),
+            state: MemoExprState::new(expr, props),
         }
     }
 }
@@ -325,8 +319,7 @@ impl From<TestExpr> for TestOperator {
 impl From<TestRelExpr> for TestOperator {
     fn from(expr: TestRelExpr) -> Self {
         TestOperator {
-            expr: ExprPtr::new(TestExpr::Relational(expr)),
-            group: ExprGroupPtr::new(TestProps::Rel(RelProps::default())),
+            state: MemoExprState::new(TestExpr::Relational(expr), TestProps::Rel(RelProps::default())),
         }
     }
 }
@@ -334,8 +327,7 @@ impl From<TestRelExpr> for TestOperator {
 impl From<TestScalarExpr> for TestOperator {
     fn from(expr: TestScalarExpr) -> Self {
         TestOperator {
-            expr: ExprPtr::new(TestExpr::Scalar(expr)),
-            group: ExprGroupPtr::new(TestProps::Scalar(ScalarProps::default())),
+            state: MemoExprState::new(TestExpr::Scalar(expr), TestProps::Scalar(ScalarProps::default())),
         }
     }
 }
