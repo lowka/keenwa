@@ -1,5 +1,5 @@
 use crate::error::OptimizerError;
-use crate::memo::{MemoExpr, MemoExprFormatter, MemoGroupCallback, StringMemoFormatter};
+use crate::memo::{MemoBuilder, MemoExpr, MemoExprFormatter, MemoGroupCallback, StringMemoFormatter};
 use crate::meta::MutableMetadata;
 use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::physical::PhysicalExpr;
@@ -63,9 +63,10 @@ impl RuleTester {
             }
         }
 
+        let memo = MemoBuilder::new(Rc::new(MutableMetadata::new())).set_callback(Rc::new(Callback)).build();
         RuleTester {
             rule: Box::new(rule),
-            memo: ExprMemo::with_callback(Rc::new(MutableMetadata::new()), Rc::new(Callback)),
+            memo,
             metadata: MutableMetadata::new(),
         }
     }

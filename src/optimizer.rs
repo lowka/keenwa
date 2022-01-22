@@ -318,7 +318,7 @@ where
                     })
                 }
                 RelExpr::Physical(_) => {
-                    let task = get_optimize_rel_inputs_task(&ctx, expr, &runtime_state.properties_cache, rule_set);
+                    let task = get_optimize_rel_inputs_task(&ctx, &expr, &runtime_state.properties_cache, rule_set);
                     runtime_state.tasks.schedule(task);
                 }
             }
@@ -469,7 +469,7 @@ fn apply_rule<R>(
 
                 log::debug!(" + Physical expression: {}", new_expr);
 
-                let task = get_optimize_rel_inputs_task(&ctx, new_expr, &runtime_state.properties_cache, rule_set);
+                let task = get_optimize_rel_inputs_task(&ctx, &new_expr, &runtime_state.properties_cache, rule_set);
                 runtime_state.tasks.schedule(task);
             }
         }
@@ -509,7 +509,7 @@ fn enforce_properties<R>(
         // 2) copy_out_best_expr traverses its child expressions recursively so adding an enforcer to a group which
         // is used as its input results an infinite loop during the traversal.
         let enforcer_expr = memo.insert_group(Operator::from(enforcer_expr));
-        let enforcer_expr = enforcer_expr.state().memo_expr().clone();
+        let enforcer_expr = enforcer_expr.state().memo_expr();
         let remaining_properties = runtime_state.properties_cache.insert(remaining_properties);
 
         (enforcer_expr, remaining_properties)

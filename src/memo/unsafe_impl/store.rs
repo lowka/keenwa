@@ -1,8 +1,8 @@
 use std::alloc::Layout;
-use std::fmt::Debug;
+use std::fmt::{Debug, Formatter};
 use std::ptr::NonNull;
 
-/// Used by [memo](crate::memo::Memo) to store expressions. This data structure stores its data
+/// Used by [unsafe memo](crate::memo::unsafe_impl::MemoImpl) to store expressions. This data structure stores its data
 /// at pages of equal size and allows access to them via [references](self::StoreElementRef)
 /// and [opaque identifiers](self::StoreElementId).
 ///
@@ -193,12 +193,18 @@ unsafe impl<T: Send> Send for StoreElementRef<T> {}
 unsafe impl<T: Sync> Sync for StoreElementRef<T> {}
 
 /// An identifier of an element in a store.
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct StoreElementId(pub usize);
 
 impl StoreElementId {
     pub fn index(&self) -> usize {
         self.0
+    }
+}
+
+impl Debug for StoreElementId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.0)
     }
 }
 
@@ -271,7 +277,7 @@ impl<T> Drop for Page<T> {
 unsafe impl<T: Send> Send for Page<T> {}
 unsafe impl<T: Sync> Sync for Page<T> {}
 
-/// An iterator over elements held by a store.
+/// Iterator over elements held by a store.
 pub struct StoreElementIter<'a, T> {
     store: &'a Store<T>,
     position: usize,
@@ -365,7 +371,7 @@ impl<T> Eq for ImmutableRef<T> {}
 
 #[cfg(test)]
 mod test {
-    use crate::memo::store::{Store, StoreElementId, StoreElementRef};
+    use crate::memo::unsafe_impl::store::{Store, StoreElementId, StoreElementRef};
     use std::fmt::Debug;
 
     #[derive(Debug, Eq, PartialEq, Clone)]

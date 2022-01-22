@@ -1,6 +1,6 @@
 use crate::memo::{
-    CopyInExprs, CopyInNestedExprs, ExprContext, MemoExpr, MemoExprFormatter, MemoExprState, MemoGroupCallback,
-    NewChildExprs, Props,
+    CopyInExprs, CopyInNestedExprs, ExprContext, Memo, MemoExpr, MemoExprFormatter, MemoExprRef, MemoExprState,
+    MemoGroupCallback, NewChildExprs, Props,
 };
 use crate::meta::MutableMetadata;
 use crate::operators::scalar::expr_with_new_inputs;
@@ -22,9 +22,9 @@ pub mod relational;
 pub mod scalar;
 
 pub type OperatorMetadata = Rc<MutableMetadata>;
-pub type ExprMemo = crate::memo::Memo<Operator, OperatorMetadata>;
-pub type ExprRef = crate::memo::MemoExprRef<Operator>;
-pub type ExprCallback = dyn MemoGroupCallback<Expr = Operator, Props = Properties, Metadata = OperatorMetadata>;
+pub type ExprMemo = Memo<Operator, OperatorMetadata>;
+pub type ExprRef = MemoExprRef<Operator>;
+pub type ExprCallback = dyn MemoGroupCallback<Expr = OperatorExpr, Props = Properties, Metadata = OperatorMetadata>;
 
 /// An operator is an expression (which can be either logical or physical) with a set of properties.
 /// A tree of operators can represent both initial (unoptimized) and optimized query plans.
@@ -235,12 +235,12 @@ impl MemoExpr for Operator {
     type Expr = OperatorExpr;
     type Props = Properties;
 
-    fn state(&self) -> &MemoExprState<Self> {
-        &self.state
-    }
-
     fn from_state(state: MemoExprState<Self>) -> Self {
         Operator { state }
+    }
+
+    fn state(&self) -> &MemoExprState<Self> {
+        &self.state
     }
 
     fn copy_in<T>(&self, visitor: &mut CopyInExprs<Self, T>) {

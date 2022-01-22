@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use keenwa::memo::{
-    CopyInExprs, CopyInNestedExprs, Expr, ExprContext, Memo, MemoExpr, MemoExprFormatter, MemoExprState, NewChildExprs,
-    Props,
+    CopyInExprs, CopyInNestedExprs, Expr, ExprContext, MemoBuilder, MemoExpr, MemoExprFormatter, MemoExprState,
+    NewChildExprs, Props,
 };
 use std::fmt::{Display, Formatter};
 
@@ -183,12 +183,12 @@ impl MemoExpr for TestOperator {
     type Expr = TestExpr;
     type Props = TestProps;
 
-    fn state(&self) -> &MemoExprState<Self> {
-        &self.state
-    }
-
     fn from_state(state: MemoExprState<Self>) -> Self {
         TestOperator { state }
+    }
+
+    fn state(&self) -> &MemoExprState<Self> {
+        &self.state
     }
 
     fn copy_in<T>(&self, ctx: &mut CopyInExprs<Self, T>) {
@@ -349,7 +349,7 @@ fn memo_bench(c: &mut Criterion) {
 
     c.bench_function("memo_rel_scalar_query1", |b| {
         b.iter(|| {
-            let mut memo = Memo::new(());
+            let mut memo = MemoBuilder::new(()).build();
             let query = TestOperator::from(query.clone());
             let expr = memo.insert_group(query);
             black_box(expr);
@@ -360,7 +360,7 @@ fn memo_bench(c: &mut Criterion) {
 
     c.bench_function("memo_rel_scalar_query2", |b| {
         b.iter(|| {
-            let mut memo = Memo::new(());
+            let mut memo = MemoBuilder::new(()).build();
             let query = TestOperator::from(query.clone());
             let expr = memo.insert_group(query);
             black_box(expr);

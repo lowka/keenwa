@@ -802,7 +802,7 @@ mod test {
     use super::*;
     use crate::catalog::mutable::MutableCatalog;
     use crate::catalog::{TableBuilder, DEFAULT_SCHEMA};
-    use crate::memo::format_memo;
+    use crate::memo::{format_memo, MemoBuilder};
     use crate::operators::properties::LogicalPropertiesBuilder;
     use crate::operators::scalar::value::ScalarValue;
     use crate::operators::Properties;
@@ -1183,10 +1183,10 @@ Memo:
         fn new() -> Self {
             let properties_builder = Rc::new(LogicalPropertiesBuilder::new(NoStatisticsBuilder));
             let metadata = Rc::new(MutableMetadata::new());
-            let memoization = Rc::new(MemoizeOperatorCallback::new(ExprMemo::with_callback(
-                metadata.clone(),
-                Rc::new(SetPropertiesCallback::new(properties_builder)),
-            )));
+            let memo = MemoBuilder::new(metadata.clone())
+                .set_callback(Rc::new(SetPropertiesCallback::new(properties_builder)))
+                .build();
+            let memoization = Rc::new(MemoizeOperatorCallback::new(memo));
 
             OperatorBuilderTester {
                 operator: Box::new(|_| panic!("Operator has not been specified")),
