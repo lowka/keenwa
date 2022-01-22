@@ -2,6 +2,7 @@ use crate::catalog::mutable::MutableCatalog;
 use crate::catalog::{TableBuilder, DEFAULT_SCHEMA};
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
+use crate::memo::MemoBuilder;
 use crate::meta::MutableMetadata;
 use crate::operators::builder::{MemoizeOperatorCallback, OperatorBuilder};
 use crate::operators::properties::LogicalPropertiesBuilder;
@@ -9,7 +10,6 @@ use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::BinaryOp;
 use crate::operators::scalar::value::ScalarValue;
 use crate::operators::scalar::ScalarExpr;
-use crate::operators::ExprMemo;
 use crate::optimizer::SetPropertiesCallback;
 use crate::rules::testing::format_operator_tree;
 use crate::statistics::simple::{DefaultSelectivityStatistics, SimpleCatalogStatisticsBuilder};
@@ -27,10 +27,10 @@ where
     let statistics_builder = SimpleCatalogStatisticsBuilder::new(catalog.clone(), selectivity_provider);
     let properties_builder = Rc::new(LogicalPropertiesBuilder::new(statistics_builder));
 
-    let memoization = Rc::new(MemoizeOperatorCallback::new(ExprMemo::with_callback(
-        metadata.clone(),
-        Rc::new(SetPropertiesCallback::new(properties_builder)),
-    )));
+    let memo = MemoBuilder::new(metadata.clone())
+        .set_callback(Rc::new(SetPropertiesCallback::new(properties_builder)))
+        .build();
+    let memoization = Rc::new(MemoizeOperatorCallback::new(memo));
 
     catalog.add_table(
         DEFAULT_SCHEMA,

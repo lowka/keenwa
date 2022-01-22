@@ -9,6 +9,7 @@ use keenwa::catalog::{CatalogRef, TableBuilder, DEFAULT_SCHEMA};
 use keenwa::cost::simple::SimpleCostEstimator;
 use keenwa::datatypes::DataType;
 use keenwa::error::OptimizerError;
+use keenwa::memo::MemoBuilder;
 use keenwa::meta::MutableMetadata;
 use keenwa::operators::builder::{MemoizeOperatorCallback, OperatorBuilder, OrderingOption};
 
@@ -72,10 +73,10 @@ fn memo_bench(c: &mut Criterion) {
                         SimpleCatalogStatisticsBuilder::new(catalog.clone(), selectivity_provider.clone());
                     let properties_builder = Rc::new(LogicalPropertiesBuilder::new(statistics_builder));
 
-                    let memoization = Rc::new(MemoizeOperatorCallback::new(ExprMemo::with_callback(
-                        metadata.clone(),
-                        Rc::new(SetPropertiesCallback::new(properties_builder.clone())),
-                    )));
+                    let memo = MemoBuilder::new(metadata.clone())
+                        .set_callback(Rc::new(SetPropertiesCallback::new(properties_builder.clone())))
+                        .build();
+                    let memoization = Rc::new(MemoizeOperatorCallback::new(memo));
                     let operator_builder = OperatorBuilder::new(memoization.clone(), catalog.clone(), metadata);
 
                     let query = f(operator_builder, selectivity_provider.as_ref()).expect("Failed to build a query");

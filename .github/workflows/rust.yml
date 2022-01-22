@@ -14,14 +14,15 @@ jobs:
       matrix:
         arch: [ amd64 ]
         rust: [ stable ]
+        features: [default, unsafe_memo]
     steps:
       - uses: actions/checkout@v2
       - name: Build
-        run: cargo build --verbose
+        run: cargo build --verbose --features ${{ matrix.features }}
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test --verbose --features ${{ matrix.features }}
       - name: Compile benchmarks
-        run: cargo bench --no-run
+        run: cargo bench --no-run --features ${{ matrix.features }}
 
   lint:
     name: Lint
@@ -32,7 +33,7 @@ jobs:
         run: rustup component add rustfmt
       # run rustdoc lints.
       - name: Run docs
-        run: RUSTDOCFLAGS="-Dwarnings" cargo doc --no-deps
+        run: RUSTDOCFLAGS="-Dwarnings" cargo doc --all-features --no-deps
       # run rust lints.
       - name: rustfmt
         run: cargo fmt --all -- --check

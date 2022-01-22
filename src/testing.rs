@@ -9,11 +9,11 @@ use crate::catalog::{Catalog, CatalogRef, TableBuilder, DEFAULT_SCHEMA};
 use crate::cost::simple::SimpleCostEstimator;
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
-use crate::memo::{MemoExpr, MemoExprFormatter, StringMemoFormatter};
+use crate::memo::{MemoBuilder, MemoExpr, MemoExprFormatter, StringMemoFormatter};
 use crate::meta::MutableMetadata;
 use crate::operators::builder::{MemoizeOperatorCallback, OperatorBuilder};
 use crate::operators::properties::LogicalPropertiesBuilder;
-use crate::operators::{ExprMemo, Operator};
+use crate::operators::Operator;
 use crate::optimizer::{Optimizer, SetPropertiesCallback};
 use crate::rules::implementation::{EmptyRule, GetToScanRule, ProjectionRule, SelectRule};
 use crate::rules::testing::TestRuleSet;
@@ -153,7 +153,7 @@ impl OptimizerTester {
         let propagate_properties = SetPropertiesCallback::new(self.properties_builder.clone());
         let memo_callback = Rc::new(propagate_properties);
         let metadata = Rc::new(MutableMetadata::new());
-        let memo = ExprMemo::with_callback(metadata.clone(), memo_callback);
+        let memo = MemoBuilder::new(metadata.clone()).set_callback(memo_callback).build();
 
         let memoization = Rc::new(MemoizeOperatorCallback::new(memo));
         let mutable_catalog = self.catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();

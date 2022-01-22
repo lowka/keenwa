@@ -16,6 +16,15 @@ pretty_env_logger = "0.4.0"
 [profile.bench]
 opt-level=3
 
+[features]
+default=["default_memo"]
+# Use default implementation of a memo data structure (enabled by default).
+default_memo=[]
+# Use implementation of a memo data structure that uses unsafe rust.
+unsafe_memo=[]
+# INTERNAL: Include documentation for both safe and unsafe implementations of memo data structure.
+docs=[]
+
 [[bench]]
 name = "optimizer_benchmark"
 harness = false

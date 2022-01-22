@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use keenwa::memo::{CopyInExprs, Expr, Memo, MemoExpr, MemoExprFormatter, MemoExprState, NewChildExprs, Props};
+use keenwa::memo::{CopyInExprs, Expr, MemoBuilder, MemoExpr, MemoExprFormatter, MemoExprState, NewChildExprs, Props};
 use std::fmt::{Display, Formatter};
 
 type RelNode = keenwa::memo::RelNode<TestOperator>;
@@ -203,7 +203,7 @@ fn memo_bench(c: &mut Criterion) {
 
     c.bench_function("memo_basic_query1", |b| {
         b.iter(|| {
-            let mut memo = Memo::new(());
+            let mut memo = MemoBuilder::new(()).build();
             let query = TestOperator::from(query.clone());
             let expr = memo.insert_group(query);
             black_box(expr);
@@ -214,7 +214,7 @@ fn memo_bench(c: &mut Criterion) {
 
     c.bench_function("memo_basic_query2", |b| {
         b.iter(|| {
-            let mut memo = Memo::new(());
+            let mut memo = MemoBuilder::new(()).build();
             let query = TestOperator::from(query.clone());
             let expr = memo.insert_group(query);
             black_box(expr);
