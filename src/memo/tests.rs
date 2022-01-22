@@ -217,6 +217,20 @@ mod test {
                 TestProps::Scalar(expr) => expr,
             }
         }
+
+        fn to_relational(self) -> Self::RelProps {
+            match self {
+                TestProps::Rel(expr) => expr,
+                TestProps::Scalar(_) => panic!("Expected relational properties"),
+            }
+        }
+
+        fn to_scalar(self) -> Self::ScalarProps {
+            match self {
+                TestProps::Rel(_) => panic!("Expected scalar properties"),
+                TestProps::Scalar(expr) => expr,
+            }
+        }
     }
 
     impl TestOperator {
