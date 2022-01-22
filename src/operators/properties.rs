@@ -1,4 +1,5 @@
 use crate::error::OptimizerError;
+use crate::memo::Props;
 use crate::meta::{ColumnId, MetadataRef};
 use crate::operators::relational::join::{JoinCondition, JoinType};
 use crate::operators::relational::logical::{
@@ -15,12 +16,12 @@ use std::fmt::{Debug, Formatter};
 
 /// Provides logical properties for memo expressions.
 pub trait PropertiesProvider {
-    /// Builds properties for the given expression `expr`. `manual_props` contains properties that
-    /// has been added by hand to modify statistics or other properties of the given expression to simplify testing.  
+    /// Builds properties for the given expression `expr`. `provided_props` contains properties that
+    /// has been specified for the given expression in an operator tree.   
     fn build_properties(
         &self,
         expr: &OperatorExpr,
-        manual_props: Properties,
+        provided_props: Properties,
         metadata: MetadataRef,
     ) -> Result<Properties, OptimizerError>;
 }
@@ -164,13 +165,8 @@ where
     ) -> Result<Properties, OptimizerError> {
         match expr {
             OperatorExpr::Relational(RelExpr::Logical(expr)) => {
-                let RelationalProperties { required, .. } = match manual_props {
-                    Properties::Relational(props) => props,
-                    Properties::Scalar(props) => {
-                        // We always panic when expression does not match its properties and vice versa.
-                        panic!("Relational expression has scalar properties. Expr: {:?}. \n Props: {:?}", expr, props)
-                    }
-                };
+                let RelationalProperties { required, .. } = manual_props.to_relational();
+
                 let LogicalProperties {
                     output_columns,
                     // build_xxx methods return logical properties without statistics.
@@ -235,12 +231,10 @@ where
                     ))
                 }
             }
-            OperatorExpr::Scalar(_) => match manual_props {
-                Properties::Relational(_) => {
-                    Err(OptimizerError::Internal("Scalar expression with relational properties".into()))
-                }
-                Properties::Scalar(scalar) => Ok(Properties::new_scalar_properties(scalar.nested_sub_queries)),
-            },
+            OperatorExpr::Scalar(_) => {
+                let scalar = manual_props.to_scalar();
+                Ok(Properties::new_scalar_properties(scalar.nested_sub_queries))
+            }
         }
     }
 }

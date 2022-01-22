@@ -314,6 +314,20 @@ pub trait Props: Clone {
     ///
     /// This method panics if the underlying properties are not scalar.
     fn scalar(&self) -> &Self::ScalarProps;
+
+    /// Consumes these properties and returns the underlying relational properties or panics if these properties are not relational.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if the underlying properties are not relational.
+    fn to_relational(self) -> Self::RelProps;
+
+    /// Consumes these properties and returns the underlying scalar properties or panics if these properties are not scalar.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if the underlying properties are not scalar.
+    fn to_scalar(self) -> Self::ScalarProps;
 }
 
 /// Callback that is called when a new memo group is added to a memo.

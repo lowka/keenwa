@@ -169,6 +169,20 @@ impl Props for Properties {
             Properties::Scalar(props) => props,
         }
     }
+
+    fn to_relational(self) -> Self::RelProps {
+        match self {
+            Properties::Relational(props) => props,
+            Properties::Scalar(_) => panic!("Expected relational properties"),
+        }
+    }
+
+    fn to_scalar(self) -> Self::ScalarProps {
+        match self {
+            Properties::Relational(_) => panic!("Expected scalar properties"),
+            Properties::Scalar(props) => props,
+        }
+    }
 }
 
 /// Properties of a relational operator.

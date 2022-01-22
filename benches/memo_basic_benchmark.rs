@@ -53,6 +53,14 @@ impl Props for TestProps {
     fn scalar(&self) -> &Self::ScalarProps {
         self
     }
+
+    fn to_relational(self) -> Self::RelProps {
+        self
+    }
+
+    fn to_scalar(self) -> Self::ScalarProps {
+        self
+    }
 }
 
 impl Expr for TestExpr {

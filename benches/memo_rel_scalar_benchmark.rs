@@ -168,6 +168,14 @@ impl Props for TestProps {
     fn scalar(&self) -> &Self::ScalarProps {
         unreachable!()
     }
+
+    fn to_relational(self) -> Self::RelProps {
+        unreachable!()
+    }
+
+    fn to_scalar(self) -> Self::ScalarProps {
+        unreachable!()
+    }
 }
 
 #[derive(Debug, Clone, Default)]
