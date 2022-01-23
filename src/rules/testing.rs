@@ -260,10 +260,8 @@ struct FormatExprs<'b> {
 
 impl FormatExprs<'_> {
     fn pad_depth(&mut self, c: char) {
-        for i in 1..=self.depth {
-            for _ in 1..=i * 2 {
-                self.buf.push(c);
-            }
+        for _ in 1..=self.depth * 2 {
+            self.buf.push(c);
         }
     }
 }
@@ -309,5 +307,42 @@ impl MemoExprFormatter for FormatExprs<'_> {
         D: Display,
     {
         // values are written by another formatter
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::operators::relational::logical::{LogicalExpr, LogicalGet, LogicalProjection};
+    use crate::operators::relational::{RelExpr, RelNode};
+    use crate::operators::{Operator, OperatorExpr};
+    use crate::rules::testing::format_operator_tree;
+
+    #[test]
+    fn test() {
+        let from_a = LogicalExpr::Get(LogicalGet {
+            source: "A".to_string(),
+            columns: vec![1, 2, 3],
+        });
+        let p1 = LogicalProjection {
+            input: RelNode::from(from_a),
+            exprs: vec![],
+            columns: vec![1, 2, 3],
+        };
+        let p2 = LogicalProjection {
+            input: RelNode::from(LogicalExpr::Projection(p1)),
+            exprs: vec![],
+            columns: vec![1, 2, 3],
+        };
+        let projection = Operator::from(OperatorExpr::from(LogicalExpr::Projection(p2)));
+        let mut s = format_operator_tree(&projection);
+        let s = format!("\n{}\n", s);
+        assert_eq!(
+            s,
+            r#"
+LogicalProjection cols=[1, 2, 3]
+  input: LogicalProjection cols=[1, 2, 3]
+    input: LogicalGet A cols=[1, 2, 3]
+"#
+        )
     }
 }

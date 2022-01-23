@@ -398,8 +398,8 @@ mod test {
             r#"
 LogicalProjection cols=[1] exprs=[col:1]
   input: LogicalSelect
-      input: LogicalGet A cols=[1, 2]
-      filter: Expr col:1 > 100
+    input: LogicalGet A cols=[1, 2]
+    filter: Expr col:1 > 100
 "#,
         );
     }
@@ -422,8 +422,8 @@ LogicalProjection cols=[1] exprs=[col:1]
             r#"
 LogicalProjection cols=[1, 2, 3] exprs=[col:1, col:2, col:1 + col:2 AS a3]
   input: LogicalSelect
-      input: LogicalGet A cols=[1, 2]
-      filter: Expr col:1 + col:2 > 100
+    input: LogicalGet A cols=[1, 2]
+    filter: Expr col:1 + col:2 > 100
 "#,
         );
     }
@@ -447,8 +447,8 @@ LogicalProjection cols=[1, 2, 3] exprs=[col:1, col:2, col:1 + col:2 AS a3]
             r#"
 LogicalProjection cols=[1, 2, 3, 4] exprs=[col:1, col:2, col:2 AS a3, col:1 + col:3 AS a4]
   input: LogicalSelect
-      input: LogicalGet A cols=[1, 2]
-      filter: Expr col:1 + col:2 > 100 AND col:2 > 50
+    input: LogicalGet A cols=[1, 2]
+    filter: Expr col:1 + col:2 > 100 AND col:2 > 50
 "#,
         );
     }
@@ -468,10 +468,10 @@ LogicalProjection cols=[1, 2, 3, 4] exprs=[col:1, col:2, col:2 AS a3, col:1 + co
             r#"
 LogicalProjection cols=[1] exprs=[col:1]
   input: LogicalProjection cols=[1] exprs=[col:1]
-      input: LogicalProjection cols=[1] exprs=[col:1]
-            input: LogicalSelect
-                    input: LogicalGet A cols=[1, 2]
-                    filter: Expr col:1 > 100
+    input: LogicalProjection cols=[1] exprs=[col:1]
+      input: LogicalSelect
+        input: LogicalGet A cols=[1, 2]
+        filter: Expr col:1 > 100
 "#,
         );
     }
@@ -494,9 +494,9 @@ LogicalProjection cols=[1] exprs=[col:1]
             r#"
 LogicalProjection cols=[1] exprs=[col:1]
   input: LogicalProjection cols=[1, 2] exprs=[col:1, col:2]
-      input: LogicalSelect
-            input: LogicalGet A cols=[1, 2]
-            filter: Expr col:1 > 100 AND col:2 > 100
+    input: LogicalSelect
+      input: LogicalGet A cols=[1, 2]
+      filter: Expr col:1 > 100 AND col:2 > 100
 "#,
         );
     }
@@ -534,8 +534,8 @@ LogicalSelect
             r#"
 LogicalSelect
   input: LogicalSelect
-      input: LogicalGet A cols=[1, 2]
-      filter: Expr col:1 > 100
+    input: LogicalGet A cols=[1, 2]
+    filter: Expr col:1 > 100
 "#,
         );
     }
@@ -554,8 +554,8 @@ LogicalSelect
             r#"
 LogicalSelect
   input: LogicalSelect
-      input: LogicalGet A cols=[1, 2]
-      filter: Expr col:1 > 100
+    input: LogicalGet A cols=[1, 2]
+    filter: Expr col:1 > 100
   filter: Expr 1 = 1
 "#,
         );
@@ -575,11 +575,11 @@ LogicalSelect
             r#"
 LogicalJoin using=[(1, 4)]
   left: LogicalSelect
-      input: LogicalGet A cols=[1, 2, 3]
-      filter: Expr col:1 > 100
+    input: LogicalGet A cols=[1, 2, 3]
+    filter: Expr col:1 > 100
   right: LogicalSelect
-      input: LogicalGet B cols=[4, 5, 6]
-      filter: Expr col:4 > 100
+    input: LogicalGet B cols=[4, 5, 6]
+    filter: Expr col:4 > 100
 "#,
         );
 
@@ -596,12 +596,12 @@ LogicalJoin using=[(1, 4)]
             r#"
 LogicalJoin using=[(1, 4)]
   left: LogicalProjection cols=[1, 2] exprs=[col:1, col:2]
-      input: LogicalSelect
-            input: LogicalGet A cols=[1, 2, 3]
-            filter: Expr col:1 > 100
+    input: LogicalSelect
+      input: LogicalGet A cols=[1, 2, 3]
+      filter: Expr col:1 > 100
   right: LogicalSelect
-      input: LogicalGet B cols=[4, 5, 6]
-      filter: Expr col:4 > 100
+    input: LogicalGet B cols=[4, 5, 6]
+    filter: Expr col:4 > 100
 "#,
         );
     }
@@ -620,11 +620,11 @@ LogicalJoin using=[(1, 4)]
             r#"
 LogicalJoin using=[(1, 4)]
   left: LogicalSelect
-      input: LogicalGet A cols=[1, 2, 3]
-      filter: Expr col:1 > 100
+    input: LogicalGet A cols=[1, 2, 3]
+    filter: Expr col:1 > 100
   right: LogicalSelect
-      input: LogicalGet B cols=[4, 5, 6]
-      filter: Expr col:4 > 100
+    input: LogicalGet B cols=[4, 5, 6]
+    filter: Expr col:4 > 100
 "#,
         );
 
@@ -641,12 +641,12 @@ LogicalJoin using=[(1, 4)]
             r#"
 LogicalJoin using=[(1, 4)]
   left: LogicalSelect
-      input: LogicalGet A cols=[1, 2, 3]
-      filter: Expr col:1 > 100
+    input: LogicalGet A cols=[1, 2, 3]
+    filter: Expr col:1 > 100
   right: LogicalProjection cols=[4, 5] exprs=[col:4, col:5]
-      input: LogicalSelect
-            input: LogicalGet B cols=[4, 5, 6]
-            filter: Expr col:4 > 100
+    input: LogicalSelect
+      input: LogicalGet B cols=[4, 5, 6]
+      filter: Expr col:4 > 100
 "#,
         );
     }
@@ -665,11 +665,11 @@ LogicalJoin using=[(1, 4)]
             r#"
 LogicalJoin using=[(1, 1)]
   left: LogicalSelect
-      input: LogicalGet A cols=[1, 2, 3]
-      filter: Expr col:1 > 100
+    input: LogicalGet A cols=[1, 2, 3]
+    filter: Expr col:1 > 100
   right: LogicalSelect
-      input: LogicalGet A cols=[1, 2, 3]
-      filter: Expr col:1 > 100
+    input: LogicalGet A cols=[1, 2, 3]
+    filter: Expr col:1 > 100
 "#,
         );
     }
@@ -693,12 +693,12 @@ LogicalJoin using=[(1, 1)]
             r#"
 LogicalSelect
   input: LogicalJoin using=[(1, 4)]
-      left: LogicalSelect
-            input: LogicalGet A cols=[1, 2, 3]
-            filter: Expr col:1 > 10
-      right: LogicalSelect
-            input: LogicalGet B cols=[4, 5, 6]
-            filter: Expr col:4 > 10
+    left: LogicalSelect
+      input: LogicalGet A cols=[1, 2, 3]
+      filter: Expr col:1 > 10
+    right: LogicalSelect
+      input: LogicalGet B cols=[4, 5, 6]
+      filter: Expr col:4 > 10
   filter: Expr col:1 = col:4 AND col:4 = col:1
 "#,
         );
@@ -722,8 +722,8 @@ LogicalSelect
             r#"
 LogicalSelect
   input: LogicalJoin using=[(1, 4)]
-      left: LogicalGet A cols=[1, 2, 3]
-      right: LogicalGet B cols=[4, 5, 6]
+    left: LogicalGet A cols=[1, 2, 3]
+    right: LogicalGet B cols=[4, 5, 6]
   filter: Expr col:1 + col:4 = 10 AND col:4 + col:1 = 10
 "#,
         );
@@ -749,12 +749,12 @@ LogicalSelect
             r#"
 LogicalSelect
   input: LogicalJoin using=[(1, 4)]
-      left: LogicalSelect
-            input: LogicalGet A cols=[1, 2, 3]
-            filter: Expr col:1 > 5
-      right: LogicalSelect
-            input: LogicalGet B cols=[4, 5, 6]
-            filter: Expr col:4 > 5
+    left: LogicalSelect
+      input: LogicalGet A cols=[1, 2, 3]
+      filter: Expr col:1 > 5
+    right: LogicalSelect
+      input: LogicalGet B cols=[4, 5, 6]
+      filter: Expr col:4 > 5
   filter: Expr col:1 + col:4 = 10 AND col:4 + col:1 = 10
 "#,
         );
@@ -780,8 +780,8 @@ LogicalSelect
             r#"
 LogicalAggregate
   input: LogicalSelect
-      input: LogicalGet A cols=[1]
-      filter: Expr col:1 > 100
+    input: LogicalGet A cols=[1]
+    filter: Expr col:1 > 100
   : Expr col:1
   : Expr sum(col:1)
   : Expr col:1
@@ -809,10 +809,10 @@ LogicalAggregate
             r#"
 LogicalSelect
   input: LogicalAggregate
-      input: LogicalGet A cols=[1]
-      : Expr col:1
-      : Expr sum(col:1)
-      : Expr col:1
+    input: LogicalGet A cols=[1]
+    : Expr col:1
+    : Expr sum(col:1)
+    : Expr col:1
   filter: Expr col:2 > 100
 "#,
         )
@@ -839,9 +839,9 @@ LogicalSelect
             r#"
 LogicalAggregate
   input: LogicalProjection cols=[1] exprs=[col:1]
-      input: LogicalSelect
-            input: LogicalGet A cols=[1]
-            filter: Expr col:1 > 100
+    input: LogicalSelect
+      input: LogicalGet A cols=[1]
+      filter: Expr col:1 > 100
   : Expr col:1
   : Expr sum(col:1)
   : Expr col:1
