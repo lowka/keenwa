@@ -10,7 +10,7 @@ use std::ptr::NonNull;
 /// * It is caller's responsibility to ensure that references to objects allocated by this arena does not outlive it.
 /// * Caller must also guarantee they do not have both mutable and shared reference to the same object at the same time.
 pub struct Arena<T> {
-    // block is a block of memory that allocated objects.
+    // blocks of allocated memory.
     blocks: Vec<Block<T>>,
     // the number of objects per block.
     block_size: usize,
@@ -216,6 +216,7 @@ impl Debug for ElementIndex {
     }
 }
 
+/// Represents a block of memory that stores allocated objects.
 struct Block<T> {
     ptr: NonNull<T>,
     cap: usize,

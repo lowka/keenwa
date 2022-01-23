@@ -447,7 +447,7 @@ fn apply_rule<R>(
             RuleResult::Substitute(expr) => {
                 let new_operator = OperatorExpr::from(expr);
                 let memo_group = memo.get_group(&ctx.group);
-                let group_token = memo_group.to_membership_token();
+                let group_token = memo_group.to_group_token();
                 let new_expr = memo.insert_group_member(group_token, Operator::from(new_operator));
                 let new_expr = new_expr.state().memo_expr();
 
@@ -463,7 +463,7 @@ fn apply_rule<R>(
                 let new_operator = OperatorExpr::from(expr);
                 let new_operator = Operator::from(new_operator);
                 let memo_group = memo.get_group(&ctx.group);
-                let group_token = memo_group.to_membership_token();
+                let group_token = memo_group.to_group_token();
                 let new_expr = memo.insert_group_member(group_token, new_operator);
                 let new_expr = new_expr.state().memo_expr();
 
