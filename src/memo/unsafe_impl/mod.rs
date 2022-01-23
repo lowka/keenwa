@@ -1,11 +1,11 @@
-mod store;
+//! Implementation of a memo data structure that uses `unsafe` features of Rust.
 
-use crate::memo::unsafe_impl::store::{
-    AppendOnlyStore, ImmutableRef, Store, StoreElementId, StoreElementIter, StoreElementRef,
-};
+mod arena;
+
+use crate::memo::unsafe_impl::arena::{Arena, ElementIndex, ElementRef, ElementsIter};
 use crate::memo::{
-    create_group_properties, make_digest, CopyIn, CopyInExprs, DisplayMemoExprFormatter, Expr, ExprContext, MemoExpr,
-    MemoGroupCallback, NewChildExprs, OwnedExpr, Props, StringMemoFormatter,
+    create_group_properties, make_digest, CopyIn, CopyInExprs, Expr, ExprContext, MemoExpr, MemoGroupCallback,
+    NewChildExprs, OwnedExpr, Props, StringMemoFormatter,
 };
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -15,24 +15,29 @@ use std::ops::Deref;
 use std::rc::Rc;
 use triomphe::Arc;
 
-/// The number of elements per page.
-#[doc(hidden)]
-const PAGE_SIZE: usize = 8;
-
 /// Implementation of a memo that uses raw pointers.
+///
+/// # Implementation details
+///
+/// Internally memo stores three category of objects:
+/// - memo expressions (not modifiable)
+/// - group properties (not modifiable)
+/// - memo groups (where a group is a collection of memo expressions) (modifiable)
+///
+/// The reason that properties and groups (collections of expressions) are stored separately is because
+/// the later can be modified (memo exposes public API that allow to add expressions to an existing memo groups)
+/// and the former are immutable. Storing collection of expressions and properties in the same struct
+/// can make it possible to break alias rules - `MemoExpr` and `MemoExprRef`
+/// provide methods that return references to properties of a memo group and a memo itself provides APIs that modify
+/// those groups so it becomes possible to have both shared and mutable references to the same group at the same time.
+/// Properties and groups are stored separately to make such problems not possible.
 ///
 /// # Safety
 ///
-/// Groups (a set of expressions) and properties (properties of a memo group) are stored
-/// separately in order not to break aliasing rules. Since there is no API to obtain mutable
-/// references to memo expressions and properties it should be safe for user code work
-/// with them (taking into account the fact that memo expressions should not outlive
-/// the memo they are stored in) this is not the case for groups (see source code for more details).
-///
 /// * It's a caller's responsibility to ensure that [memo expressions](super::MemoExpr),
-/// [references to memo expressions](self::MemoExprRef) will not outlive the memo.
+/// [references to memo expressions](self::MemoExprRef) will not outlive a memo which expressions they reference.
 ///
-pub(crate) struct MemoImpl<E, T>
+pub struct MemoImpl<E, T>
 where
     E: MemoExpr,
 {
@@ -49,7 +54,7 @@ impl<E, T> MemoImpl<E, T>
 where
     E: MemoExpr,
 {
-    pub fn new(metadata: T) -> Self {
+    pub(crate) fn new(metadata: T) -> Self {
         MemoImpl {
             groups: GroupDataStore::new(),
             exprs: AppendOnlyStore::new(),
@@ -61,7 +66,7 @@ where
         }
     }
 
-    pub fn with_callback(
+    pub(crate) fn with_callback(
         metadata: T,
         callback: Rc<dyn MemoGroupCallback<Expr = E::Expr, Props = E::Props, Metadata = T>>,
     ) -> Self {
@@ -201,10 +206,10 @@ where
 
 /// Uniquely identifies a memo group in a memo.
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
-pub struct GroupId(StoreElementId);
+pub struct GroupId(ElementIndex);
 
 impl GroupId {
-    fn index(&self) -> StoreElementId {
+    fn index(&self) -> ElementIndex {
         self.0
     }
 }
@@ -223,10 +228,10 @@ impl Debug for GroupId {
 
 /// Uniquely identifies a memo expression in a memo.
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
-pub struct ExprId(StoreElementId);
+pub struct ExprId(ElementIndex);
 
 impl ExprId {
-    fn index(&self) -> StoreElementId {
+    fn index(&self) -> ElementIndex {
         self.0
     }
 }
@@ -251,7 +256,7 @@ where
     E: MemoExpr,
 {
     id: GroupId,
-    data_ref: StoreElementRef<MemoGroupData<E>>,
+    data_ref: ElementRef<MemoGroupData<E>>,
     marker: std::marker::PhantomData<(&'a E, T)>,
 }
 
@@ -551,7 +556,7 @@ where
     }
 }
 
-/// Iterator over expressions of a memo group.
+/// An iterator over expressions of a memo group.
 pub struct MemoGroupIter<'m, E>
 where
     E: MemoExpr,
@@ -592,19 +597,20 @@ where
 /// # Safety
 ///
 /// A reference to a memo expression is valid until a [`memo`](crate::memo::Memo) it belongs to is dropped.
+#[derive(Clone)]
 pub struct MemoExprRef<E>
 where
     E: MemoExpr,
 {
     id: ExprId,
-    expr_ref: ImmutableRef<E>,
+    expr_ref: SharedRef<E>,
 }
 
 impl<E> MemoExprRef<E>
 where
     E: MemoExpr,
 {
-    fn new(id: ExprId, expr_ref: ImmutableRef<E>) -> Self {
+    fn new(id: ExprId, expr_ref: SharedRef<E>) -> Self {
         MemoExprRef { id, expr_ref }
     }
 
@@ -646,15 +652,6 @@ where
     }
 }
 
-impl<E> Clone for MemoExprRef<E>
-where
-    E: MemoExpr,
-{
-    fn clone(&self) -> Self {
-        MemoExprRef::new(self.id, self.expr_ref.clone())
-    }
-}
-
 impl<E> PartialEq for MemoExprRef<E>
 where
     E: MemoExpr,
@@ -666,16 +663,7 @@ where
 
 impl<E> Eq for MemoExprRef<E> where E: MemoExpr {}
 
-impl<E> Debug for MemoExprRef<E>
-where
-    E: MemoExpr,
-{
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MemoExprRef").field("id", &self.id).finish()
-    }
-}
-
-/// Iterator over child expressions of a memo expression.
+/// A iterator over child expressions of a memo expression.
 pub struct MemoExprInputsIter<'a, E> {
     expr: &'a E,
     position: usize,
@@ -776,7 +764,7 @@ where
     E: MemoExpr,
 {
     Owned(Arc<E::Props>),
-    Memo((GroupId, ImmutableRef<E::Props>)),
+    Memo((GroupId, SharedRef<E::Props>)),
 }
 
 impl<E> ExprGroupPtr<E>
@@ -797,7 +785,7 @@ where
         }
     }
 
-    fn from_memo_group(group_id: GroupId, props: ImmutableRef<E::Props>) -> Self {
+    fn from_memo_group(group_id: GroupId, props: SharedRef<E::Props>) -> Self {
         ExprGroupPtr::Memo((group_id, props))
     }
 }
@@ -808,14 +796,14 @@ where
 {
     group_id: GroupId,
     exprs: Vec<MemoExprRef<E>>,
-    props_ref: ImmutableRef<E::Props>,
+    props_ref: SharedRef<E::Props>,
 }
 
 impl<E> MemoGroupData<E>
 where
     E: MemoExpr,
 {
-    fn new(group_id: GroupId, props_ref: ImmutableRef<E::Props>) -> Self {
+    fn new(group_id: GroupId, props_ref: SharedRef<E::Props>) -> Self {
         MemoGroupData {
             group_id,
             exprs: vec![],
@@ -842,7 +830,7 @@ pub(crate) fn copy_in_expr_impl<E, T>(copy_in_exprs: &mut CopyInExprs<E, T>, exp
 where
     E: MemoExpr,
 {
-    let expr_id = ExprId(copy_in_exprs.memo.exprs.next_id());
+    let expr_id = ExprId(copy_in_exprs.memo.exprs.next_idx());
 
     let ExprContext { children, parent } = expr_ctx;
     let props = create_group_properties(expr, &children);
@@ -910,37 +898,28 @@ where
     E: MemoExpr,
 {
     id: GroupId,
-    inner: StoreElementRef<MemoGroupData<E>>,
+    inner: ElementRef<MemoGroupData<E>>,
 }
 
 impl<E> InternalGroupRef<E>
 where
     E: MemoExpr,
 {
-    fn new(id: GroupId, inner: StoreElementRef<MemoGroupData<E>>) -> Self {
+    fn new(id: GroupId, inner: ElementRef<MemoGroupData<E>>) -> Self {
         InternalGroupRef { id, inner }
     }
 }
 
-impl<E> Display for MemoExprRef<E>
-where
-    E: MemoExpr,
-{
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{} ", self.id)?;
-        let mut fmt = DisplayMemoExprFormatter { fmt: f };
-        E::format_expr(self.expr(), self.props(), &mut fmt);
-        write!(f, "]")?;
-        Ok(())
-    }
-}
+/// The number of elements per allocation block.
+const BLOCK_SIZE: usize = 8;
 
-/// A wrapper around [store::Store] that stores [MemoGroupData] and provides safe iterators over its elements.
+/// A wrapper around [arena::Arena] that stores [MemoGroupData] and provides safe iterators over its elements.
+/// Caller must guarantee that those references will not outlive the underlying arena.
 struct GroupDataStore<E>
 where
     E: MemoExpr,
 {
-    store: Store<MemoGroupData<E>>,
+    store: Arena<MemoGroupData<E>>,
 }
 
 impl<E> GroupDataStore<E>
@@ -949,24 +928,24 @@ where
 {
     fn new() -> Self {
         GroupDataStore {
-            store: Store::new(PAGE_SIZE),
+            store: Arena::new(BLOCK_SIZE),
         }
     }
 
-    fn insert(&mut self, data: MemoGroupData<E>) -> (StoreElementId, StoreElementRef<MemoGroupData<E>>) {
-        self.store.insert(data)
+    fn insert(&mut self, data: MemoGroupData<E>) -> (ElementIndex, ElementRef<MemoGroupData<E>>) {
+        self.store.allocate(data)
     }
 
-    fn get(&self, elem_id: StoreElementId) -> Option<StoreElementRef<MemoGroupData<E>>> {
+    fn get(&self, elem_id: ElementIndex) -> Option<ElementRef<MemoGroupData<E>>> {
         self.store.get(elem_id)
     }
 
-    unsafe fn get_mut(&mut self, elem_id: StoreElementId) -> Option<&mut MemoGroupData<E>> {
+    unsafe fn get_mut(&mut self, elem_id: ElementIndex) -> Option<&mut MemoGroupData<E>> {
         self.store.get_mut(elem_id)
     }
 
-    fn next_id(&self) -> StoreElementId {
-        self.store.next_id()
+    fn next_id(&self) -> ElementIndex {
+        self.store.next_idx()
     }
 
     fn len(&self) -> usize {
@@ -975,7 +954,11 @@ where
 
     fn iter(&self) -> GroupDataIter<E> {
         GroupDataIter {
-            iter: self.store.iter(),
+            // SAFETY: This is safe because iterator over memo groups can be obtained from a
+            // shared references to a memo. Implementation of a memo guarantees that there no shared
+            // and mutable references to the same group at the same time.
+            // See comments in copy_in_expr_impl/memo::add_expr.
+            iter: unsafe { self.store.iter() },
         }
     }
 }
@@ -984,7 +967,7 @@ struct GroupDataIter<'a, E>
 where
     E: MemoExpr,
 {
-    iter: StoreElementIter<'a, MemoGroupData<E>>,
+    iter: ElementsIter<'a, MemoGroupData<E>>,
 }
 
 impl<'a, E> Iterator for GroupDataIter<'a, E>
@@ -996,7 +979,8 @@ where
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next().map(|e| GroupDataRef {
             // SAFETY: This is safe because there is no mutable reference to the underlying group data
-            // because this iterator is used when a caller has an owned reference to a memo.
+            // because this iterator is used when a caller has a shared reference to a memo.
+            // See comments in copy_in_expr_impl/memo::add_expr.
             inner: unsafe { &*e.get_ptr() },
         })
     }
@@ -1009,22 +993,67 @@ where
     fn next_back(&mut self) -> Option<Self::Item> {
         self.iter.next_back().map(|e| GroupDataRef {
             // SAFETY: This is safe because there is no mutable reference to the underlying group data.
+            // See comments in copy_in_expr_impl/memo::add_expr.
             inner: unsafe { &*e.get_ptr() },
         })
     }
 }
 
-struct GroupDataRef<'a, E> {
-    inner: &'a E,
+struct GroupDataRef<'a, T> {
+    inner: &'a T,
 }
 
-impl<E> Deref for GroupDataRef<'_, E> {
-    type Target = E;
+/// Wrapper around [arena::Arena] that does not provide mutable API so references to the allocated objects
+/// can be used without worrying about breaking aliasing rules. Caller must guarantee that those references
+/// will not outlive the underlying arena.
+struct AppendOnlyStore<T> {
+    arena: Arena<T>,
+}
 
-    fn deref(&self) -> &Self::Target {
-        self.inner
+impl<T> AppendOnlyStore<T> {
+    fn new() -> Self {
+        AppendOnlyStore {
+            arena: Arena::new(BLOCK_SIZE),
+        }
+    }
+
+    fn insert(&mut self, elem: T) -> (ElementIndex, SharedRef<T>) {
+        let (elem_id, elem_ref) = self.arena.allocate(elem);
+        (elem_id, SharedRef { inner: elem_ref })
+    }
+
+    fn get(&self, elem_id: ElementIndex) -> Option<SharedRef<T>> {
+        self.arena.get(elem_id).map(|i| SharedRef { inner: i })
+    }
+
+    fn next_idx(&self) -> ElementIndex {
+        self.arena.next_idx()
+    }
+
+    fn len(&self) -> usize {
+        self.arena.len()
     }
 }
+
+#[derive(Clone)]
+struct SharedRef<T> {
+    inner: ElementRef<T>,
+}
+
+impl<T> SharedRef<T> {
+    pub fn get(&self) -> &T {
+        // SAFETY: This is safe because AppendOnlyStore does not provide mutable APIs.
+        unsafe { self.inner.get() }
+    }
+}
+
+impl<T> PartialEq for SharedRef<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.inner == other.inner
+    }
+}
+
+impl<T> Eq for SharedRef<T> {}
 
 /// Builds a textual representation of the given memo.
 pub(crate) fn format_memo_impl<E, T>(memo: &MemoImpl<E, T>) -> String
@@ -1035,9 +1064,9 @@ where
     let mut f = StringMemoFormatter::new(&mut buf);
 
     for group in memo.groups.iter().rev() {
-        f.push_str(format!("{} ", group.group_id).as_str());
+        f.push_str(format!("{} ", group.inner.group_id).as_str());
         // SAFETY: No mutable references to the underlying group data exists.
-        for (i, expr) in group.exprs.iter().enumerate() {
+        for (i, expr) in group.inner.exprs.iter().enumerate() {
             if i > 0 {
                 // newline + 3 spaces
                 f.push_str("\n   ");
