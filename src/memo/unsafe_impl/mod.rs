@@ -15,26 +15,41 @@ use std::ops::Deref;
 use std::rc::Rc;
 use triomphe::Arc;
 
-/// Implementation of a memo that uses raw pointers.
+/// Implementation of a memo that uses raw pointers instead of `Arc`s internally.
 ///
 /// # Implementation details
 ///
-/// Internally memo stores three category of objects:
+/// A memo stores three category of objects:
 /// - memo expressions (not modifiable)
-/// - group properties (not modifiable)
+/// - properties of memo groups (not modifiable)
 /// - memo groups (where a group is a collection of memo expressions) (modifiable)
 ///
 /// The reason that properties and groups (collections of expressions) are stored separately is because
-/// the later can be modified (memo exposes public API that allow to add expressions to an existing memo groups)
-/// and the former are immutable. Storing collection of expressions and properties in the same struct
-/// can make it possible to break alias rules - `MemoExpr` and `MemoExprRef`
-/// provide methods that return references to properties of a memo group and a memo itself provides APIs that modify
-/// those groups so it becomes possible to have both shared and mutable references to the same group at the same time.
-/// Properties and groups are stored separately to make such problems not possible.
+/// there no APIs to modify the former but for the later [Memo](crate::memo::Memo) provides API to add
+/// expressions to an existing memo groups. If a group of expressions
+///  and properties of that group were stored in the same struct it would become possible to break
+/// aliasing rules because both `MemoExpr` and `MemoExprRef` provide methods that
+/// return references to properties of a memo group.
+///
+/// ```text
+///   // a new expression to be added to g1.
+///   let new_expr = ...
+///   // my_expr is existing expression from g1 (it can be either MemoExpr or MemoExprRef).
+///   let my_expr = ...
+///   // Get a reference to properties of g1.
+///   let props =  my_expr.props();
+///   // If properties and expressions are stored in the same struct
+///   // then the code below breaks aliasing rules
+///   // because insert_group_member internally obtains a mutable reference to g1
+///   // when a shared reference to g1 still exists.
+///   let new_expr_ref = memo.insert_group_member(g1_token, new_expr);
+///   // use `props`
+///   
+/// ```
 ///
 /// # Safety
 ///
-/// * It's a caller's responsibility to ensure that [memo expressions](super::MemoExpr),
+/// It's a caller's responsibility to ensure that [memo expressions](super::MemoExpr),
 /// [references to memo expressions](self::MemoExprRef) will not outlive a memo which expressions they reference.
 ///
 pub struct MemoImpl<E, T>
