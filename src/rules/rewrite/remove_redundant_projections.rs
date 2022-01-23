@@ -198,7 +198,7 @@ LogicalProjection cols=[1, 2, 3] exprs=[col:1, col:2, col:2 AS c3]
             r#"
 LogicalProjection cols=[1, 2, 3] exprs=[col:1, col:2, col:3]
   input: LogicalProjection cols=[2, 1, 3] exprs=[col:2, col:1, col:2 AS c3]
-      input: LogicalGet A cols=[1, 2]
+    input: LogicalGet A cols=[1, 2]
 "#,
         )
     }
@@ -271,7 +271,7 @@ LogicalProjection cols=[1, 2, 4, 5] exprs=[col:1, col:2, col:2 AS c3, col:1 + co
             r#"
 LogicalProjection cols=[1, 2, 5] exprs=[col:1, col:2, col:4 AS c3]
   input: LogicalProjection cols=[1, 2, 4] exprs=[col:1, col:2, col:1 + col:2 AS sum]
-      input: LogicalGet A cols=[1, 2, 3]
+    input: LogicalGet A cols=[1, 2, 3]
 "#,
         )
     }
@@ -293,7 +293,7 @@ LogicalProjection cols=[1, 2, 5] exprs=[col:1, col:2, col:4 AS c3]
             r#"
 LogicalProjection cols=[1, 2, 6] exprs=[col:1, col:2, SubQuery 02]
   input: LogicalProjection cols=[1, 2, 5] exprs=[col:1, col:2, SubQuery 02]
-      input: LogicalGet A cols=[1, 2]
+    input: LogicalGet A cols=[1, 2]
 "#,
         )
     }
@@ -370,10 +370,10 @@ LogicalAggregate
             r#"
 LogicalProjection cols=[4, 5] exprs=[col:3 AS s, col:1 + col:1 AS s2]
   input: LogicalAggregate
-      input: LogicalGet A cols=[1, 2]
-      : Expr col:1
-      : Expr sum(col:1)
-      : Expr col:1
+    input: LogicalGet A cols=[1, 2]
+    : Expr col:1
+    : Expr sum(col:1)
+    : Expr col:1
 "#,
         );
 
@@ -396,10 +396,10 @@ LogicalProjection cols=[4, 5] exprs=[col:3 AS s, col:1 + col:1 AS s2]
             r#"
 LogicalProjection cols=[4, 5] exprs=[col:3 AS s, col:1 + col:1 AS s2]
   input: LogicalAggregate
-      input: LogicalGet A cols=[1, 2]
-      : Expr col:1
-      : Expr sum(col:1)
-      : Expr col:1
+    input: LogicalGet A cols=[1, 2]
+    : Expr col:1
+    : Expr sum(col:1)
+    : Expr col:1
 "#,
         )
     }
@@ -437,8 +437,8 @@ LogicalJoin using=[(1, 3)]
             r#"
 LogicalProjection cols=[1, 3, 4] exprs=[col:1, col:3, col:4]
   input: LogicalJoin using=[(1, 3)]
-      left: LogicalGet A cols=[1, 2]
-      right: LogicalGet B cols=[3, 4]
+    left: LogicalGet A cols=[1, 2]
+    right: LogicalGet B cols=[3, 4]
 "#,
         );
 
@@ -454,8 +454,8 @@ LogicalProjection cols=[1, 3, 4] exprs=[col:1, col:3, col:4]
             r#"
 LogicalProjection cols=[1, 3, 5] exprs=[col:1, col:3, col:1 AS c1]
   input: LogicalJoin using=[(1, 3)]
-      left: LogicalGet A cols=[1, 2]
-      right: LogicalGet B cols=[3, 4]
+    left: LogicalGet A cols=[1, 2]
+    right: LogicalGet B cols=[3, 4]
 "#,
         );
 
@@ -472,8 +472,8 @@ LogicalProjection cols=[1, 3, 5] exprs=[col:1, col:3, col:1 AS c1]
             r#"
 LogicalProjection cols=[1, 5] exprs=[col:1, col:3 AS c1]
   input: LogicalJoin using=[(1, 3)]
-      left: LogicalGet A cols=[1, 2]
-      right: LogicalGet B cols=[3, 4]
+    left: LogicalGet A cols=[1, 2]
+    right: LogicalGet B cols=[3, 4]
 "#,
         );
     }
@@ -493,8 +493,8 @@ LogicalProjection cols=[1, 5] exprs=[col:1, col:3 AS c1]
             r#"
 LogicalProjection cols=[1, 5] exprs=[col:1, col:3 AS c1]
   input: LogicalJoin using=[(1, 3)]
-      left: LogicalGet A cols=[1, 2]
-      right: LogicalGet B cols=[3, 4]
+    left: LogicalGet A cols=[1, 2]
+    right: LogicalGet B cols=[3, 4]
 "#,
         );
     }
@@ -512,8 +512,8 @@ LogicalProjection cols=[1, 5] exprs=[col:1, col:3 AS c1]
             r#"
 LogicalProjection cols=[1, 2] exprs=[col:1, col:2]
   input: LogicalSelect
-      input: LogicalGet A cols=[1, 2]
-      filter: Expr col:1 = col:2
+    input: LogicalGet A cols=[1, 2]
+    filter: Expr col:1 = col:2
 "#,
         )
     }

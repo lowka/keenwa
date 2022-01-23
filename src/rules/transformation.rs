@@ -279,8 +279,8 @@ LogicalJoin using=[(3, 1)]
 LogicalJoin using=[(1, 4)]
   left: LogicalGet A cols=[1, 2]
   right: LogicalJoin using=[(4, 6)]
-      left: LogicalGet B cols=[3, 4]
-      right: LogicalGet C cols=[5, 6]
+    left: LogicalGet B cols=[3, 4]
+    right: LogicalGet C cols=[5, 6]
 "#,
         );
     }
@@ -319,8 +319,8 @@ LogicalJoin using=[(1, 4)]
             r#"
 LogicalJoin using=[(1, 6)]
   left: LogicalJoin using=[(1, 3)]
-      left: LogicalGet A cols=[1, 2]
-      right: LogicalGet B cols=[3, 4]
+    left: LogicalGet A cols=[1, 2]
+    right: LogicalGet B cols=[3, 4]
   right: LogicalGet C cols=[5, 6]
 "#,
         );

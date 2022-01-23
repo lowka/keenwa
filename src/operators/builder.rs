@@ -941,7 +941,7 @@ Memo:
             r#"
 LogicalProjection cols=[2] exprs=[col:2]
   input: LogicalProjection cols=[2, 3, 1] exprs=[col:2, 100, col:1]
-      input: LogicalGet A cols=[1, 2]
+    input: LogicalGet A cols=[1, 2]
   output cols: [2]
 Metadata:
   col:1 A.a1 Int32
