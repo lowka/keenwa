@@ -228,9 +228,9 @@ where
         }
     }
 
-    /// Consumes this borrowed group and returns a [membership token]('MemoGroupToken') that can be used
+    /// Consumes this borrowed group and returns a [group token]('MemoGroupToken') that can be used
     /// to add an expression to this memo group.
-    pub fn to_membership_token(self) -> MemoGroupToken<E> {
+    pub fn to_group_token(self) -> MemoGroupToken<E> {
         MemoGroupToken {
             group_id: self.group_id,
             marker: Default::default(),
@@ -243,9 +243,9 @@ where
     }
 }
 
-/// A group membership token that allows the owner to add an expression into a memo group this token was obtained from.
+/// A token that allows the owner to add an expression into a memo group this token was obtained from.
 ///
-/// A Membership token can be obtained from a memo group by calling [to_membership_token](MemoGroupRef::to_membership_token)
+/// A memo group token can be obtained from a memo group by calling [to_group_token](MemoGroupRef::to_group_token)
 /// of that memo group.
 #[derive(Clone)]
 pub struct MemoGroupToken<E> {
@@ -460,8 +460,8 @@ where
 
 /// Represents a state of a [memo expression](super::MemoExpr).
 ///
-/// In the `Owned` state a memo expression stores expression and properties.
-/// In the `Memo` state a memo expression stores a reference to expression stored in a memo.
+/// - In the `Owned` state a memo expression stores expression and properties.
+/// - In the `Memo` state a memo expression stores a reference to expression stored in a memo.
 #[derive(Clone)]
 pub enum MemoExprState<E>
 where
@@ -593,7 +593,8 @@ where
     }
 }
 
-/// Represents an expression stored in a memo.
+/// Represents an expression stored in a [memo](crate::memo::Memo).
+/// This is the `memo` state of a [MemoExprState](self::MemoExprState).
 #[derive(Clone)]
 // get_expr_ref fails to compiler under 1.57.
 // note: rustc 1.57.0 (f1edd0429 2021-11-29) running on x86_64-apple-darwin

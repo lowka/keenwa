@@ -15,7 +15,7 @@ use std::ops::Deref;
 use std::rc::Rc;
 use triomphe::Arc;
 
-/// Implementation of a memo that uses raw pointers instead of `Arc`s internally.
+/// Implementation of a memo that internally uses raw pointers instead of `Arc`s.
 ///
 /// # Implementation details
 ///
@@ -25,7 +25,7 @@ use triomphe::Arc;
 /// - memo groups (where a group is a collection of memo expressions) (modifiable)
 ///
 /// The reason that properties and groups (collections of expressions) are stored separately is because
-/// there no APIs to modify the former but for the later [Memo](crate::memo::Memo) provides API to add
+/// there no APIs to modify the former but for the later memo provides API to add
 /// expressions to an existing memo groups. If a group of expressions
 ///  and properties of that group were stored in the same struct it would become possible to break
 /// aliasing rules because both `MemoExpr` and `MemoExprRef` provide methods that
@@ -153,23 +153,19 @@ where
         MemoGroupToken(group_ref)
     }
 
-    fn add_expr(
-        &mut self,
-        expr: E::Expr,
-        membership_token: MemoGroupToken<E>,
-    ) -> (InternalGroupRef<E>, MemoExprRef<E>) {
+    fn add_expr(&mut self, expr: E::Expr, group_token: MemoGroupToken<E>) -> (InternalGroupRef<E>, MemoExprRef<E>) {
         // SAFETY:
-        // An expression can only be added to a group if a caller owns a membership token.
+        // An expression can only be added to a group if a caller owns a group token.
         // That token can be obtained in two ways:
         //
-        // 1) when a new group is added to a memo (internal API) - add_group returns a membership token
+        // 1) when a new group is added to a memo (internal API) - add_group returns a group token
         // which is then passed to this method - no references to MemoGroupData exists
         // and we can safely obtain a mutable reference to via groups.get_mut
         //
         // 2) by consuming MemoGroupRef (public API) - in this case borrow checker will reject a program
         // in which both a reference to the underlying MemoGroupData and the MemoGroupToken to that MemoGroupData
         // exists at the same time.
-        let group_ref = membership_token.into_inner();
+        let group_ref = group_token.into_inner();
         let group_id = group_ref.id;
 
         // Make a reference to group data in order to retrieve a group properties reference stored in the memo.
@@ -308,9 +304,9 @@ where
         group.props_ref.get()
     }
 
-    /// Consumes this borrowed group and returns a [membership token]('MemoGroupToken') that can be used
+    /// Consumes this borrowed group and returns a [group token]('MemoGroupToken') that can be used
     /// to add an expression to this memo group.
-    pub fn to_membership_token(self) -> MemoGroupToken<E> {
+    pub fn to_group_token(self) -> MemoGroupToken<E> {
         MemoGroupToken(InternalGroupRef::new(self.id, self.data_ref))
     }
 
@@ -360,9 +356,9 @@ where
         .finish()
 }
 
-/// A group membership token that allows the owner to add an expression into a memo group this token was obtained from.
+/// A token that allows the owner to add an expression into a memo group this token was obtained from.
 ///
-/// A Membership token can be obtained from a memo group by calling [to_membership_token](MemoGroupRef::to_membership_token)
+/// A memo group token can be obtained from a memo group by calling [to_group_token](MemoGroupRef::to_group_token)
 /// of that memo group.
 pub struct MemoGroupToken<E>(InternalGroupRef<E>)
 where
@@ -388,8 +384,8 @@ where
 
 /// Represents a state of a [memo expression](super::MemoExpr).
 ///
-/// In the `Owned` state a memo expression stores expression and properties.
-/// In the `Memo` state a memo expression stores a reference to expression stored in a memo.
+/// - In the `Owned` state a memo expression stores expression and properties.
+/// - In the `Memo` state a memo expression stores a reference to expression stored in a memo.
 #[derive(Clone)]
 // We can not move to MemoExprState to memo due to compiler bug
 // see comments in safe_memo::MemoizedExpr::get_expr_ref
@@ -521,7 +517,8 @@ where
     }
 }
 
-/// Represents an expression stored in a memo.
+/// Represents an expression stored in a [memo](crate::memo::Memo).
+/// This is the `memo` state of a [MemoExprState](self::MemoExprState).
 #[derive(Clone)]
 pub struct MemoizedExpr<E>
 where

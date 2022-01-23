@@ -29,7 +29,7 @@ where
     E: MemoExpr,
 {
     let group = memo.get_group(&group_id);
-    let token = group.to_membership_token();
+    let token = group.to_group_token();
     let expr = memo.insert_group_member(token, expr);
 
     let expr_ref = expr.state().memo_expr();

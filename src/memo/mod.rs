@@ -23,7 +23,9 @@ mod memo_impl {
     pub(crate) use default_impl::{copy_in_expr_impl, format_memo_impl};
     // pub imports
     #[doc(hidden)]
-    pub use default_impl::{ExprId, GroupId, MemoExprRef, MemoExprState, MemoGroupRef, MemoGroupToken, MemoImpl};
+    pub use default_impl::{
+        ExprId, GroupId, MemoExprRef, MemoExprState, MemoGroupRef, MemoGroupToken, MemoImpl, MemoizedExpr,
+    };
 }
 
 // UNSAFE MEMO
@@ -44,7 +46,9 @@ mod memo_impl {
     pub(crate) use unsafe_impl::{copy_in_expr_impl, format_memo_impl};
     // pub imports
     #[doc(hidden)]
-    pub use unsafe_impl::{ExprId, GroupId, MemoExprRef, MemoExprState, MemoGroupRef, MemoGroupToken, MemoImpl};
+    pub use unsafe_impl::{
+        ExprId, GroupId, MemoExprRef, MemoExprState, MemoGroupRef, MemoGroupToken, MemoImpl, MemoizedExpr,
+    };
 }
 
 // DOCS ONLY
@@ -66,7 +70,9 @@ mod memo_impl {
     pub(crate) use default_impl::{copy_in_expr_impl, format_memo_impl};
     // pub imports
     #[doc(hidden)]
-    pub use default_impl::{ExprId, GroupId, MemoExprRef, MemoExprState, MemoGroupRef, MemoGroupToken, MemoImpl};
+    pub use default_impl::{
+        ExprId, GroupId, MemoExprRef, MemoExprState, MemoGroupRef, MemoGroupToken, MemoImpl, MemoizedExpr,
+    };
 }
 // DOCS ONLY ENDS
 
@@ -125,7 +131,6 @@ where
 ///  * It provides memoization of identical subexpressions within an expression tree.
 // TODO: Examples
 // TODO: add generic implementation of a copy-out method.
-// TODO: Document ExprPtr, ExprGroupPtr - memo expression parts.
 //  MemoExprRef, MemoGroupRef
 pub struct Memo<E, T>
 where
@@ -197,21 +202,19 @@ where
 
 /// A trait that must be implemented by an expression that can be copied into a [`memo`](self::Memo).
 // TODO: Docs.
-// FIXME: Return empy_props see comment in ExprGroupRef.
-// FIXME: Require debug from MemoExpr, Expr and Props ?
 pub trait MemoExpr: Clone {
     /// The type of the expression.
     type Expr: Expr;
     /// The type of the properties.
     type Props: Props;
 
-    /// Returns the expression this memo expression stores.
+    /// Returns a reference to the underlying expression (see [MemoExprState::expr]).
     /// This method is a shorthand for `memo_expr.state().expr()`.
     fn expr(&self) -> &Self::Expr {
         self.state().expr()
     }
 
-    /// Returns properties associated with this expression.
+    /// Returns properties associated with this memo expression (see [MemoExprState::props]).
     /// This method is a shorthand for `memo_expr.state().props()`.
     fn props(&self) -> &Self::Props {
         self.state().props()
@@ -220,14 +223,14 @@ pub trait MemoExpr: Clone {
     /// Creates a new memo expression from the given state.
     fn from_state(state: MemoExprState<Self>) -> Self;
 
-    /// Returns a references to the state of the given memo expression.
+    /// Returns a references to the state of the this memo expression.
     fn state(&self) -> &MemoExprState<Self>;
 
-    /// Recursively traverses this expression and copies it into a memo.
+    /// Recursively traverses this memo expression and copies it into a memo.
     fn copy_in<T>(&self, visitor: &mut CopyInExprs<Self, T>);
-    //
-    /// Creates a new expression from the given expression by replacing its child expressions
-    /// provided by the given [NewChildExprs](self::NewChildExprs).
+
+    /// Creates a new expression from the given expression `expr` by replacing its child expressions
+    /// with expressions provided by the given [NewChildExprs](self::NewChildExprs).
     fn expr_with_new_children(expr: &Self::Expr, inputs: NewChildExprs<Self>) -> Self::Expr;
 
     /// Called when a scalar expression with the given nested sub-queries should be added to a memo.
@@ -288,7 +291,7 @@ pub trait Expr: Clone {
     fn is_scalar(&self) -> bool;
 }
 
-/// A trait for properties of the expression.
+/// A trait for properties of a memo group.
 pub trait Props: Clone {
     /// The type of relational properties.
     type RelProps;
@@ -336,10 +339,10 @@ pub trait MemoGroupCallback {
     type Expr: Expr;
     /// The type of properties of the expression.
     type Props: Props;
-    /// The type of metadata stored by the memo.
+    /// The type of metadata stored by a memo.
     type Metadata;
 
-    /// Called when a new memo group is added to memo and returns properties to be shared among all expressions in this group.
+    /// Called when a new memo group is added to a memo and returns properties to be shared among all expressions in this group.
     /// Where `expr` is the expression that created the memo group and `props` are properties associated with that expression.
     fn new_group(&self, expr: &Self::Expr, props: &Self::Props, metadata: &Self::Metadata) -> Self::Props;
 }
@@ -479,6 +482,7 @@ pub trait MemoGroupCallback {
 // }
 
 /// Represents an expression that has not been copied into a [memo](self::Memo).
+/// This is the `owned` state of a [MemoExprState](self::MemoExprState).
 #[derive(Clone)]
 pub struct OwnedExpr<E>
 where
@@ -492,7 +496,7 @@ impl<E> OwnedExpr<E>
 where
     E: MemoExpr,
 {
-    /// Creates a new expression for this one with the given properties.
+    /// Creates a copy of this expression that uses the given properties.
     pub fn with_props(&self, props: E::Props) -> Self {
         OwnedExpr {
             expr: self.expr.clone(),
@@ -1012,19 +1016,12 @@ where
 
     /// Initialises data structures required to traverse child expressions of the given expression `expr`.
     pub fn enter_expr(&mut self, expr: &E) -> ExprContext<E> {
-        // ExprContext {
-        //     children: VecDeque::new(),
-        //     parent: self.parent.take(),
-        //     // TODO: Add method that splits MemoExpr into Self::Expr and Self::Props
-        //     //  this will allow to remove the clone() call below .
-        //     props: expr.props().clone(),
-        // }
         ExprContext::new(expr, self.parent.take())
     }
 
     /// Visits the given child expression and recursively copies that expression into the memo:
-    /// * If the given expression is an expression this methods recursively copies it into the memo.
-    /// * If the child expression is a group this method returns a reference to that group.
+    /// * If the given expression is in the [owned state](self::OwnedExpr) this methods recursively copies it into the memo.
+    /// * If the child expression is in the [memo state](self::MemoizedExpr) this method returns a reference to that group.
     pub fn visit_expr_node(&mut self, expr_ctx: &mut ExprContext<E>, expr_node: impl AsRef<E>) {
         let input = expr_node.as_ref();
         let child_expr = match input.state() {
