@@ -20,10 +20,10 @@ mod memo_impl {
     pub use super::default_impl;
     // crate imports
     #[doc(hidden)]
-    pub(crate) use default_impl::{copy_in_expr_impl, format_memo_impl, MemoImpl};
+    pub(crate) use default_impl::{copy_in_expr_impl, format_memo_impl};
     // pub imports
     #[doc(hidden)]
-    pub use default_impl::{ExprId, GroupId, MemoExprRef, MemoExprState, MemoGroupRef, MemoGroupToken};
+    pub use default_impl::{ExprId, GroupId, MemoExprRef, MemoExprState, MemoGroupRef, MemoGroupToken, MemoImpl};
 }
 
 // UNSAFE MEMO
@@ -41,10 +41,10 @@ mod memo_impl {
 
     // crate imports
     #[doc(hidden)]
-    pub(crate) use unsafe_impl::{copy_in_expr_impl, format_memo_impl, MemoImpl};
+    pub(crate) use unsafe_impl::{copy_in_expr_impl, format_memo_impl};
     // pub imports
     #[doc(hidden)]
-    pub use unsafe_impl::{ExprId, GroupId, MemoExprRef, MemoExprState, MemoGroupRef, MemoGroupToken};
+    pub use unsafe_impl::{ExprId, GroupId, MemoExprRef, MemoExprState, MemoGroupRef, MemoGroupToken, MemoImpl};
 }
 
 // DOCS ONLY
@@ -63,10 +63,10 @@ mod memo_impl {
     pub use super::default_impl;
     // crate imports
     #[doc(hidden)]
-    pub(crate) use default_impl::{copy_in_expr_impl, format_memo_impl, MemoImpl};
+    pub(crate) use default_impl::{copy_in_expr_impl, format_memo_impl};
     // pub imports
     #[doc(hidden)]
-    pub use default_impl::{ExprId, GroupId, MemoExprRef, MemoExprState, MemoGroupRef, MemoGroupToken};
+    pub use default_impl::{ExprId, GroupId, MemoExprRef, MemoExprState, MemoGroupRef, MemoGroupToken, MemoImpl};
 }
 // DOCS ONLY ENDS
 
@@ -330,7 +330,7 @@ pub trait Props: Clone {
     fn to_scalar(self) -> Self::ScalarProps;
 }
 
-/// Callback that is called when a new memo group is added to a memo.
+/// Callback that is called when a new memo group is added to a [memo](self::Memo).
 pub trait MemoGroupCallback {
     /// The type of expression.
     type Expr: Expr;
@@ -478,7 +478,7 @@ pub trait MemoGroupCallback {
 //     }
 // }
 
-/// Represents an expression that has not been copied into a memo.
+/// Represents an expression that has not been copied into a [memo](self::Memo).
 #[derive(Clone)]
 pub struct OwnedExpr<E>
 where
@@ -515,7 +515,7 @@ where
     }
 }
 
-/// Iterator over child expressions of a memo expression.
+/// An iterator over child expressions of a [memo expression](self::MemoExpr).
 pub struct MemoExprChildIter<'a, E> {
     expr: &'a E,
     position: usize,
@@ -560,9 +560,9 @@ where
     }
 }
 
-/// Provides methods to build a textual representation of an expression.
+/// Provides methods to build a textual representation of a memo expression.
 pub trait MemoExprFormatter {
-    /// Writes a name of an expression.
+    /// Writes a name of a memo expression.
     fn write_name(&mut self, name: &str);
 
     /// Writes a value of `source` attribute of an expression.
@@ -588,12 +588,12 @@ pub trait MemoExprFormatter {
         }
     }
 
-    /// Writes a value of some attribute of an expression.
+    /// Writes a value of some attribute of a memo expression.
     fn write_value<D>(&mut self, name: &str, value: D)
     where
         D: Display;
 
-    /// Writes values of some attribute of an expression.
+    /// Writes values of some attribute of a memo expression.
     fn write_values<D>(&mut self, name: &str, values: &[D])
     where
         D: Display;
@@ -804,7 +804,7 @@ where
         self.0.props().relational()
     }
 
-    /// Returns an [self::MemoExprState] of the underlying memo expression.
+    /// Returns the [state](self::MemoExprState) of the underlying memo expression.
     pub fn state(&self) -> &MemoExprState<E> {
         self.0.state()
     }
@@ -925,7 +925,7 @@ where
         self.0.props().scalar()
     }
 
-    /// Returns an [self::MemoExprState] of the underlying memo expression.
+    /// Returns the [state](self::MemoExprState) of the underlying memo expression.
     pub fn state(&self) -> &MemoExprState<E> {
         self.0.state()
     }
@@ -988,7 +988,7 @@ where
     }
 }
 
-/// Provides methods to traverse an expression tree and copy it into a memo.
+/// Provides methods to traverse an expression tree and copy it into a [memo](self::Memo).
 pub struct CopyInExprs<'a, E, T>
 where
     E: MemoExpr,
@@ -1040,7 +1040,7 @@ where
         expr_ctx.children.push_back(child_expr);
     }
 
-    /// Visits the given optional child expression if it is present and recursively copies it into a memo.
+    /// Visits the given optional child expression if it is present and recursively copies it into a [memo](self::Memo).
     /// This method is equivalent to:
     /// ```text
     /// if let Some(expr_node) = expr_node {
@@ -1059,7 +1059,7 @@ where
     }
 }
 
-/// Stores information that is used to build a new memo expression.
+/// Stores information that is used to build a new [memo expression](self::MemoExpr).
 pub struct ExprContext<E>
 where
     E: MemoExpr,
@@ -1119,7 +1119,7 @@ where
     }
 }
 
-/// Provides methods to collect nested expressions from an expression and copy them into a memo.
+/// Provides methods to collect nested expressions from an expression and copy them into a [memo](self::Memo).
 /// Can be used to support nested relational expressions inside a scalar expression.
 //TODO: Examples
 pub struct CopyInNestedExprs<'a, 'c, E, T>
@@ -1247,7 +1247,7 @@ impl MemoExprFormatter for StringMemoFormatter<'_> {
     }
 }
 
-/// Used to format [MemoExprRef](self::MemoExprRef)
+/// Formats [MemoExprRef](self::MemoExprRef).
 pub(crate) struct DisplayMemoExprFormatter<'f, 'a> {
     fmt: &'f mut Formatter<'a>,
 }
@@ -1317,4 +1317,26 @@ where
     E: MemoExpr,
 {
     format_memo_impl(&memo.memo_impl)
+}
+
+impl<E> Debug for MemoExprRef<E>
+where
+    E: MemoExpr,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MemoExprRef").field("id", &self.id()).finish()
+    }
+}
+
+impl<E> Display for MemoExprRef<E>
+where
+    E: MemoExpr,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{} ", self.id())?;
+        let mut fmt = DisplayMemoExprFormatter { fmt: f };
+        E::format_expr(self.expr(), self.props(), &mut fmt);
+        write!(f, "]")?;
+        Ok(())
+    }
 }

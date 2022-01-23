@@ -1,6 +1,8 @@
+//! Default implementation of a memo data structure.
+
 use crate::memo::{
-    create_group_properties, make_digest, CopyIn, CopyInExprs, DisplayMemoExprFormatter, Expr, ExprContext, MemoExpr,
-    MemoGroupCallback, NewChildExprs, OwnedExpr, Props, StringMemoFormatter,
+    create_group_properties, make_digest, CopyIn, CopyInExprs, Expr, ExprContext, MemoExpr, MemoGroupCallback,
+    NewChildExprs, OwnedExpr, Props, StringMemoFormatter,
 };
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
@@ -9,9 +11,9 @@ use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 use triomphe::Arc;
 
-/// Implementation of a memo in which [MemoizedExpr](self::MemoizedExpr) are backed by `Arc`s.
+/// Implementation of a memo data structure in which [MemoizedExpr](self::MemoizedExpr) are backed by `Arc`s.
 /// Internally this implementation uses `Vec`s as a storage for both groups and expressions.
-pub(crate) struct MemoImpl<E, T>
+pub struct MemoImpl<E, T>
 where
     E: MemoExpr,
 {
@@ -27,7 +29,7 @@ impl<E, T> MemoImpl<E, T>
 where
     E: MemoExpr,
 {
-    pub fn new(metadata: T) -> Self {
+    pub(crate) fn new(metadata: T) -> Self {
         MemoImpl {
             exprs: Vec::new(),
             groups: Vec::new(),
@@ -38,7 +40,7 @@ where
         }
     }
 
-    pub fn with_callback(
+    pub(crate) fn with_callback(
         metadata: T,
         callback: Rc<dyn MemoGroupCallback<Expr = E::Expr, Props = E::Props, Metadata = T>>,
     ) -> Self {
@@ -260,7 +262,7 @@ where
     }
 }
 
-/// Iterator over expressions in a memo group.
+/// An iterator over expressions in a memo group.
 pub struct MemoGroupIter<'a, E, T>
 where
     E: MemoExpr,
@@ -399,29 +401,7 @@ where
 
 impl<E> Eq for MemoExprRef<E> where E: MemoExpr {}
 
-impl<E> Debug for MemoExprRef<E>
-where
-    E: MemoExpr,
-{
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MemoExprRef").field("id", &self.id).finish()
-    }
-}
-
-impl<E> Display for MemoExprRef<E>
-where
-    E: MemoExpr,
-{
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{} ", self.id)?;
-        let mut fmt = DisplayMemoExprFormatter { fmt: f };
-        E::format_expr(self.expr(), self.props(), &mut fmt);
-        write!(f, "]")?;
-        Ok(())
-    }
-}
-
-/// Iterator over child expressions of a memo expression.
+/// An iterator over child expressions of a memo expression.
 pub struct MemoExprInputsIter<'a, E> {
     expr: &'a E,
     position: usize,
