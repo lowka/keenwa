@@ -209,7 +209,8 @@ impl OperatorBuilder {
             };
             column_ids.push(id);
             output_columns.push((name.clone(), id));
-            new_exprs.push(expr.clone());
+            let expr = self.add_scalar_node(expr);
+            new_exprs.push(expr);
         }
 
         let expr = LogicalExpr::Projection(LogicalProjection {
@@ -901,7 +902,7 @@ Memo:
 
         tester.expect_expr(
             r#"
-LogicalProjection cols=[2, 3, 4, 5] exprs=[col:2, 100, col:2 AS a2_alias, col:2 AS a2_alias AS a2_alias_alias]
+LogicalProjection cols=[2, 3, 4, 5] exprs: [col:2, 100, col:2 AS a2_alias, col:2 AS a2_alias AS a2_alias_alias]
   input: LogicalGet A cols=[1, 2]
   output cols: [2, 3, 4, 5]
 Metadata:
@@ -911,7 +912,11 @@ Metadata:
   col:4 a2_alias Int32, expr: col:2
   col:5 a2_alias_alias Int32, expr: col:2 AS a2_alias
 Memo:
-  01 LogicalProjection input=00 cols=[2, 3, 4, 5] exprs=[col:2, 100, col:2 AS a2_alias, col:2 AS a2_alias AS a2_alias_alias]
+  05 LogicalProjection input=00 exprs=[01, 02, 03, 04] cols=[2, 3, 4, 5]
+  04 Expr col:2 AS a2_alias AS a2_alias_alias
+  03 Expr col:2 AS a2_alias
+  02 Expr 100
+  01 Expr col:2
   00 LogicalGet A cols=[1, 2]
 "#,
         );
@@ -939,8 +944,8 @@ Memo:
 
         tester.expect_expr(
             r#"
-LogicalProjection cols=[2] exprs=[col:2]
-  input: LogicalProjection cols=[2, 3, 1] exprs=[col:2, 100, col:1]
+LogicalProjection cols=[2] exprs: [col:2]
+  input: LogicalProjection cols=[2, 3, 1] exprs: [col:2, 100, col:1]
     input: LogicalGet A cols=[1, 2]
   output cols: [2]
 Metadata:
@@ -948,8 +953,11 @@ Metadata:
   col:2 A.a2 Int32
   col:3 ?column? Int32, expr: 100
 Memo:
-  02 LogicalProjection input=01 cols=[2] exprs=[col:2]
-  01 LogicalProjection input=00 cols=[2, 3, 1] exprs=[col:2, 100, col:1]
+  05 LogicalProjection input=04 exprs=[01] cols=[2]
+  04 LogicalProjection input=00 exprs=[01, 02, 03] cols=[2, 3, 1]
+  03 Expr col:1
+  02 Expr 100
+  01 Expr col:2
   00 LogicalGet A cols=[1, 2]
 "#,
         );
@@ -1080,17 +1088,18 @@ Memo:
             r#"
 LogicalSelect
   input: LogicalGet A cols=[1, 2]
-  filter: Expr SubQuery 01 = true
+  filter: Expr SubQuery 02 = true
   output cols: [1, 2]
 Metadata:
   col:1 A.a1 Int32
   col:2 A.a2 Int32
   col:3 ?column? Bool, expr: true
 Memo:
-  04 LogicalSelect input=02 filter=03
-  03 Expr SubQuery 01 = true
-  02 LogicalGet A cols=[1, 2]
-  01 LogicalProjection input=00 cols=[3] exprs=[true]
+  05 LogicalSelect input=03 filter=04
+  04 Expr SubQuery 02 = true
+  03 LogicalGet A cols=[1, 2]
+  02 LogicalProjection input=00 exprs=[01] cols=[3]
+  01 Expr true
   00 LogicalEmpty return_one_row=true
 "#,
         );
@@ -1154,10 +1163,9 @@ Memo:
         tester.expect_expr(
             r#"
 LogicalAggregate
+  aggr_exprs: [col:1, sum(col:1)]
+  group_exprs: [col:1]
   input: LogicalGet A cols=[1, 2, 3]
-  : Expr col:1
-  : Expr sum(col:1)
-  : Expr col:1
   output cols: [1, 4]
 Metadata:
   col:1 A.a1 Int32
@@ -1165,7 +1173,7 @@ Metadata:
   col:3 A.a3 Int32
   col:4 sum Int32, expr: sum(col:1)
 Memo:
-  03 LogicalAggregate input=00 01 02 01
+  03 LogicalAggregate input=00 aggr_exprs=[01, 02] group_exprs=[01]
   02 Expr sum(col:1)
   01 Expr col:1
   00 LogicalGet A cols=[1, 2, 3]

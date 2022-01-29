@@ -297,6 +297,7 @@ where
     fmt: StringMemoFormatter<'a>,
     ctx: &'c C,
     input_index: usize,
+    exprs_written: bool,
 }
 
 impl<'a, 'c, C> BestExprFormatter<'a, 'c, C>
@@ -308,6 +309,32 @@ where
             fmt,
             ctx,
             input_index: 0,
+            exprs_written: false,
+        }
+    }
+
+    fn do_write_expr(&mut self) {
+        let i = self.input_index;
+        let input_group_id = self.ctx.child_group_id(i);
+        let input_required = self.ctx.child_required(i);
+
+        if i == 0 {
+            self.fmt.push('[');
+        }
+        match input_required.as_option() {
+            None | Some(None) => {}
+            Some(Some(ordering)) => {
+                self.fmt.push_str(format!("ord:{:?}=", ordering.columns()).as_str());
+            }
+        }
+        self.fmt.push_str(format!("{:02}", input_group_id).as_str());
+        self.input_index += 1;
+    }
+
+    fn exprs_written(&mut self) {
+        if !self.exprs_written && self.input_index == self.ctx.num_children() {
+            self.fmt.push(']');
+            self.exprs_written = true;
         }
     }
 }
@@ -329,26 +356,16 @@ where
         T: MemoExpr,
     {
         self.fmt.push(' ');
+        self.do_write_expr();
+        self.exprs_written();
+    }
 
-        let i = self.input_index;
-        let input_group_id = self.ctx.child_group_id(i);
-        let input_required = self.ctx.child_required(i);
-
-        if i == 0 {
-            self.fmt.push('[');
+    fn write_exprs<T>(&mut self, _name: &str, input: impl ExactSizeIterator<Item = impl AsRef<T>>) {
+        for _ in input {
+            self.fmt.push(' ');
+            self.do_write_expr();
         }
-        match input_required.as_option() {
-            None | Some(None) => {}
-            Some(Some(ordering)) => {
-                self.fmt.push_str(format!("ord:{:?}=", ordering.columns()).as_str());
-            }
-        }
-        self.fmt.push_str(format!("{:02}", input_group_id).as_str());
-
-        self.input_index += 1;
-        if self.input_index == self.ctx.num_children() {
-            self.fmt.push(']');
-        }
+        self.exprs_written();
     }
 
     fn write_value<D>(&mut self, name: &str, value: D)

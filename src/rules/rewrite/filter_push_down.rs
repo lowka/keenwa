@@ -175,7 +175,7 @@ fn add_filters(mut state: State, expr: &RelNode, used_columns: &[ColumnId]) -> R
     }
 }
 
-fn prepare_projections(columns: &[ColumnId], exprs: &[ScalarExpr]) -> HashMap<ColumnId, ScalarExpr> {
+fn prepare_projections(columns: &[ColumnId], exprs: &[ScalarNode]) -> HashMap<ColumnId, ScalarExpr> {
     struct RewriteAliasExpr<'a> {
         projections: &'a HashMap<ColumnId, ScalarExpr>,
     }
@@ -198,7 +198,7 @@ fn prepare_projections(columns: &[ColumnId], exprs: &[ScalarExpr]) -> HashMap<Co
     let mut projections = HashMap::new();
     for (i, expr) in exprs.iter().enumerate() {
         let col_id = columns[i];
-        match expr {
+        match expr.expr() {
             ScalarExpr::Alias(expr, _) => {
                 let expr = expr.as_ref().clone();
                 let mut rewriter = RewriteAliasExpr {
@@ -208,7 +208,7 @@ fn prepare_projections(columns: &[ColumnId], exprs: &[ScalarExpr]) -> HashMap<Co
                 projections.insert(col_id, expr);
             }
             _ => {
-                projections.insert(col_id, expr.clone());
+                projections.insert(col_id, expr.expr().clone());
             }
         }
     }
@@ -396,7 +396,7 @@ mod test {
                 Ok(filter_a1)
             },
             r#"
-LogicalProjection cols=[1] exprs=[col:1]
+LogicalProjection cols=[1] exprs: [col:1]
   input: LogicalSelect
     input: LogicalGet A cols=[1, 2]
     filter: Expr col:1 > 100
@@ -420,7 +420,7 @@ LogicalProjection cols=[1] exprs=[col:1]
                 Ok(filter_a1)
             },
             r#"
-LogicalProjection cols=[1, 2, 3] exprs=[col:1, col:2, col:1 + col:2 AS a3]
+LogicalProjection cols=[1, 2, 3] exprs: [col:1, col:2, col:1 + col:2 AS a3]
   input: LogicalSelect
     input: LogicalGet A cols=[1, 2]
     filter: Expr col:1 + col:2 > 100
@@ -445,7 +445,7 @@ LogicalProjection cols=[1, 2, 3] exprs=[col:1, col:2, col:1 + col:2 AS a3]
                 Ok(filter_a1)
             },
             r#"
-LogicalProjection cols=[1, 2, 3, 4] exprs=[col:1, col:2, col:2 AS a3, col:1 + col:3 AS a4]
+LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:2 AS a3, col:1 + col:3 AS a4]
   input: LogicalSelect
     input: LogicalGet A cols=[1, 2]
     filter: Expr col:1 + col:2 > 100 AND col:2 > 50
@@ -466,9 +466,9 @@ LogicalProjection cols=[1, 2, 3, 4] exprs=[col:1, col:2, col:2 AS a3, col:1 + co
                 Ok(filter_a1)
             },
             r#"
-LogicalProjection cols=[1] exprs=[col:1]
-  input: LogicalProjection cols=[1] exprs=[col:1]
-    input: LogicalProjection cols=[1] exprs=[col:1]
+LogicalProjection cols=[1] exprs: [col:1]
+  input: LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalProjection cols=[1] exprs: [col:1]
       input: LogicalSelect
         input: LogicalGet A cols=[1, 2]
         filter: Expr col:1 > 100
@@ -492,8 +492,8 @@ LogicalProjection cols=[1] exprs=[col:1]
                 Ok(filter_a1)
             },
             r#"
-LogicalProjection cols=[1] exprs=[col:1]
-  input: LogicalProjection cols=[1, 2] exprs=[col:1, col:2]
+LogicalProjection cols=[1] exprs: [col:1]
+  input: LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
     input: LogicalSelect
       input: LogicalGet A cols=[1, 2]
       filter: Expr col:1 > 100 AND col:2 > 100
@@ -595,7 +595,7 @@ LogicalJoin using=[(1, 4)]
             },
             r#"
 LogicalJoin using=[(1, 4)]
-  left: LogicalProjection cols=[1, 2] exprs=[col:1, col:2]
+  left: LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
     input: LogicalSelect
       input: LogicalGet A cols=[1, 2, 3]
       filter: Expr col:1 > 100
@@ -643,7 +643,7 @@ LogicalJoin using=[(1, 4)]
   left: LogicalSelect
     input: LogicalGet A cols=[1, 2, 3]
     filter: Expr col:1 > 100
-  right: LogicalProjection cols=[4, 5] exprs=[col:4, col:5]
+  right: LogicalProjection cols=[4, 5] exprs: [col:4, col:5]
     input: LogicalSelect
       input: LogicalGet B cols=[4, 5, 6]
       filter: Expr col:4 > 100
@@ -779,12 +779,11 @@ LogicalSelect
             },
             r#"
 LogicalAggregate
+  aggr_exprs: [col:1, sum(col:1)]
+  group_exprs: [col:1]
   input: LogicalSelect
     input: LogicalGet A cols=[1]
     filter: Expr col:1 > 100
-  : Expr col:1
-  : Expr sum(col:1)
-  : Expr col:1
 "#,
         )
     }
@@ -809,10 +808,9 @@ LogicalAggregate
             r#"
 LogicalSelect
   input: LogicalAggregate
+    aggr_exprs: [col:1, sum(col:1)]
+    group_exprs: [col:1]
     input: LogicalGet A cols=[1]
-    : Expr col:1
-    : Expr sum(col:1)
-    : Expr col:1
   filter: Expr col:2 > 100
 "#,
         )
@@ -838,13 +836,12 @@ LogicalSelect
             },
             r#"
 LogicalAggregate
-  input: LogicalProjection cols=[1] exprs=[col:1]
+  aggr_exprs: [col:1, sum(col:1)]
+  group_exprs: [col:1]
+  input: LogicalProjection cols=[1] exprs: [col:1]
     input: LogicalSelect
       input: LogicalGet A cols=[1]
       filter: Expr col:1 > 100
-  : Expr col:1
-  : Expr sum(col:1)
-  : Expr col:1
 "#,
         )
     }
