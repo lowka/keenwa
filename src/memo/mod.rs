@@ -592,6 +592,11 @@ pub trait MemoExprFormatter {
         }
     }
 
+    /// Writes child expressions.
+    fn write_exprs<T>(&mut self, name: &str, input: impl ExactSizeIterator<Item = impl AsRef<T>>)
+    where
+        T: MemoExpr;
+
     /// Writes a value of some attribute of a memo expression.
     fn write_value<D>(&mut self, name: &str, value: D)
     where
@@ -1178,11 +1183,22 @@ where
 
 pub(crate) struct StringMemoFormatter<'b> {
     buf: &'b mut String,
+    write_name: bool,
+    pos: usize,
 }
 
 impl<'b> StringMemoFormatter<'b> {
     pub fn new(buf: &'b mut String) -> Self {
-        StringMemoFormatter { buf }
+        let len = buf.len();
+        StringMemoFormatter {
+            buf,
+            write_name: true,
+            pos: len,
+        }
+    }
+
+    pub fn set_write_name(&mut self, value: bool) {
+        self.write_name = value;
     }
 
     pub fn push(&mut self, c: char) {
@@ -1192,15 +1208,28 @@ impl<'b> StringMemoFormatter<'b> {
     pub fn push_str(&mut self, s: &str) {
         self.buf.push_str(s);
     }
+
+    fn written(&self) -> bool {
+        self.pos != self.buf.len()
+    }
+
+    fn pad_value(&mut self) {
+        if self.pos != self.buf.len() {
+            self.buf.push(' ');
+        }
+    }
 }
 
 impl MemoExprFormatter for StringMemoFormatter<'_> {
     fn write_name(&mut self, name: &str) {
-        self.buf.push_str(name);
+        self.pos = self.buf.len();
+        if self.write_name {
+            self.buf.push_str(name);
+        }
     }
 
     fn write_source(&mut self, source: &str) {
-        self.buf.push(' ');
+        self.pad_value();
         self.buf.push_str(source);
     }
 
@@ -1208,7 +1237,7 @@ impl MemoExprFormatter for StringMemoFormatter<'_> {
     where
         T: MemoExpr,
     {
-        self.buf.push(' ');
+        self.pad_value();
         if !name.is_empty() {
             self.buf.push_str(name);
             self.buf.push('=');
@@ -1217,11 +1246,34 @@ impl MemoExprFormatter for StringMemoFormatter<'_> {
         self.buf.push_str(s.as_str());
     }
 
+    fn write_exprs<T>(&mut self, name: &str, input: impl ExactSizeIterator<Item = impl AsRef<T>>)
+    where
+        T: MemoExpr,
+    {
+        if input.len() == 0 {
+            return;
+        }
+        self.pad_value();
+        if !name.is_empty() {
+            self.buf.push_str(name);
+            self.buf.push('=');
+        }
+        self.buf.push('[');
+        for (i, expr) in input.enumerate() {
+            if i > 0 {
+                self.buf.push_str(", ");
+            }
+            let s = format_node_ref(expr.as_ref());
+            self.buf.push_str(s.as_str());
+        }
+        self.buf.push(']');
+    }
+
     fn write_value<D>(&mut self, name: &str, value: D)
     where
         D: Display,
     {
-        self.buf.push(' ');
+        self.pad_value();
         if !name.is_empty() {
             self.buf.push_str(name);
             self.buf.push('=');
@@ -1236,7 +1288,7 @@ impl MemoExprFormatter for StringMemoFormatter<'_> {
         if values.is_empty() {
             return;
         }
-        self.buf.push(' ');
+        self.pad_value();
         self.buf.push_str(name);
         self.buf.push_str("=[");
         self.push_str(values.iter().join(", ").as_str());
@@ -1266,6 +1318,17 @@ impl<'f, 'a> MemoExprFormatter for DisplayMemoExprFormatter<'f, 'a> {
         let s = format_node_ref(input.as_ref());
         self.fmt.write_char(' ').unwrap();
         self.fmt.write_str(s.as_str()).unwrap();
+    }
+
+    fn write_exprs<T>(&mut self, _name: &str, input: impl ExactSizeIterator<Item = impl AsRef<T>>)
+    where
+        T: MemoExpr,
+    {
+        for i in input {
+            let s = format_node_ref(i.as_ref());
+            self.fmt.write_char(' ').unwrap();
+            self.fmt.write_str(s.as_str()).unwrap();
+        }
     }
 
     fn write_value<D>(&mut self, _name: &str, _value: D)

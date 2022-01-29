@@ -45,11 +45,11 @@ fn rewrite(expr: &RelNode) -> RelNode {
                     //
                     // For example:
                     //
-                    // Projection: cols=[1, 2] exprs=[col1: 1, col:2]
-                    //       Projection: cols=[1, 2] exprs=[col1: 1, col:1 as c2]
+                    // Projection: cols=[1, 2] exprs: [col1: 1, col:2] # Where col:2 = Expr col:1 as c2
+                    //   Projection: cols=[1, 2] exprs: [col1: 1, col:1 as c2]
                     //
                     // gets rewritten into:
-                    //      Projection: cols=[1, 2] exprs=[col1: 1, col:1 as c2]
+                    //   Projection: cols=[1, 2] exprs: [col1: 1, col:1 as c2]
                     //
                     let mut new_projection = projection.clone();
                     new_projection.input = child_input.clone();
@@ -128,7 +128,7 @@ mod test {
                 Ok(project)
             },
             r#"
-LogicalProjection cols=[1, 2, 3] exprs=[col:1, col:2, col:2 AS c3]
+LogicalProjection cols=[1, 2, 3] exprs: [col:1, col:2, col:2 AS c3]
   input: LogicalGet A cols=[1, 2]
 "#,
         )
@@ -160,7 +160,7 @@ LogicalGet A cols=[1, 2]
                 Ok(project)
             },
             r#"
-LogicalProjection cols=[1, 3] exprs=[col:1, col:2 AS c2]
+LogicalProjection cols=[1, 3] exprs: [col:1, col:2 AS c2]
   input: LogicalGet A cols=[1, 2]
 "#,
         )
@@ -179,7 +179,7 @@ LogicalProjection cols=[1, 3] exprs=[col:1, col:2 AS c2]
                 Ok(project)
             },
             r#"
-LogicalProjection cols=[1, 2, 3] exprs=[col:1, col:2, col:2 AS c3]
+LogicalProjection cols=[1, 2, 3] exprs: [col:1, col:2, col:2 AS c3]
   input: LogicalGet A cols=[1, 2]
 "#,
         );
@@ -196,8 +196,8 @@ LogicalProjection cols=[1, 2, 3] exprs=[col:1, col:2, col:2 AS c3]
                 Ok(project)
             },
             r#"
-LogicalProjection cols=[1, 2, 3] exprs=[col:1, col:2, col:3]
-  input: LogicalProjection cols=[2, 1, 3] exprs=[col:2, col:1, col:2 AS c3]
+LogicalProjection cols=[1, 2, 3] exprs: [col:1, col:2, col:3]
+  input: LogicalProjection cols=[2, 1, 3] exprs: [col:2, col:1, col:2 AS c3]
     input: LogicalGet A cols=[1, 2]
 "#,
         )
@@ -214,7 +214,7 @@ LogicalProjection cols=[1, 2, 3] exprs=[col:1, col:2, col:3]
                 Ok(project)
             },
             r#"
-LogicalProjection cols=[1, 2] exprs=[col:1, col:2]
+LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
   input: LogicalGet A cols=[1, 2, 3]
 "#,
         );
@@ -233,7 +233,7 @@ LogicalProjection cols=[1, 2] exprs=[col:1, col:2]
             },
             //
             r#"
-LogicalProjection cols=[1, 4] exprs=[col:1, col:2 AS c2]
+LogicalProjection cols=[1, 4] exprs: [col:1, col:2 AS c2]
   input: LogicalGet A cols=[1, 2, 3]
 "#,
         )
@@ -251,7 +251,7 @@ LogicalProjection cols=[1, 4] exprs=[col:1, col:2 AS c2]
                 Ok(project)
             },
             r#"
-LogicalProjection cols=[1, 2, 4, 5] exprs=[col:1, col:2, col:2 AS c3, col:1 + col:2]
+LogicalProjection cols=[1, 2, 4, 5] exprs: [col:1, col:2, col:2 AS c3, col:1 + col:2]
   input: LogicalGet A cols=[1, 2, 3]
 "#,
         )
@@ -269,8 +269,8 @@ LogicalProjection cols=[1, 2, 4, 5] exprs=[col:1, col:2, col:2 AS c3, col:1 + co
                 Ok(project)
             },
             r#"
-LogicalProjection cols=[1, 2, 5] exprs=[col:1, col:2, col:4 AS c3]
-  input: LogicalProjection cols=[1, 2, 4] exprs=[col:1, col:2, col:1 + col:2 AS sum]
+LogicalProjection cols=[1, 2, 5] exprs: [col:1, col:2, col:4 AS c3]
+  input: LogicalProjection cols=[1, 2, 4] exprs: [col:1, col:2, col:1 + col:2 AS sum]
     input: LogicalGet A cols=[1, 2, 3]
 "#,
         )
@@ -291,8 +291,8 @@ LogicalProjection cols=[1, 2, 5] exprs=[col:1, col:2, col:4 AS c3]
                 Ok(project)
             },
             r#"
-LogicalProjection cols=[1, 2, 6] exprs=[col:1, col:2, SubQuery 02]
-  input: LogicalProjection cols=[1, 2, 5] exprs=[col:1, col:2, SubQuery 02]
+LogicalProjection cols=[1, 2, 6] exprs: [col:1, col:2, SubQuery 02]
+  input: LogicalProjection cols=[1, 2, 5] exprs: [col:1, col:2, SubQuery 02]
     input: LogicalGet A cols=[1, 2]
 "#,
         )
@@ -315,10 +315,9 @@ LogicalProjection cols=[1, 2, 6] exprs=[col:1, col:2, SubQuery 02]
             },
             r#"
 LogicalAggregate
+  aggr_exprs: [col:1, sum(col:1)]
+  group_exprs: [col:1]
   input: LogicalGet A cols=[1, 2]
-  : Expr col:1
-  : Expr sum(col:1)
-  : Expr col:1
 "#,
         )
     }
@@ -343,10 +342,9 @@ LogicalAggregate
             },
             r#"
 LogicalAggregate
+  aggr_exprs: [col:1, sum(col:1)]
+  group_exprs: [col:1]
   input: LogicalGet A cols=[1, 2]
-  : Expr col:1
-  : Expr sum(col:1)
-  : Expr col:1
 "#,
         )
     }
@@ -368,12 +366,11 @@ LogicalAggregate
                 Ok(project)
             },
             r#"
-LogicalProjection cols=[4, 5] exprs=[col:3 AS s, col:1 + col:1 AS s2]
+LogicalProjection cols=[4, 5] exprs: [col:3 AS s, col:1 + col:1 AS s2]
   input: LogicalAggregate
+    aggr_exprs: [col:1, sum(col:1)]
+    group_exprs: [col:1]
     input: LogicalGet A cols=[1, 2]
-    : Expr col:1
-    : Expr sum(col:1)
-    : Expr col:1
 "#,
         );
 
@@ -394,12 +391,11 @@ LogicalProjection cols=[4, 5] exprs=[col:3 AS s, col:1 + col:1 AS s2]
                 Ok(project)
             },
             r#"
-LogicalProjection cols=[4, 5] exprs=[col:3 AS s, col:1 + col:1 AS s2]
+LogicalProjection cols=[4, 5] exprs: [col:3 AS s, col:1 + col:1 AS s2]
   input: LogicalAggregate
+    aggr_exprs: [col:1, sum(col:1)]
+    group_exprs: [col:1]
     input: LogicalGet A cols=[1, 2]
-    : Expr col:1
-    : Expr sum(col:1)
-    : Expr col:1
 "#,
         )
     }
@@ -435,7 +431,7 @@ LogicalJoin using=[(1, 3)]
                 Ok(projection)
             },
             r#"
-LogicalProjection cols=[1, 3, 4] exprs=[col:1, col:3, col:4]
+LogicalProjection cols=[1, 3, 4] exprs: [col:1, col:3, col:4]
   input: LogicalJoin using=[(1, 3)]
     left: LogicalGet A cols=[1, 2]
     right: LogicalGet B cols=[3, 4]
@@ -452,7 +448,7 @@ LogicalProjection cols=[1, 3, 4] exprs=[col:1, col:3, col:4]
                 Ok(projection)
             },
             r#"
-LogicalProjection cols=[1, 3, 5] exprs=[col:1, col:3, col:1 AS c1]
+LogicalProjection cols=[1, 3, 5] exprs: [col:1, col:3, col:1 AS c1]
   input: LogicalJoin using=[(1, 3)]
     left: LogicalGet A cols=[1, 2]
     right: LogicalGet B cols=[3, 4]
@@ -470,7 +466,7 @@ LogicalProjection cols=[1, 3, 5] exprs=[col:1, col:3, col:1 AS c1]
                 Ok(projection)
             },
             r#"
-LogicalProjection cols=[1, 5] exprs=[col:1, col:3 AS c1]
+LogicalProjection cols=[1, 5] exprs: [col:1, col:3 AS c1]
   input: LogicalJoin using=[(1, 3)]
     left: LogicalGet A cols=[1, 2]
     right: LogicalGet B cols=[3, 4]
@@ -491,7 +487,7 @@ LogicalProjection cols=[1, 5] exprs=[col:1, col:3 AS c1]
                 Ok(projection)
             },
             r#"
-LogicalProjection cols=[1, 5] exprs=[col:1, col:3 AS c1]
+LogicalProjection cols=[1, 5] exprs: [col:1, col:3 AS c1]
   input: LogicalJoin using=[(1, 3)]
     left: LogicalGet A cols=[1, 2]
     right: LogicalGet B cols=[3, 4]
@@ -510,7 +506,7 @@ LogicalProjection cols=[1, 5] exprs=[col:1, col:3 AS c1]
                 Ok(project)
             },
             r#"
-LogicalProjection cols=[1, 2] exprs=[col:1, col:2]
+LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
   input: LogicalSelect
     input: LogicalGet A cols=[1, 2]
     filter: Expr col:1 = col:2
@@ -528,7 +524,7 @@ LogicalProjection cols=[1, 2] exprs=[col:1, col:2]
                 Ok(project)
             },
             r#"
-LogicalProjection cols=[1] exprs=[1]
+LogicalProjection cols=[1] exprs: [1]
   input: LogicalEmpty return_one_row=true
 "#,
         )

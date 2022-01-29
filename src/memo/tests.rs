@@ -359,9 +359,7 @@ mod test {
                     }
                     TestRelExpr::Nodes { inputs } => {
                         f.write_name("Nodes");
-                        for input in inputs {
-                            f.write_expr("", input);
-                        }
+                        f.write_exprs("", inputs.iter());
                     }
                     TestRelExpr::Filter { input, filter } => {
                         f.write_name("Filter");
@@ -582,7 +580,7 @@ mod test {
         expect_memo(
             &memo,
             r#"
-02 Nodes 00 01
+02 Nodes [00, 01]
 01 Leaf b
 00 Leaf a
 "#,
@@ -618,7 +616,7 @@ mod test {
         expect_memo(
             &memo,
             r#"
-03 Nodes 01 02 01
+03 Nodes [01, 02, 01]
 02 Leaf b
 01 Node 00
 00 Leaf a
@@ -649,7 +647,7 @@ mod test {
         expect_memo(
             &memo,
             r#"
-02 Nodes 00 01 00
+02 Nodes [00, 01, 00]
 01 Leaf b
 00 Leaf a
 "#,
@@ -922,5 +920,34 @@ mod test {
             let added = added.borrow();
             assert_eq!(added.len(), 3, "added duplicates. memo:\n{}", format_memo(&memo));
         }
+    }
+
+    #[test]
+    fn test_formatter() {
+        let mut memo = new_memo();
+
+        let node_a = TestOperator::from(TestRelExpr::Leaf("a"));
+        let node_a = memo.insert_group(node_a);
+
+        let node = TestOperator::from(TestRelExpr::Node {
+            input: TestOperator::from(TestRelExpr::Leaf("b")).into(),
+        });
+        let node = memo.insert_group(node);
+
+        let nodes = TestOperator::from(TestRelExpr::Nodes {
+            inputs: vec![node_a.clone().into(), node.clone().into()],
+        });
+        let nodes = memo.insert_group(nodes);
+
+        fn format_expr(expr: &TestOperator, expected: &str) {
+            let mut buf = String::new();
+            let mut fmt = StringMemoFormatter::new(&mut buf);
+            TestOperator::format_expr(expr.expr(), expr.props(), &mut fmt);
+            assert_eq!(buf, expected, "expr format")
+        }
+
+        format_expr(&node_a, "Leaf a");
+        format_expr(&node, "Node 01");
+        format_expr(&nodes, "Nodes [00, 02]");
     }
 }

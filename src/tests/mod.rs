@@ -37,7 +37,9 @@ fn test_get() {
 
     tester.optimize(
         r#"
-01 Projection [00] cols=[1, 2]
+03 Projection [00 01 02] cols=[1, 2]
+02 Expr col:2
+01 Expr col:1
 00 Scan A cols=[1, 2]
 "#,
     );
@@ -65,7 +67,10 @@ fn test_join() {
 
     tester.optimize(
         r#"
-03 Projection [02] cols=[1, 2, 3]
+06 Projection [02 03 04 05] cols=[1, 2, 3]
+05 Expr col:3
+04 Expr col:2
+03 Expr col:1
 02 HashJoin [00 01] using=[(1, 3)]
 01 Scan B cols=[3, 4]
 00 Scan A cols=[1, 2]
@@ -741,7 +746,10 @@ fn test_nested_loop_join() {
 
     tester.optimize(
         r#"
-04 Projection [03] cols=[1, 2, 3]
+07 Projection [03 04 05 06] cols=[1, 2, 3]
+06 Expr col:3
+05 Expr col:2
+04 Expr col:1
 03 NestedLoopJoin [00 01 02]
 02 Expr col:1 > 100
 01 Scan B cols=[3, 4]
@@ -764,8 +772,9 @@ fn test_select_1() {
 
     tester.optimize(
         r#"
-02 Select [01]
-01 Projection [00] cols=[1]
+03 Select [02]
+02 Projection [00 01] cols=[1]
+01 Expr 1
 00 Empty return_one_row=true
 "#,
     );

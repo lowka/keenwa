@@ -145,18 +145,23 @@ impl PhysicalExpr {
 #[derive(Debug, Clone)]
 pub struct Projection {
     pub input: RelNode,
+    pub exprs: Vec<ScalarNode>,
     pub columns: Vec<ColumnId>,
 }
 
 impl Projection {
     fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
         visitor.visit_rel(expr_ctx, &self.input);
+        for expr in self.exprs.iter() {
+            visitor.visit_scalar(expr_ctx, expr);
+        }
     }
 
     fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(1, "Projection");
+        inputs.expect_len(1 + self.exprs.len(), "Projection");
         Projection {
             input: inputs.rel_node(),
+            exprs: inputs.scalar_nodes(self.exprs.len()),
             columns: self.columns.clone(),
         }
     }
@@ -166,14 +171,18 @@ impl Projection {
     }
 
     fn num_children(&self) -> usize {
-        1
+        1 + self.exprs.len()
     }
 
     fn get_child(&self, i: usize) -> Option<&Operator> {
-        if i == 0 {
-            Some(self.input.mexpr())
-        } else {
-            None
+        let num_exprs = self.exprs.len();
+        match i {
+            0 => Some(self.input.mexpr()),
+            _ if i >= 1 && i < num_exprs + 1 => {
+                let expr = &self.exprs[i - 1];
+                Some(expr.mexpr())
+            }
+            _ => None,
         }
     }
 
@@ -183,6 +192,7 @@ impl Projection {
     {
         f.write_name("Projection");
         f.write_expr("input", &self.input);
+        f.write_exprs("exprs", self.exprs.iter());
         f.write_values("cols", &self.columns);
     }
 }
@@ -297,12 +307,8 @@ impl HashAggregate {
     {
         f.write_name("HashAggregate");
         f.write_expr("input", &self.input);
-        for aggr_expr in self.aggr_exprs.iter() {
-            f.write_expr("", aggr_expr);
-        }
-        for group_expr in self.group_exprs.iter() {
-            f.write_expr("", group_expr);
-        }
+        f.write_exprs("aggr_exprs", self.aggr_exprs.iter());
+        f.write_exprs("group_exprs", self.group_exprs.iter());
     }
 }
 
