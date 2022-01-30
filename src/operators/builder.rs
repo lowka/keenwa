@@ -11,7 +11,8 @@ use crate::operators::relational::logical::{
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::{AggregateFunction, BinaryOp, Expr, ExprRewriter};
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
-use crate::operators::{ExprMemo, Operator, OperatorExpr};
+use crate::operators::{ExprMemo, Operator, OperatorExpr, Properties, RelationalProperties};
+use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::OrderingChoice;
 use itertools::Itertools;
@@ -92,7 +93,8 @@ pub struct OperatorBuilder {
     callback: Rc<dyn OperatorCallback>,
     catalog: CatalogRef,
     metadata: Rc<MutableMetadata>,
-    operator: Option<(Operator, OperatorScope)>,
+    scope: Option<OperatorScope>,
+    operator: Option<Operator>,
     sub_query_builder: bool,
 }
 
@@ -103,6 +105,7 @@ impl OperatorBuilder {
             callback,
             catalog,
             metadata,
+            scope: None,
             operator: None,
             sub_query_builder: false,
         }
@@ -110,12 +113,21 @@ impl OperatorBuilder {
 
     /// Creates a new builder that shares all properties of the given builder
     /// and uses the the given operator as its current on operator tree.
-    fn from_builder(builder: &OperatorBuilder, operator: Operator, scope: OperatorScope) -> Self {
+    fn from_builder(builder: &OperatorBuilder, operator: Operator, columns: Vec<(String, ColumnId)>) -> Self {
+        let scope = if let Some(scope) = &builder.scope {
+            // Set columns if scope exists.
+            scope.with_new_columns(columns)
+        } else {
+            // If the given builder has does not have the scope yet
+            // use create a new scope with the given columns.
+            OperatorScope::from_columns(columns)
+        };
         OperatorBuilder {
             callback: builder.callback.clone(),
             catalog: builder.catalog.clone(),
             metadata: builder.metadata.clone(),
-            operator: Some((operator, scope)),
+            scope: Some(scope),
+            operator: Some(operator),
             sub_query_builder: builder.sub_query_builder,
         }
     }
@@ -156,7 +168,7 @@ impl OperatorBuilder {
             columns: column_ids,
         });
 
-        self.add_operator(expr, OperatorScope { columns });
+        self.add_operator(expr, columns);
         Ok(self)
     }
 
@@ -174,7 +186,7 @@ impl OperatorBuilder {
 
         let expr = LogicalExpr::Select(LogicalSelect { input, filter });
 
-        self.add_operator(expr, scope);
+        self.add_operator_and_scope(expr, scope);
         Ok(self)
     }
 
@@ -219,12 +231,7 @@ impl OperatorBuilder {
             columns: column_ids,
         });
 
-        self.add_operator(
-            expr,
-            OperatorScope {
-                columns: output_columns,
-            },
-        );
+        self.add_operator(expr, output_columns);
         Ok(self)
     }
 
@@ -257,7 +264,7 @@ impl OperatorBuilder {
             columns_ids.push((left_id, right_id));
         }
 
-        let mut output_columns = left_scope.columns;
+        let mut output_columns = left_scope.columns.clone();
         output_columns.extend_from_slice(&right_scope.columns);
 
         let condition = JoinCondition::using(columns_ids);
@@ -268,12 +275,7 @@ impl OperatorBuilder {
             condition,
         });
 
-        self.add_operator(
-            expr,
-            OperatorScope {
-                columns: output_columns,
-            },
-        );
+        self.add_operator(expr, output_columns);
         Ok(self)
     }
 
@@ -282,11 +284,12 @@ impl OperatorBuilder {
         let (left, left_scope) = self.rel_node()?;
         let (right, right_scope) = right.rel_node()?;
 
-        let mut output_columns = left_scope.columns;
-        output_columns.extend_from_slice(&right_scope.columns);
+        let mut columns = left_scope.columns;
+        columns.extend_from_slice(&right_scope.columns);
 
         let scope = OperatorScope {
-            columns: output_columns,
+            columns,
+            parent: left_scope.parent.clone(),
         };
 
         let mut rewriter = RewriteExprs::new(&scope);
@@ -300,39 +303,41 @@ impl OperatorBuilder {
             condition,
         });
 
-        self.add_operator(expr, scope);
+        self.add_operator_and_scope(expr, scope);
         Ok(self)
     }
 
     /// Set ordering requirements for the current node of an operator tree.
     pub fn order_by(mut self, ordering: impl Into<OrderingOptions>) -> Result<Self, OptimizerError> {
-        if let Some((operator, scope)) = self.operator.take() {
-            let OrderingOptions { options } = ordering.into();
-            let mut ordering_columns = Vec::with_capacity(options.len());
+        match (self.operator.take(), self.scope.take()) {
+            (Some(operator), Some(scope)) => {
+                let OrderingOptions { options } = ordering.into();
+                let mut ordering_columns = Vec::with_capacity(options.len());
 
-            for option in options {
-                let OrderingOption {
-                    expr,
-                    descending: _descending,
-                } = option;
-                let mut rewriter = RewriteExprs::new(&scope);
-                let expr = expr.rewrite(&mut rewriter)?;
-                let column_id = if let ScalarExpr::Column(id) = expr {
-                    id
-                } else {
-                    let expr_type = resolve_expr_type(&expr, &self.metadata);
-                    let column_meta = ColumnMetadata::new_synthetic_column("".into(), expr_type, Some(expr));
-                    self.metadata.add_column(column_meta)
-                };
-                ordering_columns.push(column_id);
+                for option in options {
+                    let OrderingOption {
+                        expr,
+                        descending: _descending,
+                    } = option;
+                    let mut rewriter = RewriteExprs::new(&scope);
+                    let expr = expr.rewrite(&mut rewriter)?;
+                    let column_id = if let ScalarExpr::Column(id) = expr {
+                        id
+                    } else {
+                        let expr_type = resolve_expr_type(&expr, &self.metadata);
+                        let column_meta = ColumnMetadata::new_synthetic_column("".into(), expr_type, Some(expr));
+                        self.metadata.add_column(column_meta)
+                    };
+                    ordering_columns.push(column_id);
+                }
+
+                let ordering = OrderingChoice::new(ordering_columns);
+                let required = PhysicalProperties::new(ordering);
+                self.operator = Some(operator.with_required(required));
+                self.scope = Some(scope);
+                Ok(self)
             }
-
-            let ordering = OrderingChoice::new(ordering_columns);
-            let required = PhysicalProperties::new(ordering);
-            self.operator = Some((operator.with_required(required), scope));
-            Ok(self)
-        } else {
-            Err(OptimizerError::Internal("No input operator".to_string()))
+            _ => Err(OptimizerError::Internal("No input operator".to_string())),
         }
     }
 
@@ -361,7 +366,7 @@ impl OperatorBuilder {
             ));
         };
         let expr = LogicalExpr::Empty(LogicalEmpty { return_one_row });
-        self.add_operator(expr, OperatorScope { columns: vec![] });
+        self.add_operator(expr, vec![]);
         Ok(self)
     }
 
@@ -380,6 +385,7 @@ impl OperatorBuilder {
             callback: self.callback.clone(),
             catalog: self.catalog.clone(),
             metadata: self.metadata.clone(),
+            scope: self.scope.as_ref().map(|scope| scope.new_child_scope()),
             operator: None,
             sub_query_builder: true,
         }
@@ -391,7 +397,7 @@ impl OperatorBuilder {
         if self.sub_query_builder {
             Err(OptimizerError::Internal("Use to_sub_query() to create sub queries".to_string()))
         } else {
-            let (operator, _) = self.operator.expect("No operator");
+            let operator = self.operator.expect("No operator");
             Ok(operator)
         }
     }
@@ -464,20 +470,35 @@ impl OperatorBuilder {
             }),
         };
 
-        self.add_operator(expr, OperatorScope { columns });
+        self.add_operator(expr, columns);
         Ok(())
     }
 
-    fn add_operator(&mut self, expr: LogicalExpr, output_columns: OperatorScope) {
+    fn add_operator(&mut self, expr: LogicalExpr, columns: Vec<(String, ColumnId)>) {
         let operator = Operator::from(OperatorExpr::from(expr));
-        self.operator = Some((operator, output_columns));
+        self.operator = Some(operator);
+
+        if let Some(mut scope) = self.scope.take() {
+            scope.columns = columns;
+            self.scope = Some(scope);
+        } else {
+            self.scope = Some(OperatorScope::from_columns(columns));
+        }
+    }
+
+    fn add_operator_and_scope(&mut self, expr: LogicalExpr, scope: OperatorScope) {
+        let operator = Operator::from(OperatorExpr::from(expr));
+        self.operator = Some(operator);
+        self.scope = Some(scope);
     }
 
     fn rel_node(&mut self) -> Result<(RelNode, OperatorScope), OptimizerError> {
-        let (operator, scope) = self
+        let operator = self
             .operator
             .take()
             .ok_or_else(|| OptimizerError::Internal("No input operator".to_string()))?;
+
+        let scope = self.scope.take().ok_or_else(|| OptimizerError::Internal("No scope".to_string()))?;
 
         let rel_node = self.callback.new_rel_expr(operator);
         Ok((rel_node, scope))
@@ -491,21 +512,12 @@ impl OperatorBuilder {
 
 impl Debug for OperatorBuilder {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        //[E0658]: trait upcasting coercion is experimental
-        let catalog = format!("{:?}", self.catalog.as_ref());
-        if let Some((operator, scope)) = self.operator.as_ref() {
-            f.debug_struct("OperatorBuilder")
-                .field("catalog", &catalog)
-                .field("metadata", self.metadata.as_ref())
-                .field("operator", operator)
-                .field("scope", scope)
-                .finish()
-        } else {
-            f.debug_struct("OperatorBuilder")
-                .field("catalog", &catalog)
-                .field("metadata", self.metadata.as_ref())
-                .finish()
-        }
+        f.debug_struct("OperatorBuilder")
+            .field("catalog", &self.catalog)
+            .field("metadata", self.metadata.as_ref())
+            .field("operator", &self.operator)
+            .field("scope", &self.scope)
+            .finish()
     }
 }
 
@@ -514,6 +526,70 @@ impl Debug for OperatorBuilder {
 struct OperatorScope {
     // (alias, column_id)
     columns: Vec<(String, ColumnId)>,
+    parent: Option<Rc<OperatorScope>>,
+}
+
+impl OperatorScope {
+    fn new() -> Self {
+        OperatorScope {
+            columns: vec![],
+            parent: None,
+        }
+    }
+
+    fn from_columns(columns: Vec<(String, ColumnId)>) -> Self {
+        OperatorScope { columns, parent: None }
+    }
+
+    fn new_child_scope(&self) -> Self {
+        OperatorScope {
+            parent: Some(Rc::new(self.clone())),
+            columns: vec![],
+        }
+    }
+
+    fn with_new_columns(&self, columns: Vec<(String, ColumnId)>) -> Self {
+        OperatorScope {
+            columns,
+            parent: self.parent.clone(),
+        }
+    }
+
+    fn find_column_by_name(&self, name: &str) -> Option<ColumnId> {
+        let by_name = |a: &(String, ColumnId)| a.0 == name;
+        self.find_by(&by_name)
+    }
+
+    fn find_column_by_id(&self, id: ColumnId) -> Option<ColumnId> {
+        let by_id = |a: &(String, ColumnId)| a.1 == id;
+        self.find_by(&by_id)
+    }
+
+    fn find_by<F>(&self, f: &F) -> Option<ColumnId>
+    where
+        F: Fn(&(String, ColumnId)) -> bool,
+    {
+        let r = self.find_internal(f, &self.columns);
+        r.or_else(|| {
+            let mut parent_scope = &self.parent;
+            while let Some(p) = parent_scope {
+                let r = self.find_internal(f, &p.columns);
+                if r.is_some() {
+                    return r;
+                } else {
+                    parent_scope = &p.parent;
+                }
+            }
+            None
+        })
+    }
+
+    fn find_internal<F>(&self, f: &F, columns: &[(String, ColumnId)]) -> Option<ColumnId>
+    where
+        F: Fn(&(String, ColumnId)) -> bool,
+    {
+        columns.iter().find(|c| (f)(c)).map(|(_, id)| *id)
+    }
 }
 
 struct RewriteExprs<'a> {
@@ -542,17 +618,17 @@ impl ExprRewriter<RelNode> for RewriteExprs<'_> {
     fn rewrite(&mut self, expr: ScalarExpr) -> Result<ScalarExpr, Self::Error> {
         match expr {
             ScalarExpr::Column(column_id) => {
-                let exists = self.scope.columns.iter().any(|(_, id)| column_id == *id);
+                let exists = self.scope.find_column_by_id(column_id).is_some();
                 if exists {
                     return Err(OptimizerError::Internal(format!(
-                        "Projection: Unexpected column : {}. Input columns: {:?}",
+                        "Unexpected column id: {}. Input columns: {:?}",
                         column_id, self.scope.columns
                     )));
                 }
                 Ok(expr)
             }
             ScalarExpr::ColumnName(ref column_name) => {
-                let column_id = self.scope.columns.iter().find(|(name, _)| column_name == name).map(|(_, id)| *id);
+                let column_id = self.scope.find_column_by_name(column_name);
                 let column_id = column_id
                     .or_else(|| self.projection.iter().find(|(name, _)| column_name == name).map(|(_, id)| *id));
 
@@ -560,8 +636,10 @@ impl ExprRewriter<RelNode> for RewriteExprs<'_> {
                     Some(column_id) => Ok(ScalarExpr::Column(column_id)),
                     None => {
                         return Err(OptimizerError::Internal(format!(
-                            "Projection: Unexpected column : {}. Input columns: {:?}",
-                            column_name, self.scope.columns
+                            "Unexpected column: {}. Input columns: {:?}, Outer: {:?}",
+                            column_name,
+                            self.scope.columns,
+                            self.scope.parent.as_ref().map(|s| &s.columns),
                         )));
                     }
                 }
@@ -691,13 +769,7 @@ impl AggregateBuilder<'_> {
         });
         let operator = Operator::from(OperatorExpr::from(aggregate));
 
-        Ok(OperatorBuilder::from_builder(
-            self.builder,
-            operator,
-            OperatorScope {
-                columns: output_columns,
-            },
-        ))
+        Ok(OperatorBuilder::from_builder(self.builder, operator, output_columns))
     }
 }
 
@@ -1179,6 +1251,51 @@ Memo:
   00 LogicalGet A cols=[1, 2, 3]
 "#,
         );
+    }
+
+    #[test]
+    fn test_outer_columns_in_sub_query() {
+        let mut tester = OperatorBuilderTester::new();
+        tester.build_operator(|builder| {
+            let filter = ScalarExpr::BinaryExpr {
+                lhs: Box::new(ScalarExpr::ColumnName("b1".into())),
+                op: BinaryOp::Eq,
+                rhs: Box::new(ScalarExpr::ColumnName("a1".into())),
+            };
+
+            // SELECT a1, (SELECT b1 WHERE B b1=a1) FROM A
+            let from_a = builder.clone().get("A", vec!["a1", "a2", "a3"])?;
+            let b1 = from_a
+                .clone()
+                .sub_query_builder()
+                .get("B", vec!["b1"])?
+                .select(Some(filter))?
+                .to_sub_query()?;
+            let project = from_a.project(vec![ScalarExpr::ColumnName("a1".into()), b1])?;
+
+            project.build()
+        });
+        tester.expect_expr(
+            r#"
+LogicalProjection cols=[1, 5] exprs: [col:1, SubQuery 02]
+  input: LogicalGet A cols=[1, 2, 3]
+  output cols: [1, 5]
+Metadata:
+  col:1 A.a1 Int32
+  col:2 A.a2 Int32
+  col:3 A.a3 Int32
+  col:4 B.b1 Int32
+  col:5 ?column? Int32, expr: SubQuery 02
+Memo:
+  06 LogicalProjection input=03 exprs=[04, 05] cols=[1, 5]
+  05 Expr SubQuery 02
+  04 Expr col:1
+  03 LogicalGet A cols=[1, 2, 3]
+  02 LogicalSelect input=00 filter=01
+  01 Expr col:4 = col:1
+  00 LogicalGet B cols=[4]
+"#,
+        )
     }
 
     struct OperatorBuilderTester {
