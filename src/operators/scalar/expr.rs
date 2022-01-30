@@ -364,11 +364,11 @@ impl TryFrom<&str> for AggregateFunction {
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         match value {
-            "avg" => Ok(AggregateFunction::Avg),
-            "count" => Ok(AggregateFunction::Count),
-            "max" => Ok(AggregateFunction::Max),
-            "min" => Ok(AggregateFunction::Min),
-            "sum" => Ok(AggregateFunction::Sum),
+            _ if value.eq_ignore_ascii_case("avg") => Ok(AggregateFunction::Avg),
+            _ if value.eq_ignore_ascii_case("count") => Ok(AggregateFunction::Count),
+            _ if value.eq_ignore_ascii_case("max") => Ok(AggregateFunction::Max),
+            _ if value.eq_ignore_ascii_case("min") => Ok(AggregateFunction::Min),
+            _ if value.eq_ignore_ascii_case("sum") => Ok(AggregateFunction::Sum),
             _ => Err(()),
         }
     }
@@ -601,6 +601,22 @@ mod test {
 
         assert_eq!(rewriter.visited, 2);
         assert_eq!(rewriter.rewritten, 1);
+    }
+
+    #[test]
+    fn aggr_func_try_from_is_case_insensitive() {
+        fn expect_parsed(s: &str, expected: AggregateFunction) {
+            let f = AggregateFunction::try_from(s)
+                .ok()
+                .unwrap_or_else(|| panic!("Failed to parse string: {}", s));
+            assert_eq!(f, expected);
+        }
+
+        expect_parsed("Avg", AggregateFunction::Avg);
+        expect_parsed("CoUNT", AggregateFunction::Count);
+        expect_parsed("MAX", AggregateFunction::Max);
+        expect_parsed("min", AggregateFunction::Min);
+        expect_parsed("Sum", AggregateFunction::Sum);
     }
 
     fn expect_traversal_order(expr: &Expr, expected: Vec<&str>) {
