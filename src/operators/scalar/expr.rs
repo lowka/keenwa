@@ -1,6 +1,7 @@
 use crate::datatypes::DataType;
 use crate::memo::MemoExprFormatter;
 use crate::meta::ColumnId;
+use crate::operators::scalar::expr::Expr::BinaryExpr;
 use crate::operators::scalar::value::ScalarValue;
 use itertools::Itertools;
 use std::convert::TryFrom;
@@ -13,22 +14,38 @@ pub enum Expr<T>
 where
     T: NestedExpr,
 {
+    /// A column reference expression. In contrast to [column name expression](Self::ColumnName) it stores an internal identifier.
+    // ???: Make Expr generic over column id.
     Column(ColumnId),
-    /// OperatorBuilder replaces column(name) expressions with column(id) expressions.
+    /// A column reference expression. The optimizer replaces such expressions with [column(id)](Self::Column) expressions.
     ColumnName(String),
+    /// A scalar value.
     Scalar(ScalarValue),
+    /// A binary expression (eg. 5 + 1).
     BinaryExpr {
+        /// The left operand.
         lhs: Box<Expr<T>>,
+        /// The operator.
         op: BinaryOp,
+        /// The right operand.
         rhs: Box<Expr<T>>,
     },
+    /// Negation of an expression.
     Not(Box<Expr<T>>),
+    /// An expression with the given name (eg. 1 + 1 as two).
     Alias(Box<Expr<T>>, String),
+    /// An aggregate expression.
     Aggregate {
+        /// The aggregate function.
         func: AggregateFunction,
+        /// A list of arguments.
         args: Vec<Expr<T>>,
+        /// A filter expression. Specifies a condition which selects input rows used by this aggregate expression.
+        /// (eg. `sum(a) FILTER (WHERE a > 10)`).
         filter: Option<Box<Expr<T>>>,
     },
+    /// A subquery expression.
+    //TODO: Implement table subquery operators such as ALL, ANY, SOME, EXISTS, UNIQUE.
     SubQuery(T),
 }
 
@@ -211,6 +228,89 @@ where
             }
         }
     }
+
+    /// Returns `this_expr as name` expression.
+    pub fn alias(self, name: &str) -> Self {
+        Expr::Alias(Box::new(self), name.to_owned())
+    }
+
+    /// Returns `this_expr AND rhs` expression.
+    pub fn and(self, rhs: Expr<T>) -> Self {
+        self.binary_expr(BinaryOp::And, rhs)
+    }
+
+    /// Returns `this_expr OR rhs` expression.
+    pub fn or(self, rhs: Expr<T>) -> Self {
+        self.binary_expr(BinaryOp::Or, rhs)
+    }
+
+    /// Returns `!this_expr` expression.
+    pub fn not(self) -> Self {
+        Expr::Not(Box::new(self))
+    }
+
+    /// Returns `this_expr = rhs` expression.
+    pub fn eq(self, rhs: Expr<T>) -> Self {
+        self.binary_expr(BinaryOp::Eq, rhs)
+    }
+
+    /// Returns `this_expr != rhs` expression.
+    pub fn ne(self, rhs: Expr<T>) -> Self {
+        self.binary_expr(BinaryOp::NotEq, rhs)
+    }
+
+    /// Returns `this_expr < rhs` expression.
+    pub fn lt(self, rhs: Expr<T>) -> Self {
+        self.binary_expr(BinaryOp::Lt, rhs)
+    }
+
+    /// Returns `this_expr <= rhs` expression.
+    pub fn lte(self, rhs: Expr<T>) -> Self {
+        self.binary_expr(BinaryOp::LtEq, rhs)
+    }
+
+    /// Returns `this_expr > rhs` expression.
+    pub fn gt(self, rhs: Expr<T>) -> Self {
+        self.binary_expr(BinaryOp::Gt, rhs)
+    }
+
+    /// Returns `this_expr >= rhs` expression.
+    pub fn gte(self, rhs: Expr<T>) -> Self {
+        self.binary_expr(BinaryOp::GtEq, rhs)
+    }
+
+    /// Returns `this_expr + rhs` expression.
+    pub fn add(self, rhs: Expr<T>) -> Self {
+        self.binary_expr(BinaryOp::Plus, rhs)
+    }
+
+    /// Returns `this_expr - rhs` expression.
+    pub fn sub(self, rhs: Expr<T>) -> Self {
+        self.binary_expr(BinaryOp::Minus, rhs)
+    }
+
+    /// Returns `this_expr * rhs` expression.
+    pub fn mul(self, rhs: Expr<T>) -> Self {
+        self.binary_expr(BinaryOp::Multiply, rhs)
+    }
+
+    /// Returns `this_expr / rhs` expression.
+    pub fn div(self, rhs: Expr<T>) -> Self {
+        self.binary_expr(BinaryOp::Divide, rhs)
+    }
+
+    /// Returns `this_expr % rhs` expression.
+    pub fn modulo(self, rhs: Expr<T>) -> Self {
+        self.binary_expr(BinaryOp::Modulo, rhs)
+    }
+
+    fn binary_expr(&self, op: BinaryOp, rhs: Expr<T>) -> Self {
+        Expr::BinaryExpr {
+            lhs: Box::new(self.clone()),
+            op,
+            rhs: Box::new(rhs),
+        }
+    }
 }
 
 /// Called by [Expr::accept] during a traversal of an expression tree.
@@ -289,15 +389,32 @@ where
 /// Binary operators.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum BinaryOp {
+    /// Logical AND.
     And,
+    /// Logical OR.
     Or,
+    /// Equals.
     Eq,
+    /// Not equals.
     NotEq,
+    /// Less than.
     Lt,
+    /// Less than or equals.
     LtEq,
+    /// Greater than.
     Gt,
+    /// Greater than or equals.
     GtEq,
-    Add,
+    /// Addition.
+    Plus,
+    /// Subtraction.
+    Minus,
+    /// Multiplication.
+    Multiply,
+    /// Division.
+    Divide,
+    /// Modulo/Remainder.
+    Modulo,
 }
 
 impl BinaryOp {
@@ -344,7 +461,11 @@ impl Display for BinaryOp {
             BinaryOp::LtEq => write!(f, "<="),
             BinaryOp::Gt => write!(f, ">"),
             BinaryOp::GtEq => write!(f, ">="),
-            BinaryOp::Add => write!(f, "+"),
+            BinaryOp::Plus => write!(f, "+"),
+            BinaryOp::Minus => write!(f, "-"),
+            BinaryOp::Multiply => write!(f, "*"),
+            BinaryOp::Divide => write!(f, "/"),
+            BinaryOp::Modulo => write!(f, "%"),
         }
     }
 }
@@ -619,6 +740,31 @@ mod test {
         expect_parsed("Sum", AggregateFunction::Sum);
     }
 
+    #[test]
+    fn expr_methods() {
+        let expr = Expr::Scalar(ScalarValue::Int32(1));
+        let rhs = Expr::Scalar(ScalarValue::Int32(10));
+
+        expect_expr(expr.clone().and(rhs.clone()), "1 AND 10");
+        expect_expr(expr.clone().or(rhs.clone()), "1 OR 10");
+        expect_expr(expr.clone().not(), "NOT 1");
+
+        expect_expr(expr.clone().eq(rhs.clone()), "1 = 10");
+        expect_expr(expr.clone().ne(rhs.clone()), "1 != 10");
+
+        expect_expr(expr.clone().lt(rhs.clone()), "1 < 10");
+        expect_expr(expr.clone().lte(rhs.clone()), "1 <= 10");
+
+        expect_expr(expr.clone().gt(rhs.clone()), "1 > 10");
+        expect_expr(expr.clone().gte(rhs.clone()), "1 >= 10");
+
+        expect_expr(expr.clone().add(rhs.clone()), "1 + 10");
+        expect_expr(expr.clone().sub(rhs.clone()), "1 - 10");
+        expect_expr(expr.clone().mul(rhs.clone()), "1 * 10");
+        expect_expr(expr.clone().div(rhs.clone()), "1 / 10");
+        expect_expr(expr.clone().modulo(rhs.clone()), "1 % 10");
+    }
+
     fn expect_traversal_order(expr: &Expr, expected: Vec<&str>) {
         struct TraversalTester {
             exprs: Vec<String>,
@@ -650,5 +796,9 @@ mod test {
     {
         let rewritten_expr = expr.rewrite(&mut rewriter).unwrap();
         assert_eq!(format!("{}", rewritten_expr), result.to_string(), "rewritten expression does not match");
+    }
+
+    fn expect_expr(expr: Expr, expected: &str) {
+        assert_eq!(expected, format!("{}", expr))
     }
 }
