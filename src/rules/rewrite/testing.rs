@@ -80,7 +80,7 @@ pub fn col(name: &str) -> ScalarExpr {
 pub fn cols_add(lhs: &str, rhs: &str) -> ScalarExpr {
     ScalarExpr::BinaryExpr {
         lhs: Box::new(col(lhs)),
-        op: BinaryOp::Add,
+        op: BinaryOp::Plus,
         rhs: Box::new(col(rhs)),
     }
 }
