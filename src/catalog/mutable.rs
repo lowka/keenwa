@@ -1,8 +1,9 @@
-use crate::catalog::{Catalog, Index, IndexRef, Schema, SchemaRef, Table, TableRef, DEFAULT_SCHEMA};
 use std::any::Any;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
+
+use crate::catalog::{Catalog, Index, IndexRef, Schema, SchemaRef, Table, TableRef, DEFAULT_SCHEMA};
 
 /// A [database catalog] that stores database objects in memory and provides operation to add/remove database objects.
 ///

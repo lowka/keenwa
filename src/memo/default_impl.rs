@@ -1,15 +1,17 @@
 //! Default implementation of a memo data structure.
 
-use crate::memo::{
-    create_group_properties, make_digest, CopyIn, CopyInExprs, Expr, ExprContext, MemoExpr, MemoGroupCallback,
-    NewChildExprs, OwnedExpr, Props, StringMemoFormatter,
-};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
+
 use triomphe::Arc;
+
+use crate::memo::{
+    create_group_properties, make_digest, CopyIn, CopyInExprs, Expr, ExprContext, MemoExpr, MemoGroupCallback,
+    NewChildExprs, OwnedExpr, Props, StringMemoFormatter,
+};
 
 /// Implementation of a memo data structure in which [MemoizedExpr](self::MemoizedExpr) are backed by `Arc`s.
 /// Internally this implementation uses `Vec`s as a storage for both groups and expressions.

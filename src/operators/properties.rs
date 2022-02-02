@@ -1,3 +1,5 @@
+use std::fmt::{Debug, Formatter};
+
 use crate::error::OptimizerError;
 use crate::memo::Props;
 use crate::meta::{ColumnId, MetadataRef};
@@ -12,7 +14,6 @@ use crate::operators::scalar::ScalarNode;
 use crate::operators::{OperatorExpr, Properties, RelationalProperties};
 use crate::properties::logical::LogicalProperties;
 use crate::statistics::StatisticsBuilder;
-use std::fmt::{Debug, Formatter};
 
 /// Provides logical properties for memo expressions.
 pub trait PropertiesProvider {

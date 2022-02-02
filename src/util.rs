@@ -1,10 +1,11 @@
+use std::fmt::Debug;
+
 use crate::cost::Cost;
 use crate::memo::GroupId;
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::scalar::ScalarExpr;
 use crate::operators::Properties;
 use crate::properties::physical::PhysicalProperties;
-use std::fmt::Debug;
 
 /// A reference to the best expression in a memo-group.
 #[derive(Debug, Clone)]

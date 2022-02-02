@@ -321,8 +321,9 @@ impl<T> DoubleEndedIterator for ElementsIter<'_, T> {
 
 #[cfg(test)]
 mod test {
-    use crate::memo::unsafe_impl::arena::{Arena, ElementIndex, ElementRef};
     use std::fmt::Debug;
+
+    use crate::memo::unsafe_impl::arena::{Arena, ElementIndex, ElementRef};
 
     #[derive(Debug, Eq, PartialEq, Clone)]
     struct Value(usize);

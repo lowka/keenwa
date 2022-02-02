@@ -2,7 +2,6 @@ use crate::memo::{GroupId, Memo, MemoBuilder, MemoExpr};
 
 #[cfg(not(feature = "unsafe_memo"))]
 use super::default_impl::*;
-
 #[cfg(feature = "unsafe_memo")]
 use super::unsafe_impl::*;
 

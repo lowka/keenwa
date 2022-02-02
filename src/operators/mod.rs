@@ -1,3 +1,14 @@
+use std::convert::Infallible;
+use std::fmt::Debug;
+use std::rc::Rc;
+
+use relational::join::JoinCondition;
+use relational::logical::LogicalExpr;
+use relational::physical::PhysicalExpr;
+use relational::{RelExpr, RelNode};
+use scalar::expr::ExprVisitor;
+use scalar::{ScalarExpr, ScalarNode};
+
 use crate::memo::{
     CopyInExprs, CopyInNestedExprs, ExprContext, Memo, MemoExpr, MemoExprFormatter, MemoExprRef, MemoExprState,
     MemoGroupCallback, NewChildExprs, Props,
@@ -6,15 +17,6 @@ use crate::meta::MutableMetadata;
 use crate::operators::scalar::expr_with_new_inputs;
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
-use relational::join::JoinCondition;
-use relational::logical::LogicalExpr;
-use relational::physical::PhysicalExpr;
-use relational::{RelExpr, RelNode};
-use scalar::expr::ExprVisitor;
-use scalar::{ScalarExpr, ScalarNode};
-use std::convert::Infallible;
-use std::fmt::Debug;
-use std::rc::Rc;
 
 pub mod builder;
 pub mod properties;

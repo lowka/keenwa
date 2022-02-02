@@ -1,9 +1,10 @@
+use std::convert::Infallible;
+
 use crate::memo::NewChildExprs;
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::{ExprRewriter, Scalar};
 use crate::operators::scalar::value::ScalarValue;
 use crate::operators::Operator;
-use std::convert::Infallible;
 
 pub mod expr;
 pub mod exprs;

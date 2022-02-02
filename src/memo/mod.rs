@@ -1,9 +1,12 @@
-use itertools::Itertools;
 use std::collections::VecDeque;
 use std::fmt::{Debug, Display, Formatter, Write};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
+
+use itertools::Itertools;
 use triomphe::Arc;
+
+pub use memo_impl::*;
 
 // DEFAULT MEMO
 
@@ -15,9 +18,6 @@ pub mod default_impl;
 #[cfg(feature = "default_memo")]
 #[cfg(not(feature = "unsafe_memo"))]
 mod memo_impl {
-    // hide re-exports
-    #[doc(hidden)]
-    pub use super::default_impl;
     // crate imports
     #[doc(hidden)]
     pub(crate) use default_impl::{copy_in_expr_impl, format_memo_impl};
@@ -26,6 +26,10 @@ mod memo_impl {
     pub use default_impl::{
         ExprId, GroupId, MemoExprRef, MemoExprState, MemoGroupRef, MemoGroupToken, MemoImpl, MemoizedExpr,
     };
+
+    // hide re-exports
+    #[doc(hidden)]
+    pub use super::default_impl;
 }
 
 // UNSAFE MEMO
@@ -37,10 +41,6 @@ pub mod unsafe_impl;
 #[cfg(feature = "unsafe_memo")]
 #[cfg(not(feature = "docs"))]
 mod memo_impl {
-    // hide re-exports
-    #[doc(hidden)]
-    pub use super::unsafe_impl;
-
     // crate imports
     #[doc(hidden)]
     pub(crate) use unsafe_impl::{copy_in_expr_impl, format_memo_impl};
@@ -49,6 +49,10 @@ mod memo_impl {
     pub use unsafe_impl::{
         ExprId, GroupId, MemoExprRef, MemoExprState, MemoGroupRef, MemoGroupToken, MemoImpl, MemoizedExpr,
     };
+
+    // hide re-exports
+    #[doc(hidden)]
+    pub use super::unsafe_impl;
 }
 
 // DOCS ONLY
@@ -62,9 +66,6 @@ pub mod unsafe_impl;
 // There must be a way to do this without duplicating the entire mod memo_impl though.
 #[cfg(feature = "docs")]
 mod memo_impl {
-    // hide re-exports
-    #[doc(hidden)]
-    pub use super::default_impl;
     // crate imports
     #[doc(hidden)]
     pub(crate) use default_impl::{copy_in_expr_impl, format_memo_impl};
@@ -73,10 +74,12 @@ mod memo_impl {
     pub use default_impl::{
         ExprId, GroupId, MemoExprRef, MemoExprState, MemoGroupRef, MemoGroupToken, MemoImpl, MemoizedExpr,
     };
+
+    // hide re-exports
+    #[doc(hidden)]
+    pub use super::default_impl;
 }
 // DOCS ONLY ENDS
-
-pub use memo_impl::*;
 
 // testing
 #[cfg(test)]

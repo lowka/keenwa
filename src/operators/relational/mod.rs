@@ -1,9 +1,10 @@
+use std::fmt::Formatter;
+
 use crate::memo::MemoExprState;
 use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::scalar::expr::NestedExpr;
 use crate::operators::Operator;
-use std::fmt::Formatter;
 
 pub mod join;
 pub mod logical;

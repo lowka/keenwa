@@ -1,3 +1,9 @@
+use std::fmt::Display;
+use std::rc::Rc;
+
+use rand::rngs::ThreadRng;
+use rand::seq::SliceRandom;
+
 use crate::error::OptimizerError;
 use crate::memo::{MemoBuilder, MemoExpr, MemoExprFormatter, MemoGroupCallback, StringMemoFormatter};
 use crate::meta::MutableMetadata;
@@ -7,10 +13,6 @@ use crate::operators::relational::RelNode;
 use crate::operators::{ExprMemo, Operator, OperatorExpr, OperatorMetadata, Properties};
 use crate::properties::physical::PhysicalProperties;
 use crate::rules::{Rule, RuleContext, RuleId, RuleIterator, RuleResult, RuleSet};
-use rand::rngs::ThreadRng;
-use rand::seq::SliceRandom;
-use std::fmt::Display;
-use std::rc::Rc;
 
 /// Expects that given expression does not match the given rule. See [RuleTester::no_match].
 pub fn expect_no_match<T>(rule: T, expr: &LogicalExpr)

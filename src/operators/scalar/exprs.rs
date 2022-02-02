@@ -1,7 +1,7 @@
-use crate::meta::ColumnId;
-
-use crate::operators::scalar::expr::{Expr, ExprVisitor, NestedExpr};
 use std::convert::Infallible;
+
+use crate::meta::ColumnId;
+use crate::operators::scalar::expr::{Expr, ExprVisitor, NestedExpr};
 
 /// Collects column identifiers from the given expression.
 pub fn collect_columns<T>(expr: &Expr<T>) -> Vec<ColumnId>
@@ -34,12 +34,13 @@ where
 
 #[cfg(test)]
 mod test {
+    use std::fmt::{Debug, Formatter};
+    use std::hash::Hash;
+
     use crate::meta::ColumnId;
     use crate::operators::scalar::expr::NestedExpr;
     use crate::operators::scalar::exprs::collect_columns;
     use crate::operators::scalar::value::ScalarValue;
-    use std::fmt::{Debug, Formatter};
-    use std::hash::Hash;
 
     #[derive(Debug, Eq, PartialEq, Clone, Hash)]
     struct DummyExpr;

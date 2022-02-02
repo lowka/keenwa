@@ -12,7 +12,6 @@ use keenwa::error::OptimizerError;
 use keenwa::memo::MemoBuilder;
 use keenwa::meta::MutableMetadata;
 use keenwa::operators::builder::{MemoizeOperatorCallback, OperatorBuilder, OrderingOption};
-
 use keenwa::operators::properties::LogicalPropertiesBuilder;
 use keenwa::operators::scalar::{col, scalar};
 use keenwa::operators::*;

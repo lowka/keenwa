@@ -1,9 +1,10 @@
-use crate::datatypes::DataType;
-use crate::operators::scalar::ScalarExpr;
 use std::cell::{Ref, RefCell};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::ops::Deref;
+
+use crate::datatypes::DataType;
+use crate::operators::scalar::ScalarExpr;
 
 /// Uniquely identifies a column within a query.
 pub type ColumnId = usize;

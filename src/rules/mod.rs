@@ -1,9 +1,9 @@
-use crate::error::OptimizerError;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::iter::FromIterator;
 use std::rc::Rc;
 
+use crate::error::OptimizerError;
 use crate::meta::MetadataRef;
 use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::physical::PhysicalExpr;
