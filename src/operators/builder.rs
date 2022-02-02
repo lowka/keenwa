@@ -878,6 +878,7 @@ mod test {
     use crate::memo::{format_memo, MemoBuilder};
     use crate::operators::properties::LogicalPropertiesBuilder;
     use crate::operators::scalar::value::ScalarValue;
+    use crate::operators::scalar::{col, scalar};
     use crate::operators::Properties;
     use crate::optimizer::SetPropertiesCallback;
     use crate::rules::testing::format_operator_tree;
@@ -931,11 +932,7 @@ Memo:
         let mut tester = OperatorBuilderTester::new();
 
         tester.build_operator(|builder| {
-            let filter = ScalarExpr::BinaryExpr {
-                lhs: Box::new(ScalarExpr::ColumnName("a1".into())),
-                op: BinaryOp::Gt,
-                rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Int32(100))),
-            };
+            let filter = col("a1").gt(scalar(100));
 
             builder.get("A", vec!["a1"])?.select(Some(filter))?.build()
         });
@@ -963,10 +960,10 @@ Memo:
         tester.build_operator(|builder| {
             let from_a = builder.get("A", vec!["a1", "a2"])?;
 
-            let col_a2 = ScalarExpr::ColumnName("a2".into());
-            let val_i100 = ScalarExpr::Scalar(ScalarValue::Int32(100));
-            let alias = ScalarExpr::Alias(Box::new(col_a2.clone()), "a2_alias".into());
-            let use_alias = ScalarExpr::Alias(Box::new(alias.clone()), "a2_alias_alias".into());
+            let col_a2 = col("a2");
+            let val_i100 = scalar(100);
+            let alias = col_a2.clone().alias("a2_alias");
+            let use_alias = alias.clone().alias("a2_alias_alias");
             let projection_list = vec![col_a2, val_i100, alias, use_alias];
 
             from_a.project(projection_list)?.build()
@@ -999,13 +996,9 @@ Memo:
         let mut tester = OperatorBuilderTester::new();
 
         tester.build_operator(|builder| {
-            let projection_list1 = vec![
-                ScalarExpr::ColumnName("a2".into()),
-                ScalarExpr::Scalar(ScalarValue::Int32(100)),
-                ScalarExpr::ColumnName("a1".into()),
-            ];
+            let projection_list1 = vec![col("a2"), scalar(100), col("a1")];
 
-            let projection_list2 = vec![ScalarExpr::ColumnName("a2".into())];
+            let projection_list2 = vec![col("a2")];
 
             builder
                 .get("A", vec!["a1", "a2"])?
@@ -1073,11 +1066,7 @@ Memo:
         tester.build_operator(|builder| {
             let left = builder.clone().get("A", vec!["a1", "a2"])?;
             let right = builder.get("B", vec!["b1", "b2"])?;
-            let expr = ScalarExpr::BinaryExpr {
-                lhs: Box::new(ScalarExpr::ColumnName("a1".into())),
-                op: BinaryOp::Eq,
-                rhs: Box::new(ScalarExpr::ColumnName("b1".into())),
-            };
+            let expr = col("a1").eq(col("b1"));
             let join = left.join_on(right, expr)?;
 
             join.build()
@@ -1140,17 +1129,9 @@ Memo:
         tester.build_operator(|builder| {
             let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
 
-            let sub_query = builder
-                .sub_query_builder()
-                .empty(true)?
-                .project(vec![ScalarExpr::Scalar(ScalarValue::Bool(true))])?
-                .to_sub_query()?;
+            let sub_query = builder.sub_query_builder().empty(true)?.project(vec![scalar(true)])?.to_sub_query()?;
 
-            let filter = ScalarExpr::BinaryExpr {
-                lhs: Box::new(sub_query),
-                op: BinaryOp::Eq,
-                rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Bool(true))),
-            };
+            let filter = sub_query.eq(scalar(true));
             let select = from_a.select(Some(filter))?;
 
             select.build()
@@ -1198,17 +1179,10 @@ Memo:
         tester.build_operator(|builder| {
             let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
 
-            let sub_query = builder
-                .empty(false)?
-                .project(vec![ScalarExpr::Scalar(ScalarValue::Bool(true))])?
-                .build()?;
+            let sub_query = builder.empty(false)?.project(vec![scalar(true)])?.build()?;
             let expr = ScalarExpr::SubQuery(RelNode::from(sub_query));
 
-            let filter = ScalarExpr::BinaryExpr {
-                lhs: Box::new(expr),
-                op: BinaryOp::Eq,
-                rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Bool(true))),
-            };
+            let filter = expr.eq(scalar(true));
 
             let _select = from_a.select(Some(filter))?;
 
@@ -1257,11 +1231,7 @@ Memo:
     fn test_outer_columns_in_sub_query() {
         let mut tester = OperatorBuilderTester::new();
         tester.build_operator(|builder| {
-            let filter = ScalarExpr::BinaryExpr {
-                lhs: Box::new(ScalarExpr::ColumnName("b1".into())),
-                op: BinaryOp::Eq,
-                rhs: Box::new(ScalarExpr::ColumnName("a1".into())),
-            };
+            let filter = col("b1").eq(col("a1"));
 
             // SELECT a1, (SELECT b1 WHERE B b1=a1) FROM A
             let from_a = builder.clone().get("A", vec!["a1", "a2", "a3"])?;
@@ -1271,7 +1241,7 @@ Memo:
                 .get("B", vec!["b1"])?
                 .select(Some(filter))?
                 .to_sub_query()?;
-            let project = from_a.project(vec![ScalarExpr::ColumnName("a1".into()), b1])?;
+            let project = from_a.project(vec![col("a1"), b1])?;
 
             project.build()
         });

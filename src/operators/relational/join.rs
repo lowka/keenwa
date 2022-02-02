@@ -72,19 +72,11 @@ impl JoinUsing {
     pub fn get_expr(&self) -> ScalarNode {
         let mut result_expr: Option<ScalarExpr> = None;
         for (l, r) in self.columns.iter() {
-            let col_eq = ScalarExpr::BinaryExpr {
-                lhs: Box::new(ScalarExpr::Column(*l)),
-                op: BinaryOp::Eq,
-                rhs: Box::new(ScalarExpr::Column(*r)),
-            };
+            let col_eq = ScalarExpr::Column(*l).eq(ScalarExpr::Column(*r));
             match result_expr.as_mut() {
                 None => result_expr = Some(col_eq),
                 Some(e) => {
-                    *e = ScalarExpr::BinaryExpr {
-                        lhs: Box::new(e.clone()),
-                        op: BinaryOp::And,
-                        rhs: Box::new(col_eq),
-                    };
+                    *e = e.clone().and(col_eq);
                 }
             }
         }

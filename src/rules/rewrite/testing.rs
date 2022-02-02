@@ -1,3 +1,6 @@
+use std::rc::Rc;
+use std::sync::Arc;
+
 use crate::catalog::mutable::MutableCatalog;
 use crate::catalog::{TableBuilder, DEFAULT_SCHEMA};
 use crate::datatypes::DataType;
@@ -7,14 +10,9 @@ use crate::meta::MutableMetadata;
 use crate::operators::builder::{MemoizeOperatorCallback, OperatorBuilder};
 use crate::operators::properties::LogicalPropertiesBuilder;
 use crate::operators::relational::RelNode;
-use crate::operators::scalar::expr::BinaryOp;
-use crate::operators::scalar::value::ScalarValue;
-use crate::operators::scalar::ScalarExpr;
 use crate::optimizer::SetPropertiesCallback;
 use crate::rules::testing::format_operator_tree;
 use crate::statistics::simple::{DefaultSelectivityStatistics, SimpleCatalogStatisticsBuilder};
-use std::rc::Rc;
-use std::sync::Arc;
 
 pub fn build_and_rewrite_expr<F, R>(f: F, rule: R, expected: &str)
 where
@@ -71,64 +69,4 @@ where
 
     // Expressions should not outlive the memo.
     let _ = Rc::try_unwrap(memoization).unwrap();
-}
-
-pub fn col(name: &str) -> ScalarExpr {
-    ScalarExpr::ColumnName(name.into())
-}
-
-pub fn cols_add(lhs: &str, rhs: &str) -> ScalarExpr {
-    ScalarExpr::BinaryExpr {
-        lhs: Box::new(col(lhs)),
-        op: BinaryOp::Plus,
-        rhs: Box::new(col(rhs)),
-    }
-}
-
-pub fn col_gt(lhs: &str, val: i32) -> ScalarExpr {
-    ScalarExpr::BinaryExpr {
-        lhs: Box::new(col(lhs)),
-        op: BinaryOp::Gt,
-        rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Int32(val))),
-    }
-}
-
-pub fn expr_alias(expr: ScalarExpr, name: &str) -> ScalarExpr {
-    ScalarExpr::Alias(Box::new(expr), name.into())
-}
-
-pub fn cols_eq(lhs: &str, rhs: &str) -> ScalarExpr {
-    ScalarExpr::BinaryExpr {
-        lhs: Box::new(col(lhs)),
-        op: BinaryOp::Eq,
-        rhs: Box::new(col(rhs)),
-    }
-}
-
-pub fn expr_add(lhs: ScalarExpr, rhs: ScalarExpr) -> ScalarExpr {
-    ScalarExpr::BinaryExpr {
-        lhs: Box::new(lhs),
-        op: BinaryOp::And,
-        rhs: Box::new(rhs),
-    }
-}
-
-pub fn expr_eq(lhs: ScalarExpr, rhs: ScalarExpr) -> ScalarExpr {
-    ScalarExpr::BinaryExpr {
-        lhs: Box::new(lhs),
-        op: BinaryOp::Eq,
-        rhs: Box::new(rhs),
-    }
-}
-
-pub fn expr_and(lhs: ScalarExpr, rhs: ScalarExpr) -> ScalarExpr {
-    ScalarExpr::BinaryExpr {
-        lhs: Box::new(lhs),
-        op: BinaryOp::And,
-        rhs: Box::new(rhs),
-    }
-}
-
-pub fn scalar(value: i32) -> ScalarExpr {
-    ScalarExpr::Scalar(ScalarValue::Int32(value))
 }

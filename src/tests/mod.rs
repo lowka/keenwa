@@ -1,25 +1,10 @@
 use crate::catalog::{Catalog, IndexBuilder, DEFAULT_SCHEMA};
 use crate::operators::builder::{OrderingOption, OrderingOptions};
-use crate::operators::scalar::expr::*;
-use crate::operators::scalar::value::ScalarValue;
-use crate::operators::scalar::ScalarExpr;
+use crate::operators::scalar::{col, cols, scalar};
 
 use crate::rules::implementation::*;
 use crate::rules::transformation::*;
 use crate::testing::OptimizerTester;
-
-fn filter_expr(left: &str, value: ScalarValue) -> Option<ScalarExpr> {
-    let expr = ScalarExpr::BinaryExpr {
-        lhs: Box::new(ScalarExpr::ColumnName(left.into())),
-        op: BinaryOp::Gt,
-        rhs: Box::new(ScalarExpr::Scalar(value)),
-    };
-    Some(expr)
-}
-
-fn columns_expr(cols: Vec<impl Into<String>>) -> Vec<ScalarExpr> {
-    cols.into_iter().map(|c| ScalarExpr::ColumnName(c.into())).collect()
-}
 
 #[test]
 fn test_get() {
@@ -29,7 +14,7 @@ fn test_get() {
 
     tester.set_operator(|builder| {
         let from_a = builder.get("A", vec!["a1", "a2"])?;
-        let columns = columns_expr(vec!["a1", "a2"]);
+        let columns = cols(vec!["a1", "a2"]);
         let projection = from_a.project(columns)?;
 
         projection.build()
@@ -54,7 +39,7 @@ fn test_join() {
         let right = builder.get("B", vec!["b1", "b2"])?;
 
         let join = join.join_using(right, vec![("a1", "b1")])?;
-        let columns = columns_expr(vec!["a1", "a2", "b1"]);
+        let columns = cols(vec!["a1", "a2", "b1"]);
         let project = join.project(columns)?;
 
         project.build()
@@ -83,8 +68,8 @@ fn test_select() {
     let mut tester = OptimizerTester::new();
 
     tester.set_operator(|builder| {
-        let filter = filter_expr("a1", ScalarValue::Int32(10));
-        let select = builder.get("A", vec!["a1", "a2"])?.select(filter)?;
+        let filter = col("a1").gt(scalar(10));
+        let select = builder.get("A", vec!["a1", "a2"])?.select(Some(filter))?;
 
         select.build()
     });
@@ -107,12 +92,7 @@ fn test_select_with_a_nested_query() {
     tester.set_operator(|builder| {
         let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
         let sub_query = builder.sub_query_builder().get("B", vec!["b2"])?.to_sub_query()?;
-
-        let filter = ScalarExpr::BinaryExpr {
-            lhs: Box::new(sub_query),
-            op: BinaryOp::Gt,
-            rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Int32(1))),
-        };
+        let filter = sub_query.gt(scalar(1));
         let select = from_a.select(Some(filter))?;
 
         select.build()
@@ -137,7 +117,8 @@ fn test_get_ordered_top_level_enforcer() {
 
     tester.set_operator(|builder| {
         let from_a = builder.get("A", vec!["a1", "a2"])?;
-        let select = from_a.select(filter_expr("a1", ScalarValue::Int32(10)))?;
+        let filter = col("a1").gt(scalar(10));
+        let select = from_a.select(Some(filter))?;
         let select = select.order_by(OrderingOption::by(("a2", false)))?;
 
         select.build()
@@ -162,7 +143,8 @@ fn test_get_ordered_no_top_level_enforcer() {
 
     tester.set_operator(|builder| {
         let from_a = builder.get("A", vec!["a1", "a2"])?;
-        let select = from_a.select(filter_expr("a1", ScalarValue::Int32(10)))?;
+        let filter = col("a1").gt(scalar(10));
+        let select = from_a.select(Some(filter))?;
         let select = select.order_by(OrderingOption::by(("a2", false)))?;
 
         select.build()
@@ -213,7 +195,8 @@ fn test_join_commutativity() {
         let right = builder.get("B", vec!["b1"])?;
 
         let join = left.join_using(right, vec![("a1", "b1")])?;
-        let select = join.select(filter_expr("a1", ScalarValue::Int32(10)))?;
+        let filter = col("a1").gt(scalar(10));
+        let select = join.select(Some(filter))?;
 
         select.build()
     });
@@ -243,8 +226,8 @@ fn test_join_commutativity_ordered() {
         let right = builder.get("B", vec!["b1"])?;
 
         let join = left.join_using(right, vec![("a1", "b1")])?;
-
-        let select = join.select(filter_expr("a1", ScalarValue::Int32(10)))?;
+        let filter = col("a1").gt(scalar(10));
+        let select = join.select(Some(filter))?;
         let ordered = select.order_by(OrderingOption::by(("a1", false)))?;
 
         ordered.build()
@@ -497,7 +480,8 @@ fn test_inner_sort_with_enforcer() {
         let right = builder.get("A", vec!["a1", "a2"])?;
         let join = left.join_using(right, vec![("a1", "a1")])?;
         let ordered = join.order_by(OrderingOption::by(("a1", false)))?;
-        let select = ordered.select(filter_expr("a1", ScalarValue::Int32(10)))?;
+        let filter = col("a1").gt(scalar(10));
+        let select = ordered.select(Some(filter))?;
 
         select.build()
     });
@@ -528,7 +512,8 @@ fn test_inner_sort_satisfied_by_ordering_providing_operator() {
         let right = builder.get("A", vec!["a1", "a2"])?;
         let join = left.join_using(right, vec![("a1", "a1")])?;
         let ordered = join.order_by(OrderingOption::by(("a1", false)))?;
-        let select = ordered.select(filter_expr("a1", ScalarValue::Int32(10)))?;
+        let filter = col("a1").gt(scalar(10));
+        let select = ordered.select(Some(filter))?;
 
         select.build()
     });
@@ -727,13 +712,9 @@ fn test_nested_loop_join() {
         let left = builder.clone().get("A", vec!["a1", "a2"])?;
         let right = builder.get("B", vec!["b1", "b2"])?;
 
-        let expr = ScalarExpr::BinaryExpr {
-            lhs: Box::new(ScalarExpr::ColumnName("a1".into())),
-            op: BinaryOp::Gt,
-            rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Int32(100))),
-        };
-        let join = left.join_on(right, expr)?;
-        let columns = columns_expr(vec!["a1", "a2", "b1"]);
+        let filter = col("a1").gt(scalar(100));
+        let join = left.join_on(right, filter)?;
+        let columns = cols(vec!["a1", "a2", "b1"]);
         let projection = join.project(columns)?;
 
         projection.build()
@@ -764,7 +745,7 @@ fn test_select_1() {
 
     tester.set_operator(|builder| {
         let from = builder.empty(true)?;
-        let project = from.project(vec![ScalarExpr::Scalar(ScalarValue::Int32(1))])?;
+        let project = from.project(vec![scalar(1)])?;
         let select = project.select(None)?;
 
         select.build()

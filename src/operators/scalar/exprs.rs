@@ -35,7 +35,7 @@ where
 #[cfg(test)]
 mod test {
     use crate::meta::ColumnId;
-    use crate::operators::scalar::expr::{BinaryOp, NestedExpr};
+    use crate::operators::scalar::expr::NestedExpr;
     use crate::operators::scalar::exprs::collect_columns;
     use crate::operators::scalar::value::ScalarValue;
     use std::fmt::{Debug, Formatter};
@@ -58,11 +58,7 @@ mod test {
         let columns = collect_columns(&expr);
         assert_eq!(columns, vec![1], "one column");
 
-        let expr = Expr::BinaryExpr {
-            lhs: Box::new(Expr::Column(1)),
-            op: BinaryOp::And,
-            rhs: Box::new(Expr::Not(Box::new(Expr::Column(2)))),
-        };
+        let expr = Expr::Column(1).and(Expr::Column(2).not());
         let columns = collect_columns(&expr);
         assert_eq!(columns, vec![1, 2], "nested columns");
 
