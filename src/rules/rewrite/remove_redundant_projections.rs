@@ -115,14 +115,15 @@ mod test {
     use super::*;
     use crate::error::OptimizerError;
     use crate::operators::builder::OperatorBuilder;
-    use crate::rules::rewrite::testing::{build_and_rewrite_expr, col, cols_add, cols_eq, expr_alias, scalar};
+    use crate::operators::scalar::{col, scalar};
+    use crate::rules::rewrite::testing::build_and_rewrite_expr;
 
     #[test]
     fn test_remove_redundant_projection() {
         rewrite_expr(
             |builder| {
                 let from_a = builder.get("A", vec!["a1", "a2"])?;
-                let project = from_a.project(vec![col("a1"), col("a2"), expr_alias(col("a2"), "c3")])?;
+                let project = from_a.project(vec![col("a1"), col("a2"), col("a2").alias("c3")])?;
                 let project = project.project(vec![col("a1"), col("a2"), col("c3")])?;
 
                 Ok(project)
@@ -155,7 +156,7 @@ LogicalGet A cols=[1, 2]
         rewrite_expr(
             |builder| {
                 let from_a = builder.get("A", vec!["a1", "a2"])?;
-                let project = from_a.project(vec![col("a1"), expr_alias(col("a2"), "c2")])?;
+                let project = from_a.project(vec![col("a1"), col("a2").alias("c2")])?;
 
                 Ok(project)
             },
@@ -171,7 +172,7 @@ LogicalProjection cols=[1, 3] exprs: [col:1, col:2 AS c2]
         rewrite_expr(
             |builder| {
                 let from_a = builder.get("A", vec!["a1", "a2"])?;
-                let project = from_a.project(vec![col("a1"), col("a2"), expr_alias(col("a2"), "c3")])?;
+                let project = from_a.project(vec![col("a1"), col("a2"), col("a2").alias("c3")])?;
                 let project = project.project(vec![col("a1"), col("a2"), col("c3")])?;
                 let project = project.project(vec![col("a1"), col("a2"), col("c3")])?;
                 let project = project.project(vec![col("a1"), col("a2"), col("c3")])?;
@@ -187,7 +188,7 @@ LogicalProjection cols=[1, 2, 3] exprs: [col:1, col:2, col:2 AS c3]
         rewrite_expr(
             |builder| {
                 let from_a = builder.get("A", vec!["a1", "a2"])?;
-                let project = from_a.project(vec![col("a2"), col("a1"), expr_alias(col("a2"), "c3")])?;
+                let project = from_a.project(vec![col("a2"), col("a1"), col("a2").alias("c3")])?;
                 // 2 projections below must be removed
                 let project = project.project(vec![col("a1"), col("a2"), col("c3")])?;
                 let project = project.project(vec![col("a1"), col("a2"), col("c3")])?;
@@ -225,7 +226,7 @@ LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
         rewrite_expr(
             |builder| {
                 let from_a = builder.get("A", vec!["a1", "a2", "a3"])?;
-                let project = from_a.project(vec![col("a1"), expr_alias(col("a2"), "c2"), col("a3")])?;
+                let project = from_a.project(vec![col("a1"), col("a2").alias("c2"), col("a3")])?;
                 let project = project.project(vec![col("a1"), col("c2"), col("a3")])?;
                 let project = project.project(vec![col("a1"), col("c2")])?;
 
@@ -246,7 +247,7 @@ LogicalProjection cols=[1, 4] exprs: [col:1, col:2 AS c2]
                 let from_a = builder.get("A", vec!["a1", "a2", "a3"])?;
                 let project = from_a.project(vec![col("a1"), col("a2"), col("a3")])?;
                 let project =
-                    project.project(vec![col("a1"), col("a2"), expr_alias(col("a2"), "c3"), cols_add("a1", "a2")])?;
+                    project.project(vec![col("a1"), col("a2"), col("a2").alias("c3"), col("a1").add(col("a2"))])?;
 
                 Ok(project)
             },
@@ -263,8 +264,8 @@ LogicalProjection cols=[1, 2, 4, 5] exprs: [col:1, col:2, col:2 AS c3, col:1 + c
         rewrite_expr(
             |builder| {
                 let from_a = builder.get("A", vec!["a1", "a2", "a3"])?;
-                let project = from_a.project(vec![col("a1"), col("a2"), expr_alias(cols_add("a1", "a2"), "sum")])?;
-                let project = project.project(vec![col("a1"), col("a2"), expr_alias(col("sum"), "c3")])?;
+                let project = from_a.project(vec![col("a1"), col("a2"), col("a1").add(col("a2")).alias("sum")])?;
+                let project = project.project(vec![col("a1"), col("a2"), col("sum").alias("c3")])?;
 
                 Ok(project)
             },
@@ -360,8 +361,10 @@ LogicalAggregate
                     .add_func("sum", "a1")?
                     .group_by("a1")?
                     .build()?;
-                let project =
-                    aggr.project(vec![expr_alias(col("sum"), "s"), expr_alias(cols_add("a1", "a1"), "s2")])?;
+
+                let s = col("sum").alias("s");
+                let s2 = col("a1").add(col("a1")).alias("s2");
+                let project = aggr.project(vec![s, s2])?;
 
                 Ok(project)
             },
@@ -385,8 +388,7 @@ LogicalProjection cols=[4, 5] exprs: [col:3 AS s, col:1 + col:1 AS s2]
                     .add_func("sum", "a1")?
                     .group_by("a1")?
                     .build()?;
-                let project =
-                    aggr.project(vec![expr_alias(col("sum"), "s"), expr_alias(cols_add("a1", "a1"), "s2")])?;
+                let project = aggr.project(vec![col("sum").alias("s"), col("a1").add(col("a1")).alias("s2")])?;
 
                 Ok(project)
             },
@@ -443,7 +445,7 @@ LogicalProjection cols=[1, 3, 4] exprs: [col:1, col:3, col:4]
                 let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
                 let from_b = builder.get("B", vec!["b1", "b2"])?;
                 let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
-                let projection = join.project(vec![col("a1"), col("b1"), expr_alias(col("a1"), "c1")])?;
+                let projection = join.project(vec![col("a1"), col("b1"), col("a1").alias("c1")])?;
 
                 Ok(projection)
             },
@@ -461,7 +463,7 @@ LogicalProjection cols=[1, 3, 5] exprs: [col:1, col:3, col:1 AS c1]
                 let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
                 let from_b = builder.get("B", vec!["b1", "b2"])?;
                 let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
-                let projection = join.project(vec![col("a1"), expr_alias(col("b1"), "c1")])?;
+                let projection = join.project(vec![col("a1"), col("b1").alias("c1")])?;
 
                 Ok(projection)
             },
@@ -482,7 +484,7 @@ LogicalProjection cols=[1, 5] exprs: [col:1, col:3 AS c1]
                 let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
                 let from_b = builder.get("B", vec!["b1", "b2"])?;
                 let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
-                let projection = join.project(vec![col("a1"), expr_alias(col("b1"), "c1")])?;
+                let projection = join.project(vec![col("a1"), col("b1").alias("c1")])?;
 
                 Ok(projection)
             },
@@ -500,7 +502,7 @@ LogicalProjection cols=[1, 5] exprs: [col:1, col:3 AS c1]
         rewrite_expr(
             |builder| {
                 let from_a = builder.get("A", vec!["a1", "a2"])?;
-                let select = from_a.select(Some(cols_eq("a1", "a2")))?;
+                let select = from_a.select(Some(col("a1").eq(col("a2"))))?;
                 let project = select.project(vec![col("a1"), col("a2")])?;
 
                 Ok(project)

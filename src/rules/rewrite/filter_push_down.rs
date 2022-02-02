@@ -147,11 +147,7 @@ impl State {
 
 fn add_filter_node(expr: &RelNode, mut filters: Vec<ScalarExpr>) -> RelNode {
     let first_filter = filters.swap_remove(0);
-    let filter = filters.into_iter().fold(first_filter, |acc, f| ScalarExpr::BinaryExpr {
-        lhs: Box::new(acc),
-        op: BinaryOp::And,
-        rhs: Box::new(f),
-    });
+    let filter = filters.into_iter().fold(first_filter, |acc, f| acc.and(f));
 
     let select = LogicalSelect {
         input: expr.clone(),
@@ -381,9 +377,8 @@ mod test {
     use super::*;
     use crate::error::OptimizerError;
     use crate::operators::builder::OperatorBuilder;
-    use crate::rules::rewrite::testing::{
-        build_and_rewrite_expr, col, col_gt, cols_add, cols_eq, expr_add, expr_alias, expr_and, expr_eq, scalar,
-    };
+    use crate::operators::scalar::{col, scalar};
+    use crate::rules::rewrite::testing::build_and_rewrite_expr;
 
     #[test]
     fn test_push_past_project() {
@@ -391,7 +386,7 @@ mod test {
             |builder| {
                 let from_a = builder.get("A", vec!["a1", "a2"])?;
                 let project = from_a.project(vec![col("a1")])?;
-                let filter = col_gt("a1", 100);
+                let filter = col("a1").gt(scalar(100));
                 let filter_a1 = project.select(Some(filter))?;
                 Ok(filter_a1)
             },
@@ -409,12 +404,9 @@ LogicalProjection cols=[1] exprs: [col:1]
         rewrite_expr(
             |builder| {
                 let from_a = builder.get("A", vec!["a1", "a2"])?;
-                let col_a1 = col("a1");
-                let col_a2 = col("a2");
-                let col_a3 = expr_alias(cols_add("a1", "a2"), "a3");
-
-                let project = from_a.project(vec![col_a1, col_a2, col_a3])?;
-                let filter = col_gt("a3", 100);
+                let col_a3 = col("a1").add(col("a2")).alias("a3");
+                let project = from_a.project(vec![col("a1"), col("a2"), col_a3])?;
+                let filter = col("a3").gt(scalar(100));
                 let filter_a1 = project.select(Some(filter))?;
 
                 Ok(filter_a1)
@@ -435,11 +427,11 @@ LogicalProjection cols=[1, 2, 3] exprs: [col:1, col:2, col:1 + col:2 AS a3]
                 let from_a = builder.get("A", vec!["a1", "a2"])?;
                 let col_a1 = col("a1");
                 let col_a2 = col("a2");
-                let col_a3 = expr_alias(col("a2"), "a3");
-                let col_a4 = expr_alias(cols_add("a1", "a3"), "a4");
+                let col_a3 = col("a2").alias("a3");
+                let col_a4 = col("a1").add(col("a3")).alias("a4");
 
                 let project = from_a.project(vec![col_a1, col_a2, col_a3, col_a4])?;
-                let filter = expr_and(col_gt("a4", 100), col_gt("a3", 50));
+                let filter = col("a4").gt(scalar(100)).and(col("a3").gt(scalar(50)));
                 let filter_a1 = project.select(Some(filter))?;
 
                 Ok(filter_a1)
@@ -461,7 +453,7 @@ LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:2 AS a3, col:1 + c
                 let project1 = from_a.project(vec![col("a1")])?;
                 let project2 = project1.project(vec![col("a1")])?;
                 let project3 = project2.project(vec![col("a1")])?;
-                let filter = col_gt("a1", 100);
+                let filter = col("a1").gt(scalar(100));
                 let filter_a1 = project3.select(Some(filter))?;
                 Ok(filter_a1)
             },
@@ -483,11 +475,11 @@ LogicalProjection cols=[1] exprs: [col:1]
                 let from_a = builder.get("A", vec!["a1", "a2"])?;
                 let project = from_a.project(vec![col("a1"), col("a2")])?;
 
-                let filter = col_gt("a2", 100);
+                let filter = col("a2").gt(scalar(100));
                 let filter_a1 = project.select(Some(filter))?;
                 let project = filter_a1.project(vec![col("a1")])?;
 
-                let filter = col_gt("a1", 100);
+                let filter = col("a1").gt(scalar(100));
                 let filter_a1 = project.select(Some(filter))?;
                 Ok(filter_a1)
             },
@@ -506,10 +498,10 @@ LogicalProjection cols=[1] exprs: [col:1]
         rewrite_expr(
             |builder| {
                 let from_a = builder.get("A", vec!["a1", "a2"])?;
-                let filter = col_gt("a2", 100);
+                let filter = col("a2").gt(scalar(100));
                 let filter_a2 = from_a.select(Some(filter))?;
 
-                let filter = col_gt("a1", 100);
+                let filter = col("a1").gt(scalar(100));
                 let filter_a1 = filter_a2.select(Some(filter))?;
                 Ok(filter_a1)
             },
@@ -526,9 +518,9 @@ LogicalSelect
         rewrite_expr(
             |builder| {
                 let from_a = builder.get("A", vec!["a1", "a2"])?;
-                let filter_a2 = from_a.select(None)?;
-                let filter = col_gt("a1", 100);
-                let filter_a1 = filter_a2.select(Some(filter))?;
+                let no_filter = from_a.select(None)?;
+                let filter = col("a1").gt(scalar(100));
+                let filter_a1 = no_filter.select(Some(filter))?;
                 Ok(filter_a1)
             },
             r#"
@@ -545,9 +537,9 @@ LogicalSelect
         rewrite_expr(
             |builder| {
                 let from_a = builder.get("A", vec!["a1", "a2"])?;
-                let filter = expr_eq(scalar(1), scalar(1));
+                let filter = scalar(1).eq(scalar(1));
                 let filter_a2 = from_a.select(Some(filter))?;
-                let filter = col_gt("a1", 100);
+                let filter = col("a1").gt(scalar(100));
                 let filter_a1 = filter_a2.select(Some(filter))?;
                 Ok(filter_a1)
             },
@@ -568,7 +560,7 @@ LogicalSelect
                 let from_a = builder.clone().get("A", vec!["a1", "a2", "a3"])?;
                 let from_b = builder.get("B", vec!["b1", "b2", "b3"])?;
                 let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
-                let filter = col_gt("a1", 100);
+                let filter = col("a1").gt(scalar(100));
                 let select = join.select(Some(filter))?;
                 Ok(select)
             },
@@ -589,7 +581,7 @@ LogicalJoin using=[(1, 4)]
                 let project_a = from_a.project(vec![col("a1"), col("a2")])?;
                 let from_b = builder.get("B", vec!["b1", "b2", "b3"])?;
                 let join = project_a.join_using(from_b, vec![("a1", "b1")])?;
-                let filter = col_gt("a1", 100);
+                let filter = col("a1").gt(scalar(100));
                 let select = join.select(Some(filter))?;
                 Ok(select)
             },
@@ -613,7 +605,7 @@ LogicalJoin using=[(1, 4)]
                 let from_a = builder.clone().get("A", vec!["a1", "a2", "a3"])?;
                 let from_b = builder.get("B", vec!["b1", "b2", "b3"])?;
                 let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
-                let filter = col_gt("a1", 100);
+                let filter = col("a1").gt(scalar(100));
                 let select = join.select(Some(filter))?;
                 Ok(select)
             },
@@ -634,7 +626,7 @@ LogicalJoin using=[(1, 4)]
                 let from_b = builder.get("B", vec!["b1", "b2", "b3"])?;
                 let project_b = from_b.project(vec![col("b1"), col("b2")])?;
                 let join = from_a.join_using(project_b, vec![("a1", "b1")])?;
-                let filter = col_gt("a1", 100);
+                let filter = col("a1").gt(scalar(100));
                 let select = join.select(Some(filter))?;
                 Ok(select)
             },
@@ -658,7 +650,7 @@ LogicalJoin using=[(1, 4)]
                 let from_a = builder.clone().get("A", vec!["a1", "a2", "a3"])?;
                 let from_b = builder.get("A", vec!["a1", "a2", "a3"])?;
                 let join = from_a.join_using(from_b, vec![("a1", "a1")])?;
-                let filter = col_gt("a1", 100);
+                let filter = col("a1").gt(scalar(100));
                 let select = join.select(Some(filter))?;
                 Ok(select)
             },
@@ -682,10 +674,10 @@ LogicalJoin using=[(1, 1)]
                 let from_b = builder.get("B", vec!["b1", "b2", "b3"])?;
                 let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
 
-                // col:a1 = col:b2 AND a1 > 10
-                let a1_eq_b1 = cols_eq("a1", "b1");
-                let a1_gt_10 = col_gt("a1", 10);
-                let filter = expr_add(a1_eq_b1, a1_gt_10);
+                // col:a1 = col:b1 AND a1 > 10
+                let a1_eq_b1 = col("a1").eq(col("b1"));
+                let a1_gt_10 = col("a1").gt(scalar(10));
+                let filter = a1_eq_b1.and(a1_gt_10);
 
                 let select = join.select(Some(filter))?;
                 Ok(select)
@@ -713,8 +705,7 @@ LogicalSelect
                 let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
 
                 // col:a1 + col:b1 = 10
-                let a1_plus_b1 = cols_add("a1", "b1");
-                let filter = expr_eq(a1_plus_b1, scalar(10));
+                let filter = col("a1").add(col("b1")).eq(scalar(10));
 
                 let select = join.select(Some(filter))?;
                 Ok(select)
@@ -737,11 +728,11 @@ LogicalSelect
                 let from_b = builder.get("B", vec!["b1", "b2", "b3"])?;
                 let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
 
-                // col:a1 + col:b1 = 10 AND a1 > 5
-                let a1_plus_b1 = cols_add("a1", "b1");
-                let a1_plus_b1_eq_10 = expr_eq(a1_plus_b1, scalar(10));
-                let a1_gt_5 = col_gt("a1", 5);
-                let filter = expr_add(a1_plus_b1_eq_10, a1_gt_5);
+                // col:a1 + col:b1 = 10 AND col:a1 > 5
+                let a1_plus_b1 = col("a1").add(col("b1"));
+                let a1_plus_b1_eq_10 = a1_plus_b1.eq(scalar(10));
+                let a1_gt_5 = col("a1").gt(scalar(5));
+                let filter = a1_plus_b1_eq_10.and(a1_gt_5);
 
                 let select = join.select(Some(filter))?;
                 Ok(select)
@@ -772,7 +763,7 @@ LogicalSelect
                     .group_by("a1")?
                     .build()?;
 
-                let filter = col_gt("a1", 100);
+                let filter = col("a1").gt(scalar(100));
                 let filter_a1 = sum_a1.select(Some(filter))?;
 
                 Ok(filter_a1)
@@ -800,7 +791,7 @@ LogicalAggregate
                     .group_by("a1")?
                     .build()?;
 
-                let filter = col_gt("sum", 100);
+                let filter = col("sum").gt(scalar(100));
                 let filter_a1 = sum_a1.select(Some(filter))?;
 
                 Ok(filter_a1)
@@ -829,7 +820,7 @@ LogicalSelect
                     .group_by("a1")?
                     .build()?;
 
-                let filter = col_gt("a1", 100);
+                let filter = col("a1").gt(scalar(100));
                 let filter_a1 = sum_a1.select(Some(filter))?;
 
                 Ok(filter_a1)

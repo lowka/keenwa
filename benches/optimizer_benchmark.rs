@@ -14,9 +14,7 @@ use keenwa::meta::MutableMetadata;
 use keenwa::operators::builder::{MemoizeOperatorCallback, OperatorBuilder, OrderingOption};
 
 use keenwa::operators::properties::LogicalPropertiesBuilder;
-use keenwa::operators::scalar::expr::BinaryOp;
-use keenwa::operators::scalar::value::ScalarValue;
-use keenwa::operators::scalar::ScalarExpr;
+use keenwa::operators::scalar::{col, scalar};
 use keenwa::operators::*;
 use keenwa::optimizer::{Optimizer, SetPropertiesCallback};
 use keenwa::rules::implementation::*;
@@ -110,11 +108,7 @@ fn memo_bench(c: &mut Criterion) {
         let from_b = builder.get("B", vec!["b1"])?;
         let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
 
-        let filter = ScalarExpr::BinaryExpr {
-            lhs: Box::new(ScalarExpr::ColumnName("a1".into())),
-            op: BinaryOp::Gt,
-            rhs: Box::new(ScalarExpr::Scalar(ScalarValue::Int32(100))),
-        };
+        let filter = col("a1").gt(scalar(100));
 
         stats.set_selectivity("col:a1 > 100", 0.1);
 

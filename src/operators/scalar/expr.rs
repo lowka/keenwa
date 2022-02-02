@@ -524,6 +524,36 @@ where
     }
 }
 
+/// Converts a type to a [scalar value](super::value::ScalarValue).
+pub trait Scalar {
+    /// Convert this type to a scalar value.
+    fn get_value(&self) -> ScalarValue;
+}
+
+impl Scalar for bool {
+    fn get_value(&self) -> ScalarValue {
+        ScalarValue::Bool(*self)
+    }
+}
+
+impl Scalar for i32 {
+    fn get_value(&self) -> ScalarValue {
+        ScalarValue::Int32(*self)
+    }
+}
+
+impl Scalar for &str {
+    fn get_value(&self) -> ScalarValue {
+        ScalarValue::String((*self).to_owned())
+    }
+}
+
+impl Scalar for String {
+    fn get_value(&self) -> ScalarValue {
+        ScalarValue::String(self.to_owned())
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -558,6 +588,31 @@ mod test {
     type Expr = super::Expr<DummyRelExpr>;
 
     #[test]
+    fn expr_methods() {
+        let expr = Expr::Scalar(ScalarValue::Int32(1));
+        let rhs = Expr::Scalar(ScalarValue::Int32(10));
+
+        expect_expr(expr.clone().and(rhs.clone()), "1 AND 10");
+        expect_expr(expr.clone().or(rhs.clone()), "1 OR 10");
+        expect_expr(expr.clone().not(), "NOT 1");
+
+        expect_expr(expr.clone().eq(rhs.clone()), "1 = 10");
+        expect_expr(expr.clone().ne(rhs.clone()), "1 != 10");
+
+        expect_expr(expr.clone().lt(rhs.clone()), "1 < 10");
+        expect_expr(expr.clone().lte(rhs.clone()), "1 <= 10");
+
+        expect_expr(expr.clone().gt(rhs.clone()), "1 > 10");
+        expect_expr(expr.clone().gte(rhs.clone()), "1 >= 10");
+
+        expect_expr(expr.clone().add(rhs.clone()), "1 + 10");
+        expect_expr(expr.clone().sub(rhs.clone()), "1 - 10");
+        expect_expr(expr.clone().mul(rhs.clone()), "1 * 10");
+        expect_expr(expr.clone().div(rhs.clone()), "1 / 10");
+        expect_expr(expr.clone().modulo(rhs.clone()), "1 % 10");
+    }
+
+    #[test]
     fn column_traversal() {
         let expr = Expr::Column(1);
         expect_traversal_order(&expr, vec!["pre:col:1", "post:col:1"]);
@@ -571,17 +626,13 @@ mod test {
 
     #[test]
     fn binary_expr_traversal() {
-        let expr = Expr::BinaryExpr {
-            lhs: Box::new(Expr::Scalar(ScalarValue::Int32(1))),
-            op: BinaryOp::NotEq,
-            rhs: Box::new(Expr::Scalar(ScalarValue::Int32(2))),
-        };
+        let expr = Expr::Scalar(ScalarValue::Int32(1)).ne(Expr::Scalar(ScalarValue::Int32(2)));
         expect_traversal_order(&expr, vec!["pre:1 != 2", "pre:1", "post:1", "pre:2", "post:2", "post:1 != 2"]);
     }
 
     #[test]
     fn not_expr_traversal() {
-        let expr = Expr::Not(Box::new(Expr::Scalar(ScalarValue::Bool(true))));
+        let expr = Expr::Scalar(ScalarValue::Bool(true)).not();
         expect_traversal_order(&expr, vec!["pre:NOT true", "pre:true", "post:true", "post:NOT true"])
     }
 
@@ -653,16 +704,7 @@ mod test {
             }
         }
 
-        let expr = Expr::BinaryExpr {
-            lhs: Box::new(Expr::Column(1)),
-            op: BinaryOp::Or,
-            rhs: Box::new(Expr::BinaryExpr {
-                lhs: Box::new(Expr::Column(3)),
-                op: BinaryOp::And,
-                rhs: Box::new(Expr::Column(1)),
-            }),
-        };
-
+        let expr = Expr::Column(1).or(Expr::Column(3).and(Expr::Column(1)));
         let post_rewrites = Rc::new(Cell::new(0));
         let rewriter = ColumnRewriter {
             skip_column: 0,
@@ -706,15 +748,7 @@ mod test {
             }
         }
 
-        let expr = Expr::BinaryExpr {
-            lhs: Box::new(Expr::Column(1)),
-            op: BinaryOp::Or,
-            rhs: Box::new(Expr::BinaryExpr {
-                lhs: Box::new(Expr::Column(3)),
-                op: BinaryOp::And,
-                rhs: Box::new(Expr::Column(1)),
-            }),
-        };
+        let expr = Expr::Column(1).or(Expr::Column(3).and(Expr::Column(1)));
 
         let mut rewriter = FailingRewriter::default();
         let result = expr.rewrite(&mut rewriter);
@@ -738,31 +772,6 @@ mod test {
         expect_parsed("MAX", AggregateFunction::Max);
         expect_parsed("min", AggregateFunction::Min);
         expect_parsed("Sum", AggregateFunction::Sum);
-    }
-
-    #[test]
-    fn expr_methods() {
-        let expr = Expr::Scalar(ScalarValue::Int32(1));
-        let rhs = Expr::Scalar(ScalarValue::Int32(10));
-
-        expect_expr(expr.clone().and(rhs.clone()), "1 AND 10");
-        expect_expr(expr.clone().or(rhs.clone()), "1 OR 10");
-        expect_expr(expr.clone().not(), "NOT 1");
-
-        expect_expr(expr.clone().eq(rhs.clone()), "1 = 10");
-        expect_expr(expr.clone().ne(rhs.clone()), "1 != 10");
-
-        expect_expr(expr.clone().lt(rhs.clone()), "1 < 10");
-        expect_expr(expr.clone().lte(rhs.clone()), "1 <= 10");
-
-        expect_expr(expr.clone().gt(rhs.clone()), "1 > 10");
-        expect_expr(expr.clone().gte(rhs.clone()), "1 >= 10");
-
-        expect_expr(expr.clone().add(rhs.clone()), "1 + 10");
-        expect_expr(expr.clone().sub(rhs.clone()), "1 - 10");
-        expect_expr(expr.clone().mul(rhs.clone()), "1 * 10");
-        expect_expr(expr.clone().div(rhs.clone()), "1 / 10");
-        expect_expr(expr.clone().modulo(rhs.clone()), "1 % 10");
     }
 
     fn expect_traversal_order(expr: &Expr, expected: Vec<&str>) {

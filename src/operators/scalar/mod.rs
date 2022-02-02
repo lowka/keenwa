@@ -1,6 +1,7 @@
 use crate::memo::NewChildExprs;
 use crate::operators::relational::RelNode;
-use crate::operators::scalar::expr::ExprRewriter;
+use crate::operators::scalar::expr::{ExprRewriter, Scalar};
+use crate::operators::scalar::value::ScalarValue;
 use crate::operators::Operator;
 use std::convert::Infallible;
 
@@ -35,4 +36,22 @@ pub fn expr_with_new_inputs(expr: &ScalarExpr, inputs: &mut NewChildExprs<Operat
     let mut rewriter = RelInputsRewriter { inputs };
     // Never returns an error
     expr.rewrite(&mut rewriter).unwrap()
+}
+
+/// Creates a column reference expression.
+pub fn col(name: &str) -> ScalarExpr {
+    ScalarExpr::ColumnName(name.to_owned())
+}
+
+/// Creates a `vec` of column reference expressions.
+pub fn cols(cols: Vec<impl Into<String>>) -> Vec<ScalarExpr> {
+    cols.into_iter().map(|name| ScalarExpr::ColumnName(name.into())).collect()
+}
+
+/// Creates a scalar value expression.
+pub fn scalar<T>(val: T) -> ScalarExpr
+where
+    T: Scalar,
+{
+    ScalarExpr::Scalar(val.get_value())
 }
