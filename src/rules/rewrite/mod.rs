@@ -1,7 +1,8 @@
+use std::collections::VecDeque;
+
 use crate::memo::{MemoExpr, NewChildExprs};
 use crate::operators::relational::RelNode;
 use crate::operators::Operator;
-use std::collections::VecDeque;
 
 mod filter_push_down;
 mod remove_redundant_projections;

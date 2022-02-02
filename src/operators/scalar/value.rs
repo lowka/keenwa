@@ -1,5 +1,6 @@
-use crate::datatypes::DataType;
 use std::fmt::{Display, Formatter};
+
+use crate::datatypes::DataType;
 
 /// Supported scalar values.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]

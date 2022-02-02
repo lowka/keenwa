@@ -1,8 +1,9 @@
+use std::fmt::{Display, Formatter};
+
 use crate::meta::ColumnId;
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::BinaryOp;
 use crate::operators::scalar::{exprs, ScalarExpr, ScalarNode};
-use std::fmt::{Display, Formatter};
 
 /// Type of a join.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]

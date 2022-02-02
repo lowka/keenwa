@@ -1,3 +1,10 @@
+use std::cell::RefCell;
+use std::convert::TryFrom;
+use std::fmt::{Debug, Formatter};
+use std::rc::Rc;
+
+use itertools::Itertools;
+
 use crate::catalog::CatalogRef;
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
@@ -15,11 +22,6 @@ use crate::operators::{ExprMemo, Operator, OperatorExpr, Properties, RelationalP
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::OrderingChoice;
-use itertools::Itertools;
-use std::cell::RefCell;
-use std::convert::TryFrom;
-use std::fmt::{Debug, Formatter};
-use std::rc::Rc;
 
 /// Ordering options.
 #[derive(Debug, Clone)]
@@ -872,7 +874,8 @@ fn resolve_binary_expr_type(lhs: DataType, _op: &BinaryOp, rhs: DataType) -> Dat
 
 #[cfg(test)]
 mod test {
-    use super::*;
+    use std::sync::Arc;
+
     use crate::catalog::mutable::MutableCatalog;
     use crate::catalog::{TableBuilder, DEFAULT_SCHEMA};
     use crate::memo::{format_memo, MemoBuilder};
@@ -883,7 +886,8 @@ mod test {
     use crate::optimizer::SetPropertiesCallback;
     use crate::rules::testing::format_operator_tree;
     use crate::statistics::NoStatisticsBuilder;
-    use std::sync::Arc;
+
+    use super::*;
 
     #[test]
     fn test_get() {

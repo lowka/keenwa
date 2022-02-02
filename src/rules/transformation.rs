@@ -212,9 +212,10 @@ impl Rule for JoinAssociativityRule {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::operators::relational::logical::LogicalGet;
     use crate::rules::testing::RuleTester;
+
+    use super::*;
 
     #[test]
     fn test_join_commutativity_rule() {

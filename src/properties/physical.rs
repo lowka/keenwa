@@ -1,5 +1,6 @@
-use crate::properties::OrderingChoice;
 use std::fmt::{Display, Formatter};
+
+use crate::properties::OrderingChoice;
 
 /// Physical properties required by an operator.
 #[derive(Debug, Eq, PartialEq, Hash, Clone)]

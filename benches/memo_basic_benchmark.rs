@@ -1,6 +1,8 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use keenwa::memo::{CopyInExprs, Expr, MemoBuilder, MemoExpr, MemoExprFormatter, MemoExprState, NewChildExprs, Props};
 use std::fmt::{Display, Formatter};
+
+use criterion::{black_box, criterion_group, criterion_main, Criterion};
+
+use keenwa::memo::{CopyInExprs, Expr, MemoBuilder, MemoExpr, MemoExprFormatter, MemoExprState, NewChildExprs, Props};
 
 type RelNode = keenwa::memo::RelNode<TestOperator>;
 

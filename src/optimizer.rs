@@ -1,10 +1,11 @@
-use itertools::Itertools;
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::{Debug, Display, Formatter};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
+
+use itertools::Itertools;
 
 use crate::cost::{Cost, CostEstimationContext, CostEstimator};
 use crate::memo::{format_memo, ExprId, GroupId, MemoExpr, MemoGroupCallback, NewChildExprs, Props};

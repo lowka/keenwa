@@ -1,3 +1,9 @@
+use std::any::Any;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use std::convert::Infallible;
+use std::rc::Rc;
+
 use crate::catalog::CatalogRef;
 use crate::error::OptimizerError;
 use crate::meta::{ColumnId, MetadataRef};
@@ -12,11 +18,6 @@ use crate::operators::scalar::{ScalarExpr, ScalarNode};
 use crate::properties::logical::LogicalProperties;
 use crate::statistics::Statistics;
 use crate::statistics::StatisticsBuilder;
-use std::any::Any;
-use std::cell::RefCell;
-use std::collections::HashMap;
-use std::convert::Infallible;
-use std::rc::Rc;
 
 /// A simple implementation of [StatisticsBuilder](super::StatisticsBuilder) that information available in a [database catalog].
 ///
@@ -271,6 +272,8 @@ where
 
 #[cfg(test)]
 mod test {
+    use std::sync::Arc;
+
     use crate::catalog::mutable::MutableCatalog;
     use crate::catalog::TableBuilder;
     use crate::datatypes::DataType;
@@ -286,7 +289,6 @@ mod test {
     use crate::statistics::simple::{DefaultSelectivityStatistics, SimpleCatalogStatisticsBuilder};
     use crate::statistics::Statistics;
     use crate::statistics::StatisticsBuilder;
-    use std::sync::Arc;
 
     fn new_aggregate(groups: Vec<ScalarExpr>) -> LogicalExpr {
         LogicalExpr::Aggregate(LogicalAggregate {

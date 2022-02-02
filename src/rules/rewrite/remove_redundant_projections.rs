@@ -112,11 +112,12 @@ fn rewrite_inputs(expr: &RelNode) -> RelNode {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use crate::error::OptimizerError;
     use crate::operators::builder::OperatorBuilder;
     use crate::operators::scalar::{col, scalar};
     use crate::rules::rewrite::testing::build_and_rewrite_expr;
+
+    use super::*;
 
     #[test]
     fn test_remove_redundant_projection() {

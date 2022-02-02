@@ -1,9 +1,11 @@
+use std::fmt::{Display, Formatter};
+
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+
 use keenwa::memo::{
     CopyInExprs, CopyInNestedExprs, Expr, ExprContext, MemoBuilder, MemoExpr, MemoExprFormatter, MemoExprState,
     NewChildExprs, Props,
 };
-use std::fmt::{Display, Formatter};
 
 type RelNode = keenwa::memo::RelNode<TestOperator>;
 type ScalarNode = keenwa::memo::ScalarNode<TestOperator>;

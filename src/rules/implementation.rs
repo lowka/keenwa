@@ -486,7 +486,6 @@ impl Rule for EmptyRule {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use crate::meta::ColumnId;
     use crate::operators::relational::join::JoinOn;
     use crate::operators::relational::join::JoinType::Inner;
@@ -495,6 +494,8 @@ mod test {
     use crate::operators::scalar::value::ScalarValue;
     use crate::operators::scalar::{ScalarExpr, ScalarNode};
     use crate::rules::testing::{expect_apply, expect_no_match, RuleTester};
+
+    use super::*;
 
     fn join_expr(join_type: JoinType) -> LogicalExpr {
         let condition = if join_type == JoinType::Cross {

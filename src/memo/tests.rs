@@ -1,14 +1,16 @@
 #[cfg(test)]
 mod test {
-    use super::super::testing::*;
-    use crate::memo::{
-        format_memo, CopyInExprs, CopyInNestedExprs, Expr, ExprContext, MemoBuilder, MemoExpr, MemoExprFormatter,
-        MemoExprState, MemoGroupCallback, NewChildExprs, Props, StringMemoFormatter,
-    };
     use std::cell::RefCell;
     use std::collections::HashMap;
     use std::fmt::{Display, Formatter};
     use std::rc::Rc;
+
+    use crate::memo::{
+        format_memo, CopyInExprs, CopyInNestedExprs, Expr, ExprContext, MemoBuilder, MemoExpr, MemoExprFormatter,
+        MemoExprState, MemoGroupCallback, NewChildExprs, Props, StringMemoFormatter,
+    };
+
+    use super::super::testing::*;
 
     type RelNode = crate::memo::RelNode<TestOperator>;
     type ScalarNode = crate::memo::ScalarNode<TestOperator>;

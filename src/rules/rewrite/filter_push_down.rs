@@ -1,3 +1,6 @@
+use std::collections::{HashMap, HashSet};
+use std::convert::Infallible;
+
 use crate::meta::ColumnId;
 use crate::operators::relational::join::{JoinCondition, JoinUsing};
 use crate::operators::relational::logical::{
@@ -7,8 +10,6 @@ use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::{BinaryOp, ExprRewriter};
 use crate::operators::scalar::{exprs, ScalarExpr, ScalarNode};
 use crate::rules::rewrite::{rewrite_rel_inputs, with_new_rel_inputs};
-use std::collections::{HashMap, HashSet};
-use std::convert::Infallible;
 
 /// Rewrites the operator tree rooted at the given expression.
 /// This rewrite rule attempts to push filters in an operator tree bellow other operators
@@ -374,11 +375,12 @@ fn split_filter(filter: &ScalarExpr, filters: &mut Vec<ScalarExpr>) {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use crate::error::OptimizerError;
     use crate::operators::builder::OperatorBuilder;
     use crate::operators::scalar::{col, scalar};
     use crate::rules::rewrite::testing::build_and_rewrite_expr;
+
+    use super::*;
 
     #[test]
     fn test_push_past_project() {

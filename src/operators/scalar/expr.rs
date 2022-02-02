@@ -1,12 +1,14 @@
+use std::convert::TryFrom;
+use std::fmt::{Debug, Display, Formatter};
+use std::hash::Hash;
+
+use itertools::Itertools;
+
 use crate::datatypes::DataType;
 use crate::memo::MemoExprFormatter;
 use crate::meta::ColumnId;
 use crate::operators::scalar::expr::Expr::BinaryExpr;
 use crate::operators::scalar::value::ScalarValue;
-use itertools::Itertools;
-use std::convert::TryFrom;
-use std::fmt::{Debug, Display, Formatter};
-use std::hash::Hash;
 
 /// Expressions supported by the optimizer.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -556,11 +558,12 @@ impl Scalar for String {
 
 #[cfg(test)]
 mod test {
-    use super::*;
     use std::cell::Cell;
     use std::convert::Infallible;
     use std::hash::Hasher;
     use std::rc::Rc;
+
+    use super::*;
 
     #[derive(Debug, Clone)]
     struct DummyRelExpr;
