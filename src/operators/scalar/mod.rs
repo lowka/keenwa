@@ -1,13 +1,18 @@
+use crate::datatypes::DataType;
 use std::convert::Infallible;
+use std::ops::Deref;
 
 use crate::memo::NewChildExprs;
+use crate::meta::{ColumnId, Metadata, MetadataRef, MutableMetadata};
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::{ExprRewriter, Scalar};
+use crate::operators::scalar::types::ColumnTypeRegistry;
 use crate::operators::scalar::value::ScalarValue;
 use crate::operators::Operator;
 
 pub mod expr;
 pub mod exprs;
+pub mod types;
 pub mod value;
 
 /// The type of scalar expressions supported by the optimizer.
@@ -55,4 +60,15 @@ where
     T: Scalar,
 {
     ScalarExpr::Scalar(val.get_value())
+}
+
+// TODO: Implement ColumnRegistry for all metadata types.
+impl<T> ColumnTypeRegistry for T
+where
+    T: Deref<Target = MutableMetadata>,
+{
+    fn get_column_type(&self, col_id: &ColumnId) -> DataType {
+        let target = self.deref();
+        target.get_column(col_id).data_type().clone()
+    }
 }

@@ -46,6 +46,10 @@ mod test {
     struct DummyExpr;
 
     impl NestedExpr for DummyExpr {
+        fn output_columns(&self) -> &[ColumnId] {
+            &[]
+        }
+
         fn write_to_fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             write!(f, "{:?}", self)
         }
