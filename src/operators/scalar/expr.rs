@@ -7,7 +7,6 @@ use itertools::Itertools;
 use crate::datatypes::DataType;
 use crate::memo::MemoExprFormatter;
 use crate::meta::ColumnId;
-use crate::operators::scalar::expr::Expr::BinaryExpr;
 use crate::operators::scalar::value::ScalarValue;
 
 /// Expressions supported by the optimizer.
@@ -16,8 +15,9 @@ pub enum Expr<T>
 where
     T: NestedExpr,
 {
-    /// A column reference expression. In contrast to [column name expression](Self::ColumnName) it stores an internal identifier.
+    /// A column identifier expression. In contrast to [column name expression](Self::ColumnName) it stores an internal identifier.
     // ???: Make Expr generic over column id.
+    // TODO: Rename to this expr to ColumnId, rename ColumnName to Column.
     Column(ColumnId),
     /// A column reference expression. The optimizer replaces such expressions with [column(id)](Self::Column) expressions.
     ColumnName(String),
@@ -31,6 +31,13 @@ where
         op: BinaryOp,
         /// The right operand.
         rhs: Box<Expr<T>>,
+    },
+    /// Cast operator. Coverts an expression to another type.
+    Cast {
+        /// The expression.
+        expr: Box<Expr<T>>,
+        /// The type the expression should be converted into.
+        data_type: DataType,
     },
     /// Negation of an expression.
     Not(Box<Expr<T>>),
@@ -53,6 +60,9 @@ where
 
 /// Trait that must be implemented by other expressions that can be nested inside [Expr](self::Expr).
 pub trait NestedExpr: Debug + Clone + Eq + Hash {
+    /// Returns the output columns returned by this nested expression.
+    fn output_columns(&self) -> &[ColumnId];
+
     /// Writes this nested expression to the given formatter.
     fn write_to_fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result;
 }
@@ -80,6 +90,9 @@ where
             Expr::BinaryExpr { lhs, rhs, .. } => {
                 lhs.accept(visitor)?;
                 rhs.accept(visitor)?;
+            }
+            Expr::Cast { expr, .. } => {
+                expr.accept(visitor)?;
             }
             Expr::Not(expr) => {
                 expr.accept(visitor)?;
@@ -124,6 +137,10 @@ where
                 let rhs = rewrite_boxed(*rhs, rewriter)?;
                 Expr::BinaryExpr { lhs, op, rhs }
             }
+            Expr::Cast { expr, data_type } => {
+                let expr = rewrite_boxed(*expr, rewriter)?;
+                Expr::Cast { expr, data_type }
+            }
             Expr::Not(expr) => expr.rewrite(rewriter)?,
             Expr::Alias(expr, name) => {
                 let expr = rewrite_boxed(*expr, rewriter)?;
@@ -154,6 +171,7 @@ where
             Expr::ColumnName(_) => vec![],
             Expr::Scalar(_) => vec![],
             Expr::BinaryExpr { lhs, rhs, .. } => vec![lhs.as_ref().clone(), rhs.as_ref().clone()],
+            Expr::Cast { expr, .. } => vec![expr.as_ref().clone()],
             Expr::Not(expr) => vec![expr.as_ref().clone()],
             Expr::Alias(expr, _) => vec![expr.as_ref().clone()],
             Expr::Aggregate { args, filter, .. } => {
@@ -199,6 +217,13 @@ where
                     rhs: Box::new(children.swap_remove(0)),
                 }
             }
+            Expr::Cast { data_type, .. } => {
+                expect_children("Cast", children.len(), 1);
+                Expr::Cast {
+                    expr: Box::new(children.swap_remove(0)),
+                    data_type: data_type.clone(),
+                }
+            }
             Expr::Not(_) => {
                 expect_children("Not", children.len(), 1);
                 Expr::Not(Box::new(children.swap_remove(0)))
@@ -236,6 +261,15 @@ where
         Expr::Alias(Box::new(self), name.to_owned())
     }
 
+    /// Returns `this_expr <op> rhs` expression.
+    pub fn binary_expr(self, op: BinaryOp, rhs: Expr<T>) -> Self {
+        Expr::BinaryExpr {
+            lhs: Box::new(self),
+            op,
+            rhs: Box::new(rhs),
+        }
+    }
+
     /// Returns `this_expr AND rhs` expression.
     pub fn and(self, rhs: Expr<T>) -> Self {
         self.binary_expr(BinaryOp::And, rhs)
@@ -259,6 +293,14 @@ where
     /// Returns `this_expr != rhs` expression.
     pub fn ne(self, rhs: Expr<T>) -> Self {
         self.binary_expr(BinaryOp::NotEq, rhs)
+    }
+
+    /// Returns `CAST(this_expr as data_type)` expression.
+    pub fn cast(self, data_type: DataType) -> Self {
+        Expr::Cast {
+            expr: Box::new(self),
+            data_type,
+        }
     }
 
     /// Returns `this_expr < rhs` expression.
@@ -304,14 +346,6 @@ where
     /// Returns `this_expr % rhs` expression.
     pub fn modulo(self, rhs: Expr<T>) -> Self {
         self.binary_expr(BinaryOp::Modulo, rhs)
-    }
-
-    fn binary_expr(&self, op: BinaryOp, rhs: Expr<T>) -> Self {
-        Expr::BinaryExpr {
-            lhs: Box::new(self.clone()),
-            op,
-            rhs: Box::new(rhs),
-        }
     }
 }
 
@@ -435,6 +469,7 @@ where
             Expr::ColumnName(name) => write!(f, "col:{}", name),
             Expr::Scalar(value) => write!(f, "{}", value),
             Expr::BinaryExpr { lhs, op, rhs } => write!(f, "{} {} {}", lhs, op, rhs),
+            Expr::Cast { expr, data_type } => write!(f, "CAST({} as {})", expr, data_type),
             Expr::Aggregate { func, args, filter } => {
                 write!(f, "{}({})", func, DisplayArgs(args))?;
                 if let Some(filter) = filter {
@@ -583,6 +618,10 @@ mod test {
     }
 
     impl NestedExpr for DummyRelExpr {
+        fn output_columns(&self) -> &[ColumnId] {
+            &[]
+        }
+
         fn write_to_fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             write!(f, "{:?}", self)
         }
@@ -598,6 +637,7 @@ mod test {
         expect_expr(expr.clone().and(rhs.clone()), "1 AND 10");
         expect_expr(expr.clone().or(rhs.clone()), "1 OR 10");
         expect_expr(expr.clone().not(), "NOT 1");
+        expect_expr(expr.clone().cast(DataType::Int32), "CAST(1 as Int32)");
 
         expect_expr(expr.clone().eq(rhs.clone()), "1 = 10");
         expect_expr(expr.clone().ne(rhs.clone()), "1 != 10");

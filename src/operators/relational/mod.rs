@@ -1,6 +1,7 @@
 use std::fmt::Formatter;
 
 use crate::memo::MemoExprState;
+use crate::meta::ColumnId;
 use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::scalar::expr::NestedExpr;
@@ -54,6 +55,10 @@ impl RelExpr {
 }
 
 impl NestedExpr for RelNode {
+    fn output_columns(&self) -> &[ColumnId] {
+        self.props().logical.output_columns()
+    }
+
     fn write_to_fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self.state() {
             MemoExprState::Owned(_) => {

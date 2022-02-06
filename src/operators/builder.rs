@@ -16,9 +16,10 @@ use crate::operators::relational::logical::{
     LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
 };
 use crate::operators::relational::RelNode;
-use crate::operators::scalar::expr::{AggregateFunction, BinaryOp, Expr, ExprRewriter};
+use crate::operators::scalar::expr::{AggregateFunction, Expr, ExprRewriter};
+use crate::operators::scalar::types::resolve_expr_type;
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
-use crate::operators::{ExprMemo, Operator, OperatorExpr, Properties, RelationalProperties};
+use crate::operators::{ExprMemo, Operator, OperatorExpr};
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::OrderingChoice;
@@ -215,7 +216,7 @@ impl OperatorBuilder {
                     } else {
                         (expr.clone(), "?column?".to_string())
                     };
-                    let data_type = resolve_expr_type(&expr, &self.metadata);
+                    let data_type = resolve_expr_type(&expr, &self.metadata)?;
                     let column_meta = ColumnMetadata::new_synthetic_column(name.clone(), data_type, Some(expr));
                     let id = self.metadata.add_column(column_meta);
                     (id, name)
@@ -326,7 +327,7 @@ impl OperatorBuilder {
                     let column_id = if let ScalarExpr::Column(id) = expr {
                         id
                     } else {
-                        let expr_type = resolve_expr_type(&expr, &self.metadata);
+                        let expr_type = resolve_expr_type(&expr, &self.metadata)?;
                         let column_meta = ColumnMetadata::new_synthetic_column("".into(), expr_type, Some(expr));
                         self.metadata.add_column(column_meta)
                     };
@@ -409,7 +410,12 @@ impl OperatorBuilder {
     pub fn to_sub_query(mut self) -> Result<ScalarExpr, OptimizerError> {
         if self.sub_query_builder {
             let (operator, _) = self.rel_node()?;
-            Ok(ScalarExpr::SubQuery(operator))
+            if operator.props().logical.output_columns().len() != 1 {
+                let message = "Sub query must return only one column";
+                Err(OptimizerError::Internal(message.into()))
+            } else {
+                Ok(ScalarExpr::SubQuery(operator))
+            }
         } else {
             let message = "Sub queries can only be created using builders instantiated via call to OperatorBuilder::sub_query_builder()";
             Err(OptimizerError::Internal(message.into()))
@@ -444,7 +450,7 @@ impl OperatorBuilder {
                 l.data_type().clone()
             };
 
-            let column_name = "".to_string();
+            let column_name = "?column?".to_string();
             let column_meta = ColumnMetadata::new_synthetic_column(column_name.clone(), data_type, None);
             let column_id = self.metadata.add_column(column_meta);
             columns.push((column_name, column_id));
@@ -719,7 +725,7 @@ impl AggregateBuilder<'_> {
                         filter: None,
                     };
                     let metadata = &self.builder.metadata;
-                    let data_type = resolve_expr_type(&expr, metadata);
+                    let data_type = resolve_expr_type(&expr, metadata)?;
 
                     let column_meta = ColumnMetadata::new_synthetic_column(name.clone(), data_type, Some(expr.clone()));
                     let id = metadata.add_column(column_meta);
@@ -828,50 +834,6 @@ impl OperatorCallback for MemoizeOperatorCallback {
     }
 }
 
-fn resolve_expr_type(expr: &ScalarExpr, metadata: &MutableMetadata) -> DataType {
-    match expr {
-        ScalarExpr::Column(column_id) => metadata.get_column(column_id).data_type().clone(),
-        ScalarExpr::ColumnName(_) => panic!("Expr Column(name) should have been replaced with Column(id)"),
-        ScalarExpr::Scalar(value) => value.data_type(),
-        ScalarExpr::BinaryExpr { lhs, op, rhs } => {
-            let left_tpe = resolve_expr_type(lhs, metadata);
-            let right_tpe = resolve_expr_type(rhs, metadata);
-            resolve_binary_expr_type(left_tpe, op, right_tpe)
-        }
-        ScalarExpr::Not(expr) => {
-            let tpe = resolve_expr_type(expr, metadata);
-            assert_eq!(tpe, DataType::Bool, "Invalid argument type for NOT operator");
-            tpe
-        }
-        ScalarExpr::Alias(expr, _) => resolve_expr_type(expr, metadata),
-        ScalarExpr::Aggregate { func, args, .. } => {
-            for (i, arg) in args.iter().enumerate() {
-                let arg_tpe = resolve_expr_type(arg, metadata);
-                let expected_tpe = match func {
-                    AggregateFunction::Avg
-                    | AggregateFunction::Max
-                    | AggregateFunction::Min
-                    | AggregateFunction::Sum => DataType::Int32,
-                    AggregateFunction::Count => arg_tpe.clone(),
-                };
-                assert_eq!(
-                    &arg_tpe, &expected_tpe,
-                    "Invalid argument type for aggregate function {}. Argument#{} {}",
-                    func, i, arg
-                );
-            }
-            DataType::Int32
-        }
-        ScalarExpr::SubQuery(_) => DataType::Int32,
-    }
-}
-
-fn resolve_binary_expr_type(lhs: DataType, _op: &BinaryOp, rhs: DataType) -> DataType {
-    assert_eq!(lhs, rhs, "Types does not match");
-    // TODO: Correctly resolve data types.
-    DataType::Bool
-}
-
 #[cfg(test)]
 mod test {
     use std::sync::Arc;
@@ -880,7 +842,6 @@ mod test {
     use crate::catalog::{TableBuilder, DEFAULT_SCHEMA};
     use crate::memo::{format_memo, MemoBuilder};
     use crate::operators::properties::LogicalPropertiesBuilder;
-    use crate::operators::scalar::value::ScalarValue;
     use crate::operators::scalar::{col, scalar};
     use crate::operators::Properties;
     use crate::optimizer::SetPropertiesCallback;
@@ -1194,6 +1155,34 @@ Memo:
         });
 
         tester.expect_error("Use OperatorBuilder::sub_query_builder to build a nested sub query")
+    }
+
+    #[test]
+    fn test_prohibit_sub_queries_with_more_than_one_output_column() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let from_b = builder.sub_query_builder().get("B", vec!["b1", "b2"])?;
+            let _sub_query = from_b.to_sub_query()?;
+
+            unreachable!()
+        });
+
+        tester.expect_error("Sub query must return only one column")
+    }
+
+    #[test]
+    fn test_prohibit_sub_queries_with_zero_columns() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let from_b = builder.sub_query_builder().empty(true)?.project(vec![])?;
+            let _sub_query = from_b.to_sub_query()?;
+
+            unreachable!()
+        });
+
+        tester.expect_error("Sub query must return only one column")
     }
 
     #[test]
