@@ -23,9 +23,7 @@ mod memo_impl {
     pub(crate) use default_impl::{copy_in_expr_impl, format_memo_impl};
     // pub imports
     #[doc(hidden)]
-    pub use default_impl::{
-        ExprId, GroupId, MemoExprRef, MemoExprState, MemoGroupRef, MemoGroupToken, MemoImpl, MemoizedExpr,
-    };
+    pub use default_impl::{ExprId, GroupId, MemoExprRef, MemoGroupRef, MemoGroupToken, MemoImpl, MemoizedExpr};
 
     // hide re-exports
     #[doc(hidden)]
@@ -46,9 +44,7 @@ mod memo_impl {
     pub(crate) use unsafe_impl::{copy_in_expr_impl, format_memo_impl};
     // pub imports
     #[doc(hidden)]
-    pub use unsafe_impl::{
-        ExprId, GroupId, MemoExprRef, MemoExprState, MemoGroupRef, MemoGroupToken, MemoImpl, MemoizedExpr,
-    };
+    pub use unsafe_impl::{ExprId, GroupId, MemoExprRef, MemoGroupRef, MemoGroupToken, MemoImpl, MemoizedExpr};
 
     // hide re-exports
     #[doc(hidden)]
@@ -71,9 +67,7 @@ mod memo_impl {
     pub(crate) use default_impl::{copy_in_expr_impl, format_memo_impl};
     // pub imports
     #[doc(hidden)]
-    pub use default_impl::{
-        ExprId, GroupId, MemoExprRef, MemoExprState, MemoGroupRef, MemoGroupToken, MemoImpl, MemoizedExpr,
-    };
+    pub use default_impl::{ExprId, GroupId, MemoExprRef, MemoGroupRef, MemoGroupToken, MemoImpl, MemoizedExpr};
 
     // hide re-exports
     #[doc(hidden)]
@@ -353,132 +347,132 @@ pub trait MemoGroupCallback {
 // ///
 // /// In the `Owned` state a memo expression stores expression and properties.
 // /// In the `Memo` state a memo expression stores a reference to expression stored in a memo.
-// #[derive(Clone)]
-// pub enum MemoExprState<E>
-// where
-//     E: MemoExpr,
-// {
-//     Owned(OwnedExpr<E>),
-//     Memo(MemoizedExpr<E>),
-// }
-//
-// impl<E> MemoExprState<E>
-// where
-//     E: MemoExpr,
-// {
-//     /// Creates an owned state with the given expression and properties.
-//     pub fn new(expr: E::Expr, props: E::Props) -> Self {
-//         MemoExprState::Owned(OwnedExpr {
-//             expr: Arc::new(expr),
-//             props: Arc::new(props),
-//         })
-//     }
-//
-//     /// Returns a reference to an expression.
-//     /// * In the owned state this method returns a reference to the underlying expression.
-//     /// * In the memo state this method returns a reference to the first expression in the [memo group][self::MemoGroupRef].
-//     pub fn expr(&self) -> &E::Expr {
-//         match self {
-//             MemoExprState::Owned(state) => state.expr.as_ref(),
-//             MemoExprState::Memo(state) => &state.expr(),
-//         }
-//     }
-//
-//     /// Returns a reference to properties.
-//     ///
-//     /// * In the owned state this method returns a reference to the underlying properties.
-//     /// * In the memo state this method returns a reference to properties of a memo group the expression belongs to.
-//     pub fn props(&self) -> &E::Props {
-//         match self {
-//             MemoExprState::Owned(state) => state.props.as_ref(),
-//             MemoExprState::Memo(state) => &state.props(),
-//         }
-//     }
-//
-//     /// Returns `true` if this `MemoExprState` is in the `Memo` state.
-//     pub fn is_memo(&self) -> bool {
-//         match self {
-//             MemoExprState::Owned(_) => false,
-//             MemoExprState::Memo(_) => true,
-//         }
-//     }
-//
-//     /// Returns a reference to a memo expression or panics if this `MemoExprState` is not in the memo state.
-//     /// This method should only be called on memoized expressions.
-//     ///
-//     /// # Panics
-//     ///
-//     /// This method panics if this `MemoExprState` is in the owned state.
-//     pub fn memo_expr(&self) -> MemoExprRef<E> {
-//         match self {
-//             MemoExprState::Owned(_) => panic!("This should only be called on memoized expressions"),
-//             MemoExprState::Memo(state) => get_expr_ref(state, self),
-//         }
-//     }
-//
-//     /// Returns an identifier of a memo group or panics if this `MemoExprState` is not in the `Memo` state.
-//     /// This method should only be called on memoized expressions.
-//     ///
-//     /// # Panics
-//     ///
-//     /// This method panics if this `MemoExprState` is in the `Owned` state.
-//     pub fn memo_group_id(&self) -> GroupId {
-//         match self {
-//             MemoExprState::Owned(_) => panic!("This should only be called on memoized expressions"),
-//             MemoExprState::Memo(state) => state.group_id(),
-//         }
-//     }
-//
-//     pub(crate) fn equal(&self, other: &Self) -> bool {
-//         let this = self.get_eq_state();
-//         let that = other.get_eq_state();
-//         // Expressions are equal if their expr pointers point to the same expression.
-//         match (this, that) {
-//             // Raw pointer equality for owned expressions is used here because we should not check non-memoized
-//             // expressions for equality.
-//             ((Some(x), _), (Some(y), _)) => std::ptr::eq(x, y),
-//             ((_, Some(x)), (_, Some(y))) => x == y,
-//             _ => false,
-//         }
-//     }
-//
-//     pub(crate) fn hash<H: Hasher>(&self, state: &mut H) {
-//         match self {
-//             MemoExprState::Owned(s) => {
-//                 let ptr: *const E::Expr = s.expr.as_ptr();
-//                 ptr.hash(state)
-//             }
-//             MemoExprState::Memo(s) => s.expr_id().hash(state),
-//         }
-//     }
-//
-//     fn get_eq_state(&self) -> (Option<*const E::Expr>, Option<ExprId>)
-//     where
-//         E: MemoExpr,
-//     {
-//         match self {
-//             MemoExprState::Owned(state) => {
-//                 let ptr: *const E::Expr = state.expr.as_ptr();
-//                 (Some(ptr), None)
-//             }
-//             MemoExprState::Memo(state) => (None, Some(state.expr_id())),
-//         }
-//     }
-// }
+#[derive(Clone)]
+pub enum MemoExprState<E>
+where
+    E: MemoExpr,
+{
+    Owned(OwnedExpr<E>),
+    Memo(MemoizedExpr<E>),
+}
 
-// impl<E, T, P> Debug for MemoExprState<E>
-// where
-//     E: MemoExpr<Expr = T, Props = P> + Debug,
-//     T: Expr + Debug,
-//     P: Props + Debug,
-// {
-//     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-//         match self {
-//             MemoExprState::Owned(state) => f.debug_tuple("Owned").field(state).finish(),
-//             MemoExprState::Memo(state) => f.debug_tuple("Memo").field(state).finish(),
-//         }
-//     }
-// }
+impl<E> MemoExprState<E>
+where
+    E: MemoExpr,
+{
+    /// Creates an owned state with the given expression and properties.
+    pub fn new(expr: E::Expr, props: E::Props) -> Self {
+        MemoExprState::Owned(OwnedExpr {
+            expr: Arc::new(expr),
+            props: Arc::new(props),
+        })
+    }
+
+    /// Returns a reference to an expression.
+    /// * In the owned state this method returns a reference to the underlying expression.
+    /// * In the memo state this method returns a reference to the first expression in the [memo group][self::MemoGroupRef].
+    pub fn expr(&self) -> &E::Expr {
+        match self {
+            MemoExprState::Owned(state) => state.expr.as_ref(),
+            MemoExprState::Memo(state) => state.expr(),
+        }
+    }
+
+    /// Returns a reference to properties.
+    ///
+    /// * In the owned state this method returns a reference to the underlying properties.
+    /// * In the memo state this method returns a reference to properties of a memo group the expression belongs to.
+    pub fn props(&self) -> &E::Props {
+        match self {
+            MemoExprState::Owned(state) => state.props.as_ref(),
+            MemoExprState::Memo(state) => state.props(),
+        }
+    }
+
+    /// Returns `true` if this `MemoExprState` is in the `Memo` state.
+    pub fn is_memo(&self) -> bool {
+        match self {
+            MemoExprState::Owned(_) => false,
+            MemoExprState::Memo(_) => true,
+        }
+    }
+
+    /// Returns a reference to a memo expression or panics if this `MemoExprState` is not in the memo state.
+    /// This method should only be called on memoized expressions.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if this `MemoExprState` is in the owned state.
+    pub fn memo_expr(&self) -> MemoExprRef<E> {
+        match self {
+            MemoExprState::Owned(_) => panic!("This should only be called on memoized expressions"),
+            MemoExprState::Memo(expr) => expr.get_expr_ref(self),
+        }
+    }
+
+    /// Returns an identifier of a memo group or panics if this `MemoExprState` is not in the `Memo` state.
+    /// This method should only be called on memoized expressions.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if this `MemoExprState` is in the `Owned` state.
+    pub fn memo_group_id(&self) -> GroupId {
+        match self {
+            MemoExprState::Owned(_) => panic!("This should only be called on memoized expressions"),
+            MemoExprState::Memo(state) => state.group_id(),
+        }
+    }
+
+    pub(crate) fn equal(&self, other: &Self) -> bool {
+        let this = self.get_eq_state();
+        let that = other.get_eq_state();
+        // Expressions are equal if their expr pointers point to the same expression.
+        match (this, that) {
+            // Raw pointer equality for owned expressions is used here because we should not check non-memoized
+            // expressions for equality.
+            ((Some(x), _), (Some(y), _)) => std::ptr::eq(x, y),
+            ((_, Some(x)), (_, Some(y))) => x == y,
+            _ => false,
+        }
+    }
+
+    pub(crate) fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            MemoExprState::Owned(s) => {
+                let ptr: *const E::Expr = s.expr.as_ptr();
+                ptr.hash(state)
+            }
+            MemoExprState::Memo(s) => s.expr_id().hash(state),
+        }
+    }
+
+    fn get_eq_state(&self) -> (Option<*const E::Expr>, Option<ExprId>)
+    where
+        E: MemoExpr,
+    {
+        match self {
+            MemoExprState::Owned(state) => {
+                let ptr: *const E::Expr = state.expr.as_ptr();
+                (Some(ptr), None)
+            }
+            MemoExprState::Memo(state) => (None, Some(state.expr_id())),
+        }
+    }
+}
+
+impl<E, T, P> Debug for MemoExprState<E>
+where
+    E: MemoExpr<Expr = T, Props = P> + Debug,
+    T: Expr + Debug,
+    P: Props + Debug,
+{
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MemoExprState::Owned(state) => f.debug_tuple("Owned").field(state).finish(),
+            MemoExprState::Memo(state) => f.debug_tuple("Memo").field(state).finish(),
+        }
+    }
+}
 
 /// Represents an expression that has not been copied into a [memo](self::Memo).
 /// This is the `owned` state of a [MemoExprState](self::MemoExprState).
