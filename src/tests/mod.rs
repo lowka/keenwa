@@ -1,6 +1,7 @@
 use crate::catalog::{Catalog, IndexBuilder, DEFAULT_SCHEMA};
 use crate::operators::builder::{OrderingOption, OrderingOptions};
 use crate::operators::scalar::{col, cols, scalar};
+use crate::rules::implementation::aggregate::HashAggregateRule;
 use crate::rules::implementation::*;
 use crate::rules::transformation::*;
 use crate::testing::OptimizerTester;
