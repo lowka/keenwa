@@ -37,6 +37,7 @@ impl Rule for JoinCommutativityRule {
                 right,
                 condition,
             }) => {
+                // do not replace ON condition.
                 if let Some((left_columns, right_columns)) = get_non_empty_join_columns_pair(left, right, condition) {
                     let expr = LogicalExpr::Join(LogicalJoin {
                         join_type: join_type.clone(),

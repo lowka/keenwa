@@ -14,13 +14,15 @@ use crate::operators::{ExprMemo, Operator, OperatorExpr, OperatorMetadata, Prope
 use crate::properties::physical::PhysicalProperties;
 use crate::rules::{Rule, RuleContext, RuleId, RuleIterator, RuleResult, RuleSet};
 
-/// Expects that given expression does not match the given rule. See [RuleTester::no_match].
+/// Expects that given expression does not match the given rule.
+///
+/// It calls [RuleTester::no_match] with `can_apply` flag set to `false`.
 pub fn expect_no_match<T>(rule: T, expr: &LogicalExpr)
 where
     T: Rule + 'static,
 {
     let mut tester = RuleTester::new(rule);
-    tester.no_match(&expr)
+    tester.no_match(&expr, false)
 }
 
 /// Expects that given rule can be applied to the given expression and compares the result
@@ -95,10 +97,10 @@ impl RuleTester {
         assert_eq!(actual_expr.trim_end(), expected.trim());
     }
 
-    /// Matches the given expression to the rule and expects it not to match. If the match is unsuccessful this method
-    /// then calls [Rule::apply](crate::rules::Rule::apply) on the given expression.
-    /// If that call does not return `Ok(None)` this methods fails.
-    pub fn no_match(&mut self, expr: &LogicalExpr) {
+    /// Matches the given expression to the rule and expects it not to match. If the match is unsuccessful
+    /// and `can_apply` is `true` this method then calls [Rule::apply](crate::rules::Rule::apply)
+    /// on the given expression. If that call does not return `Ok(None)` this methods fails.
+    pub fn no_match(&mut self, expr: &LogicalExpr, can_apply: bool) {
         let memo_expr = self.memo.insert_group(Operator::from(OperatorExpr::from(expr.clone())));
         let expr_str = format_operator_tree(&memo_expr);
 
@@ -112,15 +114,17 @@ impl RuleTester {
             expr_str
         );
 
-        let expr = memo_expr.expr();
-        let result = self.rule.apply(&ctx, expr.relational().logical());
-        assert!(
-            matches!(result, Ok(None)),
-            "Rule should have not been applied. Rule: {:?} result: {:?} expr:\n{}",
-            self.rule,
-            result,
-            expr_str
-        )
+        if can_apply {
+            let expr = memo_expr.expr();
+            let result = self.rule.apply(&ctx, expr.relational().logical());
+            assert!(
+                matches!(result, Ok(None)),
+                "Rule should have not been applied. Rule: {:?} result: {:?} expr:\n{}",
+                self.rule,
+                result,
+                expr_str
+            )
+        }
     }
 }
 

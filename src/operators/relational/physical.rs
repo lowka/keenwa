@@ -18,7 +18,7 @@ pub enum PhysicalExpr {
     HashAggregate(HashAggregate),
     HashJoin(HashJoin),
     MergeSortJoin(MergeSortJoin),
-    NestedLoop(NestedLoop),
+    NestedLoopJoin(NestedLoopJoin),
     Scan(Scan),
     IndexScan(IndexScan),
     Sort(Sort),
@@ -37,7 +37,7 @@ impl PhysicalExpr {
             PhysicalExpr::HashAggregate(expr) => expr.copy_in(visitor, expr_ctx),
             PhysicalExpr::HashJoin(expr) => expr.copy_in(visitor, expr_ctx),
             PhysicalExpr::MergeSortJoin(expr) => expr.copy_in(visitor, expr_ctx),
-            PhysicalExpr::NestedLoop(expr) => expr.copy_in(visitor, expr_ctx),
+            PhysicalExpr::NestedLoopJoin(expr) => expr.copy_in(visitor, expr_ctx),
             PhysicalExpr::Scan(_) => {}
             PhysicalExpr::IndexScan(_) => {}
             PhysicalExpr::Sort(expr) => expr.copy_in(visitor, expr_ctx),
@@ -55,7 +55,7 @@ impl PhysicalExpr {
             PhysicalExpr::HashAggregate(expr) => PhysicalExpr::HashAggregate(expr.with_new_inputs(inputs)),
             PhysicalExpr::HashJoin(expr) => PhysicalExpr::HashJoin(expr.with_new_inputs(inputs)),
             PhysicalExpr::MergeSortJoin(expr) => PhysicalExpr::MergeSortJoin(expr.with_new_inputs(inputs)),
-            PhysicalExpr::NestedLoop(expr) => PhysicalExpr::NestedLoop(expr.with_new_inputs(inputs)),
+            PhysicalExpr::NestedLoopJoin(expr) => PhysicalExpr::NestedLoopJoin(expr.with_new_inputs(inputs)),
             PhysicalExpr::Scan(expr) => PhysicalExpr::Scan(expr.with_new_inputs(inputs)),
             PhysicalExpr::IndexScan(expr) => PhysicalExpr::IndexScan(expr.with_new_inputs(inputs)),
             PhysicalExpr::Sort(expr) => PhysicalExpr::Sort(expr.with_new_inputs(inputs)),
@@ -73,7 +73,7 @@ impl PhysicalExpr {
             PhysicalExpr::HashAggregate(expr) => expr.num_children(),
             PhysicalExpr::HashJoin(expr) => expr.num_children(),
             PhysicalExpr::MergeSortJoin(expr) => expr.num_children(),
-            PhysicalExpr::NestedLoop(expr) => expr.num_children(),
+            PhysicalExpr::NestedLoopJoin(expr) => expr.num_children(),
             PhysicalExpr::Scan(expr) => expr.num_children(),
             PhysicalExpr::IndexScan(expr) => expr.num_children(),
             PhysicalExpr::Sort(expr) => expr.num_children(),
@@ -91,7 +91,7 @@ impl PhysicalExpr {
             PhysicalExpr::HashAggregate(expr) => expr.get_child(i),
             PhysicalExpr::HashJoin(expr) => expr.get_child(i),
             PhysicalExpr::MergeSortJoin(expr) => expr.get_child(i),
-            PhysicalExpr::NestedLoop(expr) => expr.get_child(i),
+            PhysicalExpr::NestedLoopJoin(expr) => expr.get_child(i),
             PhysicalExpr::Scan(expr) => expr.get_child(i),
             PhysicalExpr::IndexScan(expr) => expr.get_child(i),
             PhysicalExpr::Sort(expr) => expr.get_child(i),
@@ -109,7 +109,7 @@ impl PhysicalExpr {
             PhysicalExpr::HashAggregate(expr) => expr.build_required_properties(),
             PhysicalExpr::HashJoin(expr) => expr.build_required_properties(),
             PhysicalExpr::MergeSortJoin(expr) => expr.build_required_properties(),
-            PhysicalExpr::NestedLoop(expr) => expr.build_required_properties(),
+            PhysicalExpr::NestedLoopJoin(expr) => expr.build_required_properties(),
             PhysicalExpr::Scan(expr) => expr.build_required_properties(),
             PhysicalExpr::IndexScan(expr) => expr.build_required_properties(),
             PhysicalExpr::Sort(expr) => expr.build_required_properties(),
@@ -129,7 +129,7 @@ impl PhysicalExpr {
             PhysicalExpr::Select(expr) => expr.format_expr(f),
             PhysicalExpr::HashJoin(expr) => expr.format_expr(f),
             PhysicalExpr::MergeSortJoin(expr) => expr.format_expr(f),
-            PhysicalExpr::NestedLoop(expr) => expr.format_expr(f),
+            PhysicalExpr::NestedLoopJoin(expr) => expr.format_expr(f),
             PhysicalExpr::Scan(expr) => expr.format_expr(f),
             PhysicalExpr::IndexScan(expr) => expr.format_expr(f),
             PhysicalExpr::Sort(expr) => expr.format_expr(f),
@@ -471,13 +471,14 @@ impl MergeSortJoin {
 }
 
 #[derive(Debug, Clone)]
-pub struct NestedLoop {
+pub struct NestedLoopJoin {
+    pub join_type: JoinType,
     pub left: RelNode,
     pub right: RelNode,
     pub condition: Option<ScalarNode>,
 }
 
-impl NestedLoop {
+impl NestedLoopJoin {
     fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
         visitor.visit_rel(expr_ctx, &self.left);
         visitor.visit_rel(expr_ctx, &self.right);
@@ -486,9 +487,10 @@ impl NestedLoop {
 
     fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         let num_opt = self.condition.as_ref().map(|_| 1).unwrap_or_default();
-        inputs.expect_len(2 + num_opt, "NestedLoop");
+        inputs.expect_len(2 + num_opt, "NestedLoopJoin");
 
-        NestedLoop {
+        NestedLoopJoin {
+            join_type: self.join_type.clone(),
             left: inputs.rel_node(),
             right: inputs.rel_node(),
             condition: self.condition.as_ref().map(|_| inputs.scalar_node()),
@@ -520,6 +522,7 @@ impl NestedLoop {
         F: MemoExprFormatter,
     {
         f.write_name("NestedLoopJoin");
+        f.write_value("type", &self.join_type);
         f.write_expr("left", &self.left);
         f.write_expr("right", &self.right);
         if let Some(condition) = self.condition.as_ref() {
