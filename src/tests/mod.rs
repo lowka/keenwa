@@ -730,7 +730,7 @@ fn test_nested_loop_join() {
 06 Expr col:3
 05 Expr col:2
 04 Expr col:1
-03 NestedLoopJoin [00 01 02]
+03 NestedLoopJoin type=Inner [00 01 02]
 02 Expr col:1 > 100
 01 Scan B cols=[3, 4]
 00 Scan A cols=[1, 2]
