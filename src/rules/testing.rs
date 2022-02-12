@@ -6,11 +6,12 @@ use rand::seq::SliceRandom;
 
 use crate::error::OptimizerError;
 use crate::memo::{MemoBuilder, MemoExpr, MemoExprFormatter, MemoGroupCallback, StringMemoFormatter};
-use crate::meta::MutableMetadata;
-use crate::operators::relational::logical::LogicalExpr;
+use crate::meta::{ColumnId, MutableMetadata};
+use crate::operators::relational::logical::{LogicalExpr, LogicalGet};
 use crate::operators::relational::physical::PhysicalExpr;
-use crate::operators::relational::RelNode;
-use crate::operators::{ExprMemo, Operator, OperatorExpr, OperatorMetadata, Properties};
+use crate::operators::relational::{RelExpr, RelNode};
+use crate::operators::{ExprMemo, Operator, OperatorExpr, OperatorMetadata, Properties, RelationalProperties};
+use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
 use crate::rules::{Rule, RuleContext, RuleId, RuleIterator, RuleResult, RuleSet};
 
@@ -384,6 +385,20 @@ impl MemoExprFormatter for FormatExprs<'_> {
     {
         // values are written by FormatHeader
     }
+}
+
+/// Creates an instance of [LogicalExpr::Get] with the given columns used as output columns.
+/// `columns` are also used to populate `output_columns` of [LogicalProperties] of the created expression.
+pub fn new_src(src: &str, columns: Vec<ColumnId>) -> RelNode {
+    let expr = LogicalExpr::Get(LogicalGet {
+        source: src.into(),
+        columns: columns.clone(),
+    });
+    let props = RelationalProperties {
+        logical: LogicalProperties::new(columns, None),
+        required: Default::default(),
+    };
+    RelNode::new(RelExpr::Logical(Box::new(expr)), props)
 }
 
 #[cfg(test)]
