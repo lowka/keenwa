@@ -48,7 +48,7 @@ pub fn expect_group_exprs<E, T>(group: &MemoGroupRef<E, T>, expected: Vec<MemoEx
 where
     E: MemoExpr,
 {
-    let actual: Vec<MemoExprRef<E>> = group.mexprs().map(|e| e.clone()).collect();
+    let actual: Vec<MemoExprRef<E>> = group.mexprs().collect();
     assert_eq!(actual, expected, "group#{} exprs", group.id());
 }
 
