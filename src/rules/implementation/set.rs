@@ -43,6 +43,7 @@ impl Rule for UnionRule {
     }
 }
 
+#[derive(Debug)]
 pub struct HashSetOpRule;
 
 impl Rule for HashSetOpRule {

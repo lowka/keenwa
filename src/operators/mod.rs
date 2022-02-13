@@ -11,7 +11,7 @@ use scalar::{ScalarExpr, ScalarNode};
 
 use crate::memo::{
     CopyInExprs, CopyInNestedExprs, ExprContext, Memo, MemoExpr, MemoExprFormatter, MemoExprRef, MemoExprState,
-    MemoGroupCallback, NewChildExprs, Props,
+    MemoGroupCallbackRef, NewChildExprs, Props,
 };
 use crate::meta::MutableMetadata;
 use crate::operators::scalar::expr_with_new_inputs;
@@ -26,7 +26,7 @@ pub mod scalar;
 pub type OperatorMetadata = Rc<MutableMetadata>;
 pub type ExprMemo = Memo<Operator, OperatorMetadata>;
 pub type ExprRef = MemoExprRef<Operator>;
-pub type ExprCallback = dyn MemoGroupCallback<Expr = OperatorExpr, Props = Properties, Metadata = OperatorMetadata>;
+pub type ExprCallback = MemoGroupCallbackRef<OperatorExpr, Properties, OperatorMetadata>;
 
 /// An operator is an expression (which can be either logical or physical) with a set of properties.
 /// A tree of operators can represent both initial (unoptimized) and optimized query plans.

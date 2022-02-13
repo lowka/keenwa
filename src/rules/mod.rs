@@ -44,11 +44,7 @@ pub trait Rule {
 
 impl Debug for dyn Rule {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Rule")
-            .field("name", &self.name())
-            .field("type", &self.rule_type())
-            .field("group_rule", &self.group_rule())
-            .finish()
+        rule_debug_format(self, f)
     }
 }
 
@@ -171,11 +167,11 @@ pub trait RuleSet {
 
 /// An iterator over available optimization rules.
 pub struct RuleIterator<'r> {
-    rules: std::vec::IntoIter<(&'r RuleId, &'r Box<dyn Rule>)>,
+    rules: std::vec::IntoIter<(&'r RuleId, &'r dyn Rule)>,
 }
 
 impl<'r> RuleIterator<'r> {
-    pub fn new(rules: Vec<(&'r RuleId, &'r Box<dyn Rule>)>) -> Self {
+    pub fn new(rules: Vec<(&'r RuleId, &'r dyn Rule)>) -> Self {
         RuleIterator {
             rules: rules.into_iter(),
         }
@@ -183,18 +179,38 @@ impl<'r> RuleIterator<'r> {
 }
 
 impl<'r> Iterator for RuleIterator<'r> {
-    type Item = (&'r RuleId, &'r Box<dyn Rule>);
+    type Item = (&'r RuleId, &'r dyn Rule);
 
     fn next(&mut self) -> Option<Self::Item> {
         self.rules.next()
     }
 }
 
-impl Debug for RuleIterator<'_> {
+impl<'a> Debug for RuleIterator<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        // Can not used debug struct because the size of a slice is not known at compile time.
-        write!(f, "RuleIterator({:?})", self.rules.as_slice())
+        struct DebugRule<'a> {
+            rule: &'a dyn Rule,
+        }
+        impl Debug for DebugRule<'_> {
+            fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+                rule_debug_format(self.rule, f)
+            }
+        }
+        f.debug_list()
+            .entries(self.rules.as_slice().iter().map(|(id, rule)| {
+                let rule = DebugRule { rule: *rule };
+                (id, rule)
+            }))
+            .finish()
     }
+}
+
+fn rule_debug_format(rule: &dyn Rule, f: &mut Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("Rule")
+        .field("name", &rule.name())
+        .field("type", &rule.rule_type())
+        .field("group_rule", &rule.group_rule())
+        .finish()
 }
 
 /// An implementation of [RuleSet] trait that uses a predefined set optimization rules.
@@ -219,7 +235,7 @@ impl StaticRuleSet {
 
 impl RuleSet for StaticRuleSet {
     fn get_rules(&self) -> RuleIterator {
-        let rules: Vec<(&RuleId, &Box<dyn Rule>)> = self.rules.iter().collect();
+        let rules: Vec<(&RuleId, &dyn Rule)> = self.rules.iter().map(|(id, rule)| (id, rule.as_ref())).collect();
         RuleIterator::new(rules)
     }
 

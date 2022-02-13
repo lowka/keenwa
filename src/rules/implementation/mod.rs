@@ -10,10 +10,8 @@ pub use set::{HashSetOpRule, UnionRule};
 
 use crate::catalog::CatalogRef;
 use crate::error::OptimizerError;
-use crate::operators::relational::logical::{
-    LogicalAggregate, LogicalEmpty, LogicalExpr, LogicalGet, LogicalProjection, LogicalSelect,
-};
-use crate::operators::relational::physical::{Empty, HashAggregate, PhysicalExpr, Projection, Scan, Select};
+use crate::operators::relational::logical::{LogicalEmpty, LogicalExpr, LogicalGet, LogicalProjection, LogicalSelect};
+use crate::operators::relational::physical::{Empty, PhysicalExpr, Projection, Scan, Select};
 use crate::rules::{Rule, RuleContext, RuleMatch, RuleResult, RuleType};
 
 #[derive(Debug)]

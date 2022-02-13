@@ -23,7 +23,7 @@ where
     T: Rule + 'static,
 {
     let mut tester = RuleTester::new(rule);
-    tester.no_match(&expr, false)
+    tester.no_match(expr, false)
 }
 
 /// Expects that given rule can be applied to the given expression and compares the result
@@ -155,7 +155,7 @@ where
 {
     fn get_rules(&self) -> RuleIterator {
         if self.shuffle_rules {
-            let mut rules: Vec<(&RuleId, &Box<dyn Rule>)> = self.rule_set.get_rules().collect();
+            let mut rules: Vec<(&RuleId, &dyn Rule)> = self.rule_set.get_rules().collect();
             let mut rng = ThreadRng::default();
             rules.shuffle(&mut rng);
 
@@ -273,10 +273,10 @@ impl MemoExprFormatter for FormatHeader<'_> {
             if i > 0 {
                 fmt.push_str(", ");
             }
-            fmt.set_write_name(false);
+            fmt.write_expr_name(false);
             let expr = expr.as_ref();
             T::format_expr(expr.expr(), expr.props(), &mut fmt);
-            fmt.set_write_name(true);
+            fmt.write_expr_name(true);
         }
         fmt.push(']');
 
@@ -405,7 +405,7 @@ pub fn new_src(src: &str, columns: Vec<ColumnId>) -> RelNode {
 mod test {
     use crate::memo::ScalarNode;
     use crate::operators::relational::logical::{LogicalAggregate, LogicalExpr, LogicalGet, LogicalProjection};
-    use crate::operators::relational::{RelExpr, RelNode};
+    use crate::operators::relational::RelNode;
     use crate::operators::scalar::value::ScalarValue;
     use crate::operators::scalar::ScalarExpr;
     use crate::operators::{Operator, OperatorExpr};
@@ -464,7 +464,7 @@ LogicalAggregate
 
     fn expect_formatted(expr: &LogicalExpr, expected: &str) {
         let expr = Operator::from(OperatorExpr::from(expr.clone()));
-        let mut str = format_operator_tree(&expr);
+        let str = format_operator_tree(&expr);
         let str = format!("\n{}\n", str);
         assert_eq!(str, expected, "expected format");
     }

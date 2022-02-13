@@ -63,7 +63,7 @@ mod test {
         let columns = collect_columns(&expr);
         assert_eq!(columns, vec![1], "one column");
 
-        let expr = Expr::Column(1).and(Expr::Column(2).not());
+        let expr = !Expr::Column(1).and(Expr::Column(2));
         let columns = collect_columns(&expr);
         assert_eq!(columns, vec![1, 2], "nested columns");
 

@@ -412,7 +412,7 @@ mod test {
         assert_eq!(rel_node, rel_node.clone(), "clone eq");
 
         let expr1 = TestRelExpr::Leaf("a");
-        let duplicate = RelNode::new(expr1, props.clone());
+        let duplicate = RelNode::new(expr1, props);
         assert_ne!(rel_node, duplicate, "rel nodes in the owned state when they store to the same expr");
     }
 
@@ -427,11 +427,11 @@ mod test {
         hash_map.insert(rel_node.clone(), 1);
         assert_eq!(hash_map.get(&rel_node), Some(&1));
 
-        let existing = hash_map.insert(rel_node.clone(), 2);
+        let existing = hash_map.insert(rel_node, 2);
         assert_eq!(existing, Some(1));
 
         let expr1 = TestRelExpr::Leaf("a");
-        let duplicate = RelNode::new(expr1, props.clone());
+        let duplicate = RelNode::new(expr1, props);
         assert_eq!(hash_map.get(&duplicate), None);
     }
 
@@ -445,7 +445,7 @@ mod test {
         assert_eq!(scalar_node, scalar_node.clone(), "clone eq");
 
         let expr1 = TestScalarExpr::Value(1);
-        let duplicate = ScalarNode::new(expr1, props.clone());
+        let duplicate = ScalarNode::new(expr1, props);
         assert_ne!(scalar_node, duplicate, "scalar nodes in the owned state when they store to the same expr");
     }
 
@@ -460,11 +460,11 @@ mod test {
         hash_map.insert(scalar_node.clone(), 1);
         assert_eq!(hash_map.get(&scalar_node), Some(&1));
 
-        let existing = hash_map.insert(scalar_node.clone(), 2);
+        let existing = hash_map.insert(scalar_node, 2);
         assert_eq!(existing, Some(1));
 
         let expr1 = TestScalarExpr::Value(1);
-        let duplicate = ScalarNode::new(expr1, props.clone());
+        let duplicate = ScalarNode::new(expr1, props);
         assert_eq!(hash_map.get(&duplicate), None);
     }
 

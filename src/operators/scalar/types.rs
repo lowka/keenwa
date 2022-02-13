@@ -1,8 +1,7 @@
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
-use crate::meta::{ColumnId, MutableMetadata};
+use crate::meta::ColumnId;
 use crate::operators::scalar::expr::{AggregateFunction, BinaryOp, Expr, NestedExpr};
-use std::fmt::format;
 
 /// A helper trait that provides the type of the given column.
 pub trait ColumnTypeRegistry {
@@ -85,7 +84,7 @@ where
         BinaryOp::Eq | BinaryOp::NotEq => {
             if lhs != rhs && lhs != DataType::Null && rhs != DataType::Null {
                 let msg = format!("Expr: {} Types does not match. lhs: {}. rhs: {}", expr, lhs, rhs);
-                return Err(OptimizerError::Internal(msg));
+                Err(OptimizerError::Internal(msg))
             } else {
                 Ok(DataType::Bool)
             }
@@ -127,7 +126,7 @@ where
 #[cfg(test)]
 mod test {
     use crate::datatypes::DataType;
-    use crate::meta::{ColumnId, ColumnMetadata, MutableMetadata};
+    use crate::meta::ColumnId;
     use crate::operators::scalar::expr::{AggregateFunction, BinaryOp, NestedExpr};
     use crate::operators::scalar::types::{resolve_expr_type, ColumnTypeRegistry};
     use crate::operators::scalar::value::ScalarValue;
@@ -135,6 +134,7 @@ mod test {
     use std::convert::TryFrom;
     use std::fmt::Formatter;
     use std::hash::{Hash, Hasher};
+    use std::ops::{Add, Div, Mul, Rem, Sub};
 
     #[derive(Debug, Clone)]
     struct DummyRelExpr(Vec<ColumnId>);
@@ -179,6 +179,10 @@ mod test {
 
     fn str_value() -> Expr {
         Expr::Scalar(ScalarValue::String("s".into()))
+    }
+
+    fn col_name(name: &str) -> Expr {
+        Expr::ColumnName(name.into())
     }
 
     #[derive(Default)]
@@ -253,10 +257,16 @@ mod test {
 
     #[test]
     fn not_type() {
-        expect_type(&bool_value().not(), &DataType::Bool);
+        expect_type(&!bool_value(), &DataType::Bool);
 
-        expect_not_resolved(&int_value().not());
-        expect_not_resolved(&str_value().not());
+        expect_not_resolved(&!int_value());
+        expect_not_resolved(&!str_value());
+    }
+
+    #[test]
+    fn not_trait() {
+        let expr = !col_name("a");
+        expect_expr(&expr, "NOT col:a")
     }
 
     #[test]
@@ -281,7 +291,7 @@ mod test {
             expect_not_resolved(&aggr("max", vec![expr.clone()]));
             expect_not_resolved(&aggr("avg", vec![expr.clone()]));
             expect_not_resolved(&aggr("sum", vec![expr.clone()]));
-            expect_type(&aggr("count", vec![expr.clone()]), &DataType::Int32);
+            expect_type(&aggr("count", vec![expr]), &DataType::Int32);
         }
 
         expect_type(&aggr("min", vec![int_value()]), &DataType::Int32);
@@ -344,8 +354,20 @@ mod test {
     }
 
     #[test]
+    fn add_trait() {
+        let expr = col_name("a").add(col_name("b"));
+        expect_expr(&expr, "col:a + col:b");
+    }
+
+    #[test]
     fn sub_type() {
         expect_arithmetic_expr_type(BinaryOp::Minus);
+    }
+
+    #[test]
+    fn sub_trait() {
+        let expr = col_name("a").sub(col_name("b"));
+        expect_expr(&expr, "col:a - col:b");
     }
 
     #[test]
@@ -354,13 +376,31 @@ mod test {
     }
 
     #[test]
+    fn mul_trait() {
+        let expr = col_name("a").mul(col_name("b"));
+        expect_expr(&expr, "col:a * col:b");
+    }
+
+    #[test]
     fn div_type() {
         expect_arithmetic_expr_type(BinaryOp::Divide);
     }
 
     #[test]
+    fn div_trait() {
+        let expr = col_name("a").div(col_name("b"));
+        expect_expr(&expr, "col:a / col:b");
+    }
+
+    #[test]
     fn mod_type() {
         expect_arithmetic_expr_type(BinaryOp::Modulo);
+    }
+
+    #[test]
+    fn rem_trait() {
+        let expr = col_name("a").rem(col_name("b"));
+        expect_expr(&expr, "col:a % col:b");
     }
 
     // =, !=
@@ -373,7 +413,7 @@ mod test {
         expect_type(&null_value().binary_expr(op.clone(), bool_value()), &DataType::Bool);
         expect_type(&bool_value().binary_expr(op.clone(), null_value()), &DataType::Bool);
 
-        expect_not_resolved(&int_value().binary_expr(op.clone(), bool_value()));
+        expect_not_resolved(&int_value().binary_expr(op, bool_value()));
     }
 
     // AND, OR
@@ -388,7 +428,7 @@ mod test {
         expect_not_resolved(&int_value().binary_expr(op.clone(), bool_value()));
 
         expect_not_resolved(&int_value().binary_expr(op.clone(), int_value()));
-        expect_not_resolved(&str_value().binary_expr(op.clone(), str_value()));
+        expect_not_resolved(&str_value().binary_expr(op, str_value()));
     }
 
     // Comparison operators: >, <=, etc.
@@ -405,7 +445,7 @@ mod test {
 
         expect_not_resolved(&str_value().binary_expr(op.clone(), str_value()));
         expect_not_resolved(&str_value().binary_expr(op.clone(), int_value()));
-        expect_not_resolved(&int_value().binary_expr(op.clone(), str_value()));
+        expect_not_resolved(&int_value().binary_expr(op, str_value()));
     }
 
     // Arithmetic operators
@@ -422,7 +462,7 @@ mod test {
 
         expect_not_resolved(&str_value().binary_expr(op.clone(), str_value()));
         expect_not_resolved(&str_value().binary_expr(op.clone(), int_value()));
-        expect_not_resolved(&int_value().binary_expr(op.clone(), str_value()));
+        expect_not_resolved(&int_value().binary_expr(op, str_value()));
     }
 
     fn expect_type(expr: &Expr, expected_type: &DataType) {
@@ -442,5 +482,9 @@ mod test {
     fn expect_not_resolved(expr: &Expr) {
         let registry = MockColumnTypeRegistry::default();
         resolve_expr_type(expr, &registry).unwrap_err();
+    }
+
+    fn expect_expr(expr: &Expr, expected_str: &str) {
+        assert_eq!(expected_str, format!("{}", expr))
     }
 }

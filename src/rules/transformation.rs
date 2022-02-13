@@ -137,75 +137,73 @@ impl Rule for JoinAssociativityRule {
     }
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
-        match expr {
-            LogicalExpr::Join(LogicalJoin {
-                join_type: JoinType::Inner,
-                left: top_left,
-                right: top_right,
-                condition: top_condition,
-            }) => {
-                match (top_left.expr().logical(), top_right.expr().logical()) {
-                    // [AxB]xC -> Ax[BxC]
-                    (
-                        LogicalExpr::Join(LogicalJoin {
+        if let LogicalExpr::Join(LogicalJoin {
+            join_type: JoinType::Inner,
+            left: top_left,
+            right: top_right,
+            condition: top_condition,
+        }) = expr
+        {
+            match (top_left.expr().logical(), top_right.expr().logical()) {
+                // [AxB]xC -> Ax[BxC]
+                (
+                    LogicalExpr::Join(LogicalJoin {
+                        join_type: JoinType::Inner,
+                        left: inner_left,
+                        right: inner_right,
+                        condition: inner_condition,
+                    }),
+                    _,
+                ) => {
+                    if let Some((new_top_condition, new_inner_condition)) =
+                        Self::left_side_condition(top_condition, inner_condition)
+                    {
+                        let expr = LogicalExpr::Join(LogicalJoin {
                             join_type: JoinType::Inner,
-                            left: inner_left,
-                            right: inner_right,
-                            condition: inner_condition,
-                        }),
-                        _,
-                    ) => {
-                        if let Some((new_top_condition, new_inner_condition)) =
-                            Self::left_side_condition(top_condition, inner_condition)
-                        {
-                            let expr = LogicalExpr::Join(LogicalJoin {
+                            left: inner_left.clone(),
+                            right: LogicalExpr::Join(LogicalJoin {
                                 join_type: JoinType::Inner,
-                                left: inner_left.clone(),
-                                right: LogicalExpr::Join(LogicalJoin {
-                                    join_type: JoinType::Inner,
-                                    left: inner_right.clone(),
-                                    right: top_right.clone(),
-                                    condition: new_inner_condition,
-                                })
-                                .into(),
-                                condition: new_top_condition,
-                            });
-                            return Ok(Some(RuleResult::Substitute(expr)));
-                        }
+                                left: inner_right.clone(),
+                                right: top_right.clone(),
+                                condition: new_inner_condition,
+                            })
+                            .into(),
+                            condition: new_top_condition,
+                        });
+                        return Ok(Some(RuleResult::Substitute(expr)));
                     }
-                    // Ax[BxC] -> [AxB]xC
-                    (
-                        _,
-                        LogicalExpr::Join(LogicalJoin {
-                            join_type: JoinType::Inner,
-                            left: inner_left,
-                            right: inner_right,
-                            condition: inner_condition,
-                        }),
-                    ) => {
-                        if let Some((new_top_condition, new_inner_condition)) =
-                            Self::right_side_condition(top_condition, inner_condition)
-                        {
-                            let expr = LogicalExpr::Join(LogicalJoin {
-                                join_type: JoinType::Inner,
-                                left: LogicalExpr::Join(LogicalJoin {
-                                    join_type: JoinType::Inner,
-                                    left: top_left.clone(),
-                                    right: inner_left.clone(),
-                                    condition: new_inner_condition,
-                                })
-                                .into(),
-                                right: inner_right.clone(),
-                                condition: new_top_condition,
-                            });
-
-                            return Ok(Some(RuleResult::Substitute(expr)));
-                        }
-                    }
-                    _ => {}
                 }
+                // Ax[BxC] -> [AxB]xC
+                (
+                    _,
+                    LogicalExpr::Join(LogicalJoin {
+                        join_type: JoinType::Inner,
+                        left: inner_left,
+                        right: inner_right,
+                        condition: inner_condition,
+                    }),
+                ) => {
+                    if let Some((new_top_condition, new_inner_condition)) =
+                        Self::right_side_condition(top_condition, inner_condition)
+                    {
+                        let expr = LogicalExpr::Join(LogicalJoin {
+                            join_type: JoinType::Inner,
+                            left: LogicalExpr::Join(LogicalJoin {
+                                join_type: JoinType::Inner,
+                                left: top_left.clone(),
+                                right: inner_left.clone(),
+                                condition: new_inner_condition,
+                            })
+                            .into(),
+                            right: inner_right.clone(),
+                            condition: new_top_condition,
+                        });
+
+                        return Ok(Some(RuleResult::Substitute(expr)));
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
         Ok(None)
     }
