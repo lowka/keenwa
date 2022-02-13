@@ -154,7 +154,11 @@ where
     /// a new memo group is created and this method returns a reference to it. Otherwise returns a reference
     /// to the already existing expression.
     pub fn insert_group(&mut self, expr: E) -> E {
-        self.memo_impl.insert_group(expr)
+        let copy_in = CopyIn {
+            memo: &mut self.memo_impl,
+            parent: None,
+        };
+        copy_in.execute(&expr)
     }
 
     /// Copies the expression `expr` into this memo and adds it to the memo group that granted the given [membership token](MemoGroupToken).
@@ -164,7 +168,11 @@ where
     ///
     /// This method panics if group with the given id does not exist.
     pub fn insert_group_member(&mut self, token: MemoGroupToken<E>, expr: E) -> E {
-        self.memo_impl.insert_group_member(token, expr)
+        let copy_in = CopyIn {
+            memo: &mut self.memo_impl,
+            parent: Some(token),
+        };
+        copy_in.execute(&expr)
     }
 
     /// Return a reference to a memo group with the given id or panics if it does not exists.
