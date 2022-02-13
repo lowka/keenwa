@@ -9,7 +9,7 @@ use triomphe::Arc;
 
 use crate::memo::unsafe_impl::arena::{Arena, ElementIndex, ElementRef, ElementsIter};
 use crate::memo::{
-    create_group_properties, make_digest, CopyIn, CopyInExprs, Expr, ExprContext, MemoExpr, MemoGroupCallbackRef,
+    create_group_properties, make_digest, CopyInExprs, Expr, ExprContext, MemoExpr, MemoGroupCallbackRef,
     NewChildExprs, OwnedExpr, Props, StringMemoFormatter,
 };
 
@@ -93,23 +93,7 @@ where
         }
     }
 
-    pub fn insert_group(&mut self, expr: E) -> E {
-        let copy_in = CopyIn {
-            memo: self,
-            parent: None,
-        };
-        copy_in.execute(&expr)
-    }
-
-    pub fn insert_group_member(&mut self, token: MemoGroupToken<E>, expr: E) -> E {
-        let copy_in = CopyIn {
-            memo: self,
-            parent: Some(token),
-        };
-        copy_in.execute(&expr)
-    }
-
-    pub fn get_group(&self, group_id: &GroupId) -> MemoGroupRef<E, T> {
+    pub(crate) fn get_group(&self, group_id: &GroupId) -> MemoGroupRef<E, T> {
         let group_ref = self.get_group_ref(group_id);
         MemoGroupRef {
             id: *group_id,
@@ -118,19 +102,19 @@ where
         }
     }
 
-    pub fn metadata(&self) -> &T {
+    pub(crate) fn metadata(&self) -> &T {
         &self.metadata
     }
 
-    pub fn num_groups(&self) -> usize {
+    pub(crate) fn num_groups(&self) -> usize {
         self.groups.len()
     }
 
-    pub fn num_exprs(&self) -> usize {
+    pub(crate) fn num_exprs(&self) -> usize {
         self.exprs.len()
     }
 
-    pub fn expr_to_group(&self) -> &HashMap<ExprId, GroupId> {
+    pub(crate) fn expr_to_group(&self) -> &HashMap<ExprId, GroupId> {
         &self.expr_to_group
     }
 
