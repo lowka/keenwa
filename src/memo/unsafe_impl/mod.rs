@@ -583,11 +583,11 @@ impl<'m, E> Iterator for MemoGroupIter<'m, E>
 where
     E: MemoExpr,
 {
-    type Item = &'m MemoExprRef<E>;
+    type Item = MemoExprRef<E>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.position < self.group.exprs.len() {
-            let expr = &self.group.exprs[self.position];
+            let expr = self.group.exprs[self.position].clone();
             self.position += 1;
             Some(expr)
         } else {
