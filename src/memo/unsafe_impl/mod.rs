@@ -4,14 +4,12 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
-use std::ops::Deref;
-use std::rc::Rc;
 
 use triomphe::Arc;
 
 use crate::memo::unsafe_impl::arena::{Arena, ElementIndex, ElementRef, ElementsIter};
 use crate::memo::{
-    create_group_properties, make_digest, CopyIn, CopyInExprs, Expr, ExprContext, MemoExpr, MemoGroupCallback,
+    create_group_properties, make_digest, CopyIn, CopyInExprs, Expr, ExprContext, MemoExpr, MemoGroupCallbackRef,
     NewChildExprs, OwnedExpr, Props, StringMemoFormatter,
 };
 
@@ -64,7 +62,7 @@ where
     expr_cache: HashMap<String, ExprId>,
     expr_to_group: HashMap<ExprId, GroupId>,
     metadata: T,
-    callback: Option<Rc<dyn MemoGroupCallback<Expr = E::Expr, Props = E::Props, Metadata = T>>>,
+    callback: Option<MemoGroupCallbackRef<E::Expr, E::Props, T>>,
 }
 
 impl<E, T> MemoImpl<E, T>
@@ -83,10 +81,7 @@ where
         }
     }
 
-    pub(crate) fn with_callback(
-        metadata: T,
-        callback: Rc<dyn MemoGroupCallback<Expr = E::Expr, Props = E::Props, Metadata = T>>,
-    ) -> Self {
+    pub(crate) fn with_callback(metadata: T, callback: MemoGroupCallbackRef<E::Expr, E::Props, T>) -> Self {
         MemoImpl {
             groups: GroupDataStore::new(),
             exprs: AppendOnlyStore::new(),
@@ -180,7 +175,7 @@ where
             // We can store ExprPtr in the owned state and ExprGroupPtr in the memo state
             // because there is no direct way to retrieve this expression.
             expr: ExprPtr::Owned(Arc::new(expr)),
-            group: ExprGroupPtr::Memo((group_id, props_ref)),
+            group: ExprGroupPtr::new(group_id, props_ref),
         });
         let expr = E::from_state(state);
 
@@ -322,7 +317,7 @@ where
 
         let state = MemoExprState::Memo(MemoizedExpr {
             expr: ExprPtr::Memo(expr_ref),
-            group: ExprGroupPtr::Memo((group_id, props_ref)),
+            group: ExprGroupPtr::new(group_id, props_ref),
         });
         E::from_state(state)
     }
@@ -341,21 +336,6 @@ where
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("MemoGroupRef").field("id", &self.id).finish()
     }
-}
-
-pub(crate) fn debug_fmt_impl<M, T, E, P>(memo: &MemoImpl<M, T>, f: &mut Formatter<'_>) -> std::fmt::Result
-where
-    M: MemoExpr<Expr = E, Props = P> + Debug,
-    T: Debug,
-    E: Debug,
-    P: Debug,
-{
-    f.debug_struct("Memo")
-        .field("groups", &memo.groups.len())
-        .field("exprs", &memo.exprs.len())
-        .field("expr_to_group", &memo.expr_to_group)
-        .field("metadata", &memo.metadata)
-        .finish()
 }
 
 /// A token that allows the owner to add an expression into a memo group this token was obtained from.
@@ -417,7 +397,7 @@ where
     pub fn expr(&self) -> &E::Expr {
         match self {
             MemoExprState::Owned(state) => state.expr.as_ref(),
-            MemoExprState::Memo(state) => &state.expr.expr(),
+            MemoExprState::Memo(state) => state.expr.expr(),
         }
     }
 
@@ -428,7 +408,7 @@ where
     pub fn props(&self) -> &E::Props {
         match self {
             MemoExprState::Owned(state) => state.props.as_ref(),
-            MemoExprState::Memo(state) => &state.group.props(),
+            MemoExprState::Memo(state) => state.group.props(),
         }
     }
 
@@ -773,34 +753,28 @@ where
 }
 
 #[derive(Clone)]
-enum ExprGroupPtr<E>
+struct ExprGroupPtr<E>
 where
     E: MemoExpr,
 {
-    Owned(Arc<E::Props>),
-    Memo((GroupId, SharedRef<E::Props>)),
+    group_id: GroupId,
+    props: SharedRef<E::Props>,
 }
 
 impl<E> ExprGroupPtr<E>
 where
     E: MemoExpr,
 {
-    pub fn props(&self) -> &E::Props {
-        match self {
-            ExprGroupPtr::Owned(props) => props.as_ref(),
-            ExprGroupPtr::Memo((_, props)) => props.get(),
-        }
+    fn new(group_id: GroupId, props: SharedRef<E::Props>) -> Self {
+        ExprGroupPtr { group_id, props }
+    }
+
+    fn props(&self) -> &E::Props {
+        self.props.get()
     }
 
     fn memo_group_id(&self) -> GroupId {
-        match self {
-            ExprGroupPtr::Owned(_) => panic!("This should only be called on memoized expressions"),
-            ExprGroupPtr::Memo((group, _)) => *group,
-        }
-    }
-
-    fn from_memo_group(group_id: GroupId, props: SharedRef<E::Props>) -> Self {
-        ExprGroupPtr::Memo((group_id, props))
+        self.group_id
     }
 }
 
@@ -899,7 +873,7 @@ where
             // Both ExprPtr and ExprGroupPtr should be in the memo state
             // Because memo.exprs stores ExprPtr in the Owned state.
             expr: ExprPtr::Memo(expr_ref),
-            group: ExprGroupPtr::Memo((group_id, props_ref)),
+            group: ExprGroupPtr::new(group_id, props_ref),
         });
         E::from_state(state)
     };

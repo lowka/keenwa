@@ -456,7 +456,7 @@ fn apply_rule<R>(
 
                 runtime_state.tasks.schedule(Task::OptimizeExpr {
                     ctx,
-                    expr: new_expr.clone(),
+                    expr: new_expr,
                     explore,
                 });
             }

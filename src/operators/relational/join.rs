@@ -2,7 +2,6 @@ use std::fmt::{Display, Formatter};
 
 use crate::meta::ColumnId;
 use crate::operators::relational::RelNode;
-use crate::operators::scalar::expr::BinaryOp;
 use crate::operators::scalar::{exprs, ScalarExpr, ScalarNode};
 
 /// Type of a join.

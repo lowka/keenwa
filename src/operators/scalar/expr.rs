@@ -1,6 +1,7 @@
 use std::convert::TryFrom;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
+use std::ops::{Add, Div, Mul, Not, Rem, Sub};
 
 use itertools::Itertools;
 
@@ -280,11 +281,6 @@ where
         self.binary_expr(BinaryOp::Or, rhs)
     }
 
-    /// Returns `!this_expr` expression.
-    pub fn not(self) -> Self {
-        Expr::Not(Box::new(self))
-    }
-
     /// Returns `this_expr = rhs` expression.
     pub fn eq(self, rhs: Expr<T>) -> Self {
         self.binary_expr(BinaryOp::Eq, rhs)
@@ -321,31 +317,6 @@ where
     /// Returns `this_expr >= rhs` expression.
     pub fn gte(self, rhs: Expr<T>) -> Self {
         self.binary_expr(BinaryOp::GtEq, rhs)
-    }
-
-    /// Returns `this_expr + rhs` expression.
-    pub fn add(self, rhs: Expr<T>) -> Self {
-        self.binary_expr(BinaryOp::Plus, rhs)
-    }
-
-    /// Returns `this_expr - rhs` expression.
-    pub fn sub(self, rhs: Expr<T>) -> Self {
-        self.binary_expr(BinaryOp::Minus, rhs)
-    }
-
-    /// Returns `this_expr * rhs` expression.
-    pub fn mul(self, rhs: Expr<T>) -> Self {
-        self.binary_expr(BinaryOp::Multiply, rhs)
-    }
-
-    /// Returns `this_expr / rhs` expression.
-    pub fn div(self, rhs: Expr<T>) -> Self {
-        self.binary_expr(BinaryOp::Divide, rhs)
-    }
-
-    /// Returns `this_expr % rhs` expression.
-    pub fn modulo(self, rhs: Expr<T>) -> Self {
-        self.binary_expr(BinaryOp::Modulo, rhs)
     }
 }
 
@@ -507,6 +478,72 @@ impl Display for BinaryOp {
     }
 }
 
+impl<T> Add for Expr<T>
+where
+    T: NestedExpr,
+{
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        self.binary_expr(BinaryOp::Plus, rhs)
+    }
+}
+
+impl<T> Sub for Expr<T>
+where
+    T: NestedExpr,
+{
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        self.binary_expr(BinaryOp::Minus, rhs)
+    }
+}
+
+impl<T> Mul for Expr<T>
+where
+    T: NestedExpr,
+{
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        self.binary_expr(BinaryOp::Multiply, rhs)
+    }
+}
+
+impl<T> Div for Expr<T>
+where
+    T: NestedExpr,
+{
+    type Output = Self;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        self.binary_expr(BinaryOp::Divide, rhs)
+    }
+}
+
+impl<T> Rem for Expr<T>
+where
+    T: NestedExpr,
+{
+    type Output = Self;
+
+    fn rem(self, rhs: Self) -> Self::Output {
+        self.binary_expr(BinaryOp::Modulo, rhs)
+    }
+}
+
+impl<T> Not for Expr<T>
+where
+    T: NestedExpr,
+{
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        Expr::Not(Box::new(self))
+    }
+}
+
 /// Supported aggregate functions.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum AggregateFunction {
@@ -652,7 +689,7 @@ mod test {
         expect_expr(expr.clone().sub(rhs.clone()), "1 - 10");
         expect_expr(expr.clone().mul(rhs.clone()), "1 * 10");
         expect_expr(expr.clone().div(rhs.clone()), "1 / 10");
-        expect_expr(expr.clone().modulo(rhs.clone()), "1 % 10");
+        expect_expr(expr.rem(rhs), "1 % 10");
     }
 
     #[test]

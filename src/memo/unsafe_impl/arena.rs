@@ -102,7 +102,7 @@ impl<T> Arena<T> {
     ///
     /// A caller must guarantee that there no mutable references to elements allocated by this arena
     /// during the iteration.
-    pub fn iter(&self) -> ElementsIter<T> {
+    pub unsafe fn iter(&self) -> ElementsIter<T> {
         ElementsIter {
             arena: self,
             position: 0,

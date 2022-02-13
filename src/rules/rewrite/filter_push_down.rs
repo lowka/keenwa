@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 
@@ -406,7 +407,7 @@ LogicalProjection cols=[1] exprs: [col:1]
         rewrite_expr(
             |builder| {
                 let from_a = builder.get("A", vec!["a1", "a2"])?;
-                let col_a3 = col("a1").add(col("a2")).alias("a3");
+                let col_a3 = (col("a1") + col("a2")).alias("a3");
                 let project = from_a.project(vec![col("a1"), col("a2"), col_a3])?;
                 let filter = col("a3").gt(scalar(100));
                 let filter_a1 = project.select(Some(filter))?;
@@ -430,7 +431,7 @@ LogicalProjection cols=[1, 2, 3] exprs: [col:1, col:2, col:1 + col:2 AS a3]
                 let col_a1 = col("a1");
                 let col_a2 = col("a2");
                 let col_a3 = col("a2").alias("a3");
-                let col_a4 = col("a1").add(col("a3")).alias("a4");
+                let col_a4 = (col("a1") + col("a3")).alias("a4");
 
                 let project = from_a.project(vec![col_a1, col_a2, col_a3, col_a4])?;
                 let filter = col("a4").gt(scalar(100)).and(col("a3").gt(scalar(50)));
@@ -707,7 +708,7 @@ LogicalSelect
                 let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
 
                 // col:a1 + col:b1 = 10
-                let filter = col("a1").add(col("b1")).eq(scalar(10));
+                let filter = (col("a1") + col("b1")).eq(scalar(10));
 
                 let select = join.select(Some(filter))?;
                 Ok(select)
@@ -731,7 +732,7 @@ LogicalSelect
                 let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
 
                 // col:a1 + col:b1 = 10 AND col:a1 > 5
-                let a1_plus_b1 = col("a1").add(col("b1"));
+                let a1_plus_b1 = col("a1") + col("b1");
                 let a1_plus_b1_eq_10 = a1_plus_b1.eq(scalar(10));
                 let a1_gt_5 = col("a1").gt(scalar(5));
                 let filter = a1_plus_b1_eq_10.and(a1_gt_5);

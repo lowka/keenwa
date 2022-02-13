@@ -4,12 +4,11 @@ use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
-use std::rc::Rc;
 
 use triomphe::Arc;
 
 use crate::memo::{
-    create_group_properties, make_digest, CopyIn, CopyInExprs, Expr, ExprContext, MemoExpr, MemoGroupCallback,
+    create_group_properties, make_digest, CopyIn, CopyInExprs, Expr, ExprContext, MemoExpr, MemoGroupCallbackRef,
     NewChildExprs, OwnedExpr, Props, StringMemoFormatter,
 };
 
@@ -24,7 +23,7 @@ where
     expr_cache: HashMap<String, ExprId>,
     expr_to_group: HashMap<ExprId, GroupId>,
     metadata: T,
-    callback: Option<Rc<dyn MemoGroupCallback<Expr = E::Expr, Props = E::Props, Metadata = T>>>,
+    callback: Option<MemoGroupCallbackRef<E::Expr, E::Props, T>>,
 }
 
 impl<E, T> MemoImpl<E, T>
@@ -42,10 +41,7 @@ where
         }
     }
 
-    pub(crate) fn with_callback(
-        metadata: T,
-        callback: Rc<dyn MemoGroupCallback<Expr = E::Expr, Props = E::Props, Metadata = T>>,
-    ) -> Self {
+    pub(crate) fn with_callback(metadata: T, callback: MemoGroupCallbackRef<E::Expr, E::Props, T>) -> Self {
         MemoImpl {
             exprs: Vec::new(),
             groups: Vec::new(),
@@ -491,7 +487,7 @@ where
     pub fn expr(&self) -> &E::Expr {
         match self {
             MemoExprState::Owned(state) => state.expr.as_ref(),
-            MemoExprState::Memo(state) => &state.expr.expr(),
+            MemoExprState::Memo(state) => state.expr.expr(),
         }
     }
 
@@ -502,7 +498,7 @@ where
     pub fn props(&self) -> &E::Props {
         match self {
             MemoExprState::Owned(state) => state.props.as_ref(),
-            MemoExprState::Memo(state) => &state.group.props(),
+            MemoExprState::Memo(state) => state.group.props(),
         }
     }
 
@@ -690,7 +686,7 @@ where
             };
 
             let group_data = copy_in_exprs.memo.add_group(expr_id, props);
-            copy_in_exprs.memo.add_expr(expr_id, expr, group_data.clone())
+            copy_in_exprs.memo.add_expr(expr_id, expr, group_data)
         }
     } else {
         let expr = copy_in_exprs.memo.exprs.get(expr_id.index()).expect("Unexpected expression id");

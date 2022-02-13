@@ -3,11 +3,10 @@ use std::convert::Infallible;
 use std::ops::Deref;
 
 use crate::memo::NewChildExprs;
-use crate::meta::{ColumnId, Metadata, MetadataRef, MutableMetadata};
+use crate::meta::{ColumnId, MutableMetadata};
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::{ExprRewriter, Scalar};
 use crate::operators::scalar::types::ColumnTypeRegistry;
-use crate::operators::scalar::value::ScalarValue;
 use crate::operators::Operator;
 
 pub mod expr;

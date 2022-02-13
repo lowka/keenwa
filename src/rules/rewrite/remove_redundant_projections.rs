@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::operators::relational::join::JoinCondition;
 use crate::operators::relational::logical::{
     LogicalAggregate, LogicalExpr, LogicalGet, LogicalJoin, LogicalProjection,
@@ -248,7 +249,7 @@ LogicalProjection cols=[1, 4] exprs: [col:1, col:2 AS c2]
                 let from_a = builder.get("A", vec!["a1", "a2", "a3"])?;
                 let project = from_a.project(vec![col("a1"), col("a2"), col("a3")])?;
                 let project =
-                    project.project(vec![col("a1"), col("a2"), col("a2").alias("c3"), col("a1").add(col("a2"))])?;
+                    project.project(vec![col("a1"), col("a2"), col("a2").alias("c3"), col("a1") + col("a2")])?;
 
                 Ok(project)
             },
@@ -265,7 +266,7 @@ LogicalProjection cols=[1, 2, 4, 5] exprs: [col:1, col:2, col:2 AS c3, col:1 + c
         rewrite_expr(
             |builder| {
                 let from_a = builder.get("A", vec!["a1", "a2", "a3"])?;
-                let project = from_a.project(vec![col("a1"), col("a2"), col("a1").add(col("a2")).alias("sum")])?;
+                let project = from_a.project(vec![col("a1"), col("a2"), (col("a1") + col("a2")).alias("sum")])?;
                 let project = project.project(vec![col("a1"), col("a2"), col("sum").alias("c3")])?;
 
                 Ok(project)
@@ -364,7 +365,7 @@ LogicalAggregate
                     .build()?;
 
                 let s = col("sum").alias("s");
-                let s2 = col("a1").add(col("a1")).alias("s2");
+                let s2 = col("a1") + (col("a1")).alias("s2");
                 let project = aggr.project(vec![s, s2])?;
 
                 Ok(project)
@@ -389,7 +390,7 @@ LogicalProjection cols=[4, 5] exprs: [col:3 AS s, col:1 + col:1 AS s2]
                     .add_func("sum", "a1")?
                     .group_by("a1")?
                     .build()?;
-                let project = aggr.project(vec![col("sum").alias("s"), col("a1").add(col("a1")).alias("s2")])?;
+                let project = aggr.project(vec![col("sum").alias("s"), col("a1") + (col("a1")).alias("s2")])?;
 
                 Ok(project)
             },

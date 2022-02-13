@@ -92,7 +92,7 @@ pub struct MemoBuilder<E, T>
 where
     E: MemoExpr,
 {
-    callback: Option<Rc<dyn MemoGroupCallback<Expr = E::Expr, Props = E::Props, Metadata = T>>>,
+    callback: Option<MemoGroupCallbackRef<E::Expr, E::Props, T>>,
     metadata: T,
 }
 
@@ -109,10 +109,7 @@ where
     }
 
     /// Sets a callback.
-    pub fn set_callback(
-        mut self,
-        callback: Rc<dyn MemoGroupCallback<Expr = E::Expr, Props = E::Props, Metadata = T>>,
-    ) -> Self {
+    pub fn set_callback(mut self, callback: MemoGroupCallbackRef<E::Expr, E::Props, T>) -> Self {
         self.callback = Some(callback);
         self
     }
@@ -128,6 +125,9 @@ where
         }
     }
 }
+
+/// The type of [memo group callback][self::MemoGroupCallback] used by [Memo].
+pub type MemoGroupCallbackRef<E, P, T> = Rc<dyn MemoGroupCallback<Expr = E, Props = P, Metadata = T>>;
 
 /// `Memo` is the primary data structure used by the cost-based optimizer:
 ///  * It stores each expression as a group of logically equivalent expressions.
@@ -179,10 +179,6 @@ where
     /// Returns a reference to the metadata.
     pub fn metadata(&self) -> &T {
         self.memo_impl.metadata()
-    }
-
-    fn get_first_memo_expr(&self, group_id: GroupId) -> E {
-        self.memo_impl.get_first_memo_expr(group_id)
     }
 }
 
@@ -1052,7 +1048,7 @@ where
     ///   visitor.visit_expr_node(expr_ctx, expr_node);
     /// }
     /// ```
-    pub fn visit_opt_expr_node<'e>(&mut self, expr_ctx: &mut ExprContext<E>, expr_node: Option<impl AsRef<E>>) {
+    pub fn visit_opt_expr_node(&mut self, expr_ctx: &mut ExprContext<E>, expr_node: Option<impl AsRef<E>>) {
         if let Some(expr_node) = expr_node {
             self.visit_expr_node(expr_ctx, expr_node);
         };
@@ -1186,7 +1182,7 @@ where
 
 pub(crate) struct StringMemoFormatter<'b> {
     buf: &'b mut String,
-    write_name: bool,
+    write_expr_name: bool,
     pos: usize,
 }
 
@@ -1195,13 +1191,13 @@ impl<'b> StringMemoFormatter<'b> {
         let len = buf.len();
         StringMemoFormatter {
             buf,
-            write_name: true,
+            write_expr_name: true,
             pos: len,
         }
     }
 
-    pub fn set_write_name(&mut self, value: bool) {
-        self.write_name = value;
+    pub fn write_expr_name(&mut self, value: bool) {
+        self.write_expr_name = value;
     }
 
     pub fn push(&mut self, c: char) {
@@ -1210,10 +1206,6 @@ impl<'b> StringMemoFormatter<'b> {
 
     pub fn push_str(&mut self, s: &str) {
         self.buf.push_str(s);
-    }
-
-    fn written(&self) -> bool {
-        self.pos != self.buf.len()
     }
 
     fn pad_value(&mut self) {
@@ -1226,7 +1218,7 @@ impl<'b> StringMemoFormatter<'b> {
 impl MemoExprFormatter for StringMemoFormatter<'_> {
     fn write_name(&mut self, name: &str) {
         self.pos = self.buf.len();
-        if self.write_name {
+        if self.write_expr_name {
             self.buf.push_str(name);
         }
     }

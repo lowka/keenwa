@@ -6,7 +6,6 @@ use std::rc::Rc;
 use itertools::Itertools;
 
 use crate::catalog::CatalogRef;
-use crate::datatypes::DataType;
 use crate::error::OptimizerError;
 use crate::memo::MemoExprState;
 use crate::meta::{ColumnId, ColumnMetadata, MutableMetadata};
@@ -20,7 +19,6 @@ use crate::operators::scalar::expr::{AggregateFunction, Expr, ExprRewriter};
 use crate::operators::scalar::types::resolve_expr_type;
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
 use crate::operators::{ExprMemo, Operator, OperatorExpr};
-use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::OrderingChoice;
 
@@ -267,7 +265,7 @@ impl OperatorBuilder {
             columns_ids.push((left_id, right_id));
         }
 
-        let mut output_columns = left_scope.columns.clone();
+        let mut output_columns = left_scope.columns;
         output_columns.extend_from_slice(&right_scope.columns);
 
         let condition = JoinCondition::using(columns_ids);
@@ -292,7 +290,7 @@ impl OperatorBuilder {
 
         let scope = OperatorScope {
             columns,
-            parent: left_scope.parent.clone(),
+            parent: left_scope.parent,
         };
 
         let mut rewriter = RewriteExprs::new(&scope);
@@ -538,13 +536,6 @@ struct OperatorScope {
 }
 
 impl OperatorScope {
-    fn new() -> Self {
-        OperatorScope {
-            columns: vec![],
-            parent: None,
-        }
-    }
-
     fn from_columns(columns: Vec<(String, ColumnId)>) -> Self {
         OperatorScope { columns, parent: None }
     }
@@ -710,6 +701,7 @@ impl AggregateBuilder<'_> {
         let (input, scope) = self.builder.rel_node()?;
 
         let aggr_exprs = std::mem::take(&mut self.aggr_exprs);
+        #[allow(clippy::type_complexity)]
         let aggr_exprs: Result<Vec<(ScalarNode, (String, ColumnId))>, OptimizerError> = aggr_exprs
             .into_iter()
             .map(|expr| match expr {
@@ -840,6 +832,7 @@ mod test {
 
     use crate::catalog::mutable::MutableCatalog;
     use crate::catalog::{TableBuilder, DEFAULT_SCHEMA};
+    use crate::datatypes::DataType;
     use crate::memo::{format_memo, MemoBuilder};
     use crate::operators::properties::LogicalPropertiesBuilder;
     use crate::operators::scalar::{col, scalar};
@@ -1227,13 +1220,8 @@ Memo:
             let filter = col("b1").eq(col("a1"));
 
             // SELECT a1, (SELECT b1 WHERE B b1=a1) FROM A
-            let from_a = builder.clone().get("A", vec!["a1", "a2", "a3"])?;
-            let b1 = from_a
-                .clone()
-                .sub_query_builder()
-                .get("B", vec!["b1"])?
-                .select(Some(filter))?
-                .to_sub_query()?;
+            let from_a = builder.get("A", vec!["a1", "a2", "a3"])?;
+            let b1 = from_a.sub_query_builder().get("B", vec!["b1"])?.select(Some(filter))?.to_sub_query()?;
             let project = from_a.project(vec![col("a1"), b1])?;
 
             project.build()

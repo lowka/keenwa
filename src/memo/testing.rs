@@ -20,7 +20,7 @@ where
     let group_id = expr.state().memo_group_id();
     let expr_ref = expr.state().memo_expr();
 
-    (group_id, expr_ref.clone())
+    (group_id, expr_ref)
 }
 
 pub fn insert_group_member<E, T>(memo: &mut Memo<E, T>, group_id: GroupId, expr: E) -> (GroupId, MemoExprRef<E>)
@@ -33,7 +33,7 @@ where
 
     let expr_ref = expr.state().memo_expr();
 
-    (group_id, expr_ref.clone())
+    (group_id, expr_ref)
 }
 
 pub fn expect_group_size<E, T>(memo: &Memo<E, T>, group_id: &GroupId, size: usize)
