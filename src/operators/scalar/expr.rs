@@ -42,6 +42,8 @@ where
     },
     /// Negation of an expression.
     Not(Box<Expr<T>>),
+    /// Negation of an arithmetic expression (eg. - 1).
+    Negation(Box<Expr<T>>),
     /// An expression with the given name (eg. 1 + 1 as two).
     Alias(Box<Expr<T>>, String),
     /// An aggregate expression.
@@ -98,6 +100,9 @@ where
             Expr::Not(expr) => {
                 expr.accept(visitor)?;
             }
+            Expr::Negation(expr) => {
+                expr.accept(visitor)?;
+            }
             Expr::Alias(expr, _) => {
                 expr.accept(visitor)?;
             }
@@ -143,6 +148,10 @@ where
                 Expr::Cast { expr, data_type }
             }
             Expr::Not(expr) => expr.rewrite(rewriter)?,
+            Expr::Negation(expr) => {
+                let expr = expr.rewrite(rewriter)?;
+                Expr::Negation(Box::new(expr))
+            }
             Expr::Alias(expr, name) => {
                 let expr = rewrite_boxed(*expr, rewriter)?;
                 Expr::Alias(expr, name)
@@ -174,6 +183,7 @@ where
             Expr::BinaryExpr { lhs, rhs, .. } => vec![lhs.as_ref().clone(), rhs.as_ref().clone()],
             Expr::Cast { expr, .. } => vec![expr.as_ref().clone()],
             Expr::Not(expr) => vec![expr.as_ref().clone()],
+            Expr::Negation(expr) => vec![expr.as_ref().clone()],
             Expr::Alias(expr, _) => vec![expr.as_ref().clone()],
             Expr::Aggregate { args, filter, .. } => {
                 let mut children: Vec<_> = args.to_vec();
@@ -227,6 +237,10 @@ where
             }
             Expr::Not(_) => {
                 expect_children("Not", children.len(), 1);
+                Expr::Not(Box::new(children.swap_remove(0)))
+            }
+            Expr::Negation(_) => {
+                expect_children("Negation", children.len(), 1);
                 Expr::Not(Box::new(children.swap_remove(0)))
             }
             Expr::Alias(_, name) => {
@@ -317,6 +331,11 @@ where
     /// Returns `this_expr >= rhs` expression.
     pub fn gte(self, rhs: Expr<T>) -> Self {
         self.binary_expr(BinaryOp::GtEq, rhs)
+    }
+
+    /// Returns `-this_expr` expression.
+    pub fn negate(self) -> Self {
+        Expr::Negation(Box::new(self))
     }
 }
 
@@ -449,6 +468,7 @@ where
                 Ok(())
             }
             Expr::Not(expr) => write!(f, "NOT {}", &*expr),
+            Expr::Negation(expr) => write!(f, "-{}", &*expr),
             Expr::Alias(expr, name) => write!(f, "{} AS {}", &*expr, name),
             Expr::SubQuery(expr) => {
                 write!(f, "SubQuery ")?;
@@ -689,7 +709,9 @@ mod test {
         expect_expr(expr.clone().sub(rhs.clone()), "1 - 10");
         expect_expr(expr.clone().mul(rhs.clone()), "1 * 10");
         expect_expr(expr.clone().div(rhs.clone()), "1 / 10");
-        expect_expr(expr.rem(rhs), "1 % 10");
+        expect_expr(expr.clone().rem(rhs), "1 % 10");
+
+        expect_expr(expr.negate(), "-1")
     }
 
     #[test]
