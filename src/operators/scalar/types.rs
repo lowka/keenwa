@@ -38,6 +38,11 @@ where
             expect_type_or_null(&tpe, &DataType::Bool, expr)?;
             Ok(tpe)
         }
+        Expr::Negation(expr) => {
+            let tpe = resolve_expr_type(expr, column_registry)?;
+            expect_type_or_null(&tpe, &DataType::Int32, expr)?;
+            Ok(tpe)
+        }
         Expr::Alias(expr, _) => resolve_expr_type(expr, column_registry),
         Expr::Aggregate { func, args, .. } => {
             for (i, arg) in args.iter().enumerate() {
@@ -267,6 +272,14 @@ mod test {
     fn not_trait() {
         let expr = !col_name("a");
         expect_expr(&expr, "NOT col:a")
+    }
+
+    #[test]
+    fn negation_type() {
+        expect_type(&int_value().negate(), &DataType::Int32);
+
+        expect_not_resolved(&bool_value().negate());
+        expect_not_resolved(&str_value().negate());
     }
 
     #[test]
