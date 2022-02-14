@@ -48,8 +48,8 @@ Cost-based query optimizer (WIP).
 
 - [x] Basic aggregation functions.
 - [x] GROUP BY.
-- [x] AGR(..) FILTER (WHERE _).
-- [x] AGR(DISTINCT _).
+- [x] AGGR(..) FILTER (WHERE _).
+- [x] AGGR(DISTINCT _).
 - [ ] count(*) vs count(col).
 - [ ] Window functions.
 - [ ] User-defined Aggregate functions.
@@ -167,8 +167,31 @@ TODO
 
 ---
 
-### SQL-support
+### SQL-support (sqlparser-rs)
 
-See `sqlparser` branch.
+See test cases in `sql/*_tests.yaml`.
+
+- [x] Basic operators.
+- [x] Basic subqueries.
+- [x] Joins: Inner, Left, Right, Full, Cross
+
+- [x] SELECT DISTINCT
+- [x] LIMIT/OFFSET
+- [ ] FETCH
+- [ ] EXPLAIN/ANALYZE
+- [x] ALIAS (column list)
+- [x] AGGREGATE DISTINCT
+- [ ] VALUES(..)
+
+- [x] NOT IN/ IN <subquery>
+- [x] EXISTS/NOT EXISTS <subquery>.
+
+#### Basic DML operators
+
+TODO
+
+#### Basic DDL operators
+
+TODO
 
 ---

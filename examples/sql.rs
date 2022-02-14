@@ -3,47 +3,39 @@ use keenwa::catalog::{CatalogRef, TableBuilder, DEFAULT_SCHEMA};
 use keenwa::cost::simple::SimpleCostEstimator;
 use keenwa::datatypes::DataType;
 use keenwa::error::OptimizerError;
-use keenwa::meta::MutableMetadata;
-use keenwa::operators::builder::{MemoizeOperators, OperatorBuilder};
 use keenwa::operators::format::format_operator_tree;
-use keenwa::operators::relational::join::JoinType;
-use keenwa::operators::scalar::{col, scalar};
-use keenwa::operators::{Operator, OperatorMemoBuilder};
+use keenwa::operators::Operator;
 use keenwa::optimizer::{NoOpResultCallback, Optimizer};
 use keenwa::rules::implementation::{EmptyRule, GetToScanRule, HashJoinRule, ProjectionRule, SelectRule};
 use keenwa::rules::{Rule, StaticRuleSet};
+use keenwa::sql::OperatorFromSqlBuilder;
 use keenwa::statistics::simple::{DefaultSelectivityStatistics, SimpleCatalogStatisticsBuilder};
-use std::ops::Not;
 use std::rc::Rc;
 use std::sync::Arc;
 
 fn main() -> Result<(), OptimizerError> {
-    let metadata = Rc::new(MutableMetadata::new());
+    let query = r#"
+SELECT a1 + 100, NOT a2 FROM a 
+JOIN b ON a1 = b1 
+"#;
 
-    // 1. Create a catalog
+    // 1. create a catalog.
     let catalog = create_catalog();
 
-    // 2.  Create the optimizer.
+    // 2. setup statistics builder.
+    let statistics = SimpleCatalogStatisticsBuilder::new(catalog.clone(), DefaultSelectivityStatistics);
+
+    // 3. create operator from sql builder.
+    let from_sql_builder = OperatorFromSqlBuilder::new(catalog.clone(), statistics);
+
+    // 4. build an operator tree from the given sql query.
+    let (operator, mut memo, _metadata) = from_sql_builder.build(query)?;
+
+    // 5. create an instance of the optimizer.
     let optimizer = create_optimizer(catalog.clone());
 
-    //3. Setup memo and logical properties builders.
-    let mut memoization = create_memo(catalog.clone(), metadata.clone());
-
-    //4. Create an operator with the memo callback.
-    let operator_builder = OperatorBuilder::new(memoization.take_callback(), catalog, metadata);
-
-    //5. Build a query
-    let from_a = operator_builder.clone().from("a")?;
-    let from_b = operator_builder.from("b")?;
-    let expr = col("a1").eq(col("b1"));
-    let join = from_a.join_on(from_b, JoinType::Inner, expr)?;
-    let query = join.project(vec![col("a1") + scalar(100), col("a2").not()])?.build()?;
-
-    //6. Retrieve the memo.
-    let mut memo = memoization.into_memo();
-
-    //7. Call optimizer to convert logical plan to physical.
-    let result = optimizer.optimize(query, &mut memo)?;
+    // 6. Optimize the logical plan.
+    let result = optimizer.optimize(operator, &mut memo)?;
 
     let expected_plan = r#"
 Projection cols=[5, 6] exprs: [col:1 + 100, NOT col:2]
@@ -55,14 +47,6 @@ Projection cols=[5, 6] exprs: [col:1 + 100, NOT col:2]
     expect_plan(&result, "Optimized plan", expected_plan);
 
     Ok(())
-}
-
-fn create_memo(catalog: CatalogRef, metadata: Rc<MutableMetadata>) -> MemoizeOperators {
-    let selectivity = DefaultSelectivityStatistics;
-    let statistics_builder = SimpleCatalogStatisticsBuilder::new(catalog.clone(), selectivity);
-    let memo = OperatorMemoBuilder::new(metadata).build_with_statistics(statistics_builder);
-
-    MemoizeOperators::new(memo)
 }
 
 fn create_catalog() -> CatalogRef {

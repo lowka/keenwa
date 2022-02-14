@@ -1,0 +1,97 @@
+query: |
+  SELECT 1
+ok: |
+  LogicalProjection cols=[1] exprs: [1]
+    input: LogicalEmpty return_one_row=true
+---
+# negation
+query: |
+  SELECT -1
+ok: |
+  LogicalProjection cols=[1] exprs: [-1]
+    input: LogicalEmpty return_one_row=true
+---
+
+query: | 
+  SELECT 1+2*3-4/2
+ok: |
+  LogicalProjection cols=[1] exprs: [1 + 2 * 3 - 4 / 2]
+    input: LogicalEmpty return_one_row=true
+---
+query: |
+  SELECT true
+ok: |
+  LogicalProjection cols=[1] exprs: [true]
+    input: LogicalEmpty return_one_row=true
+---
+query: |
+  SELECT NOT true
+ok: |
+  LogicalProjection cols=[1] exprs: [NOT true]
+    input: LogicalEmpty return_one_row=true
+---
+query: |
+  SELECT CASE WHEN a1 = 11 THEN 11
+         WHEN a1 = 12 THEN 12
+         ELSE 13
+         END
+  FROM (SELECT 1 as a1)
+ok: |
+  LogicalProjection cols=[2] exprs: [CASE WHEN col:1 = 11 THEN 11 WHEN col:1 = 12 THEN 12 ELSE 13]
+    input: LogicalProjection cols=[1] exprs: [1 AS a1]
+      input: LogicalEmpty return_one_row=true
+---
+query: |
+  SELECT CASE a1 > 0
+         WHEN a1 = 11 THEN 11
+         WHEN a1 = 12 THEN 12
+         ELSE 13
+         END
+  FROM (SELECT 1 as a1)
+ok: |
+  LogicalProjection cols=[2] exprs: [CASE col:1 > 0 WHEN col:1 = 11 THEN 11 WHEN col:1 = 12 THEN 12 ELSE 13]
+    input: LogicalProjection cols=[1] exprs: [1 AS a1]
+      input: LogicalEmpty return_one_row=true
+---
+query: |
+  SELECT 1 IS NULL
+ok: |
+  LogicalProjection cols=[1] exprs: [IS NULL 1]
+    input: LogicalEmpty return_one_row=true
+---
+query: |
+  SELECT 1 IS NOT NULL
+ok: |
+  LogicalProjection cols=[1] exprs: [IS NOT NULL 1]
+    input: LogicalEmpty return_one_row=true
+---
+query: |
+  SELECT CAST(1 as STRING)
+ok: |
+  LogicalProjection cols=[1] exprs: [CAST(1 as String)]
+    input: LogicalEmpty return_one_row=true
+---
+query: |
+  SELECT CAST(1 as Int)
+ok: |
+  LogicalProjection cols=[1] exprs: [CAST(1 as Int32)]
+    input: LogicalEmpty return_one_row=true
+---
+query: |
+  SELECT CAST(1 as Boolean)
+ok: |
+  LogicalProjection cols=[1] exprs: [CAST(1 as Bool)]
+    input: LogicalEmpty return_one_row=true
+---
+query: |
+  SELECT 1 IN (1, 2, 3)
+ok: |
+  LogicalProjection cols=[1] exprs: [1 IN (1, 2, 3)]
+    input: LogicalEmpty return_one_row=true
+---
+query: |
+  SELECT 1 NOT IN (1, 2, 3)
+ok: |
+  LogicalProjection cols=[1] exprs: [1 NOT IN (1, 2, 3)]
+    input: LogicalEmpty return_one_row=true
+---

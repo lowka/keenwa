@@ -1,0 +1,175 @@
+queries:
+  - SELECT a1 FROM A
+  - SELECT A1 FROM A
+ok: |
+  LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalGet A cols=[1, 2, 3, 4]
+
+---
+
+queries:
+  - SELECT a.a1 FROM A
+  - SELECT a.A1 FROM A
+ok: |
+  LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalGet A cols=[1, 2, 3, 4]
+---
+
+query: |
+  SELECT 1 as a1, * FROM a
+ok: |
+  LogicalProjection cols=[5, 1, 2, 3, 4] exprs: [1 AS a1, col:1, col:2, col:3, col:4]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+
+---
+
+query: |
+  SELECT * FROM A
+ok: |
+  LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:3, col:4]
+    input: LogicalGet A cols=[1, 2, 3, 4]
+---
+
+query: |
+  SELECT a.* FROM A
+ok: |
+  LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:3, col:4]
+    input: LogicalGet A cols=[1, 2, 3, 4]
+
+---
+query: |
+  SELECT a1.* FROM A as a1
+ok: |
+  LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:3, col:4]
+    input: LogicalGet A cols=[1, 2, 3, 4]
+
+---
+query: |
+  SELECT a1,b2 FROM A
+error: |
+  Internal error: Unexpected column: b2. Input columns: [("a1", 1), ("a2", 2), ("a3", 3), ("a4", 4)], Outer columns: []
+
+---
+query: |
+  SELECT a.* FROM A as a1
+error: |
+  Internal error: Invalid reference to relation a
+
+---
+query: |
+  SELECT 1 as x, x FROM a
+error: |
+  Internal error: Unexpected column: x. Input columns: [("a1", 1), ("a2", 2), ("a3", 3), ("a4", 4)], Outer columns: []
+
+---
+# wildcard
+queries:
+  - SELECT a1 + b2 FROM (SELECT * FROM (SELECT * FROM a JOIN b ON true))
+  - SELECT t1.a1 + t1.b2 FROM (SELECT * FROM (SELECT * FROM a JOIN b ON true)) t1
+  - SELECT t1.a1 + t1.b2 FROM (SELECT * FROM (SELECT * FROM a JOIN b ON true) t0) t1
+  - SELECT t1.a1 + t1.b2 FROM (SELECT t0.* FROM (SELECT * FROM a tt JOIN b ON true) t0) t1
+ok: |
+  LogicalProjection cols=[8] exprs: [col:1 + col:6]
+    input: LogicalProjection cols=[1, 2, 3, 4, 5, 6, 7] exprs: [col:1, col:2, col:3, col:4, col:5, col:6, col:7]
+      input: LogicalProjection cols=[1, 2, 3, 4, 5, 6, 7] exprs: [col:1, col:2, col:3, col:4, col:5, col:6, col:7]
+        input: LogicalJoin type=Inner on=true
+          left: LogicalGet a cols=[1, 2, 3, 4]
+          right: LogicalGet b cols=[5, 6, 7]
+
+---
+
+queries:
+ - SELECT t.* FROM (SELECT * FROM (SELECT * FROM a t JOIN b ON true) t1) t2
+ - SELECT t.* FROM (SELECT * FROM (SELECT * FROM a t0 JOIN b ON true) t) t2
+error: |
+  Internal error: Unknown relation t
+
+---
+query:
+  SELECT a1 FROM a ORDER BY 1
+ok: |
+  LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+---
+queries:
+ - SELECT a1 as x FROM a as t ORDER BY a1
+ - SELECT a1 as x FROM a as t ORDER BY x
+ - SELECT a1 as x FROM a as t ORDER BY t.a1, a1, x
+ok: |
+  LogicalProjection cols=[5] exprs: [col:1 AS x]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+---
+query: |
+  SELECT q.b1 FROM (SELECT a1 as x FROM a as t JOIN b as y on b1=a1 ORDER BY x, b1) q
+error: |
+  Internal error: Unexpected column: q.b1. Input columns: [("x", 8)], Outer columns: []
+
+---
+# disallow forward references
+query: |
+  SELECT 1 as a, a + 1
+error: ~
+
+---
+
+queries:
+  - SELECT y, x FROM A as a1(x, y)
+ok: |
+  LogicalProjection cols=[2, 1] exprs: [col:2, col:1]
+    input: LogicalGet A cols=[1, 2, 3, 4]
+
+---
+
+query: |
+  SELECT DISTINCT a1, a2 FROM a
+ok: |
+  LogicalDistinct cols=[1, 2]
+    input: LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
+      input: LogicalGet a cols=[1, 2, 3, 4]
+
+---
+
+query: |
+  SELECT DISTINCT ON (a1+a2) a1, a2, a3 FROM a
+ok: |
+  LogicalDistinct cols=[1, 2, 3]
+    input: LogicalProjection cols=[1, 2, 3] exprs: [col:1, col:2, col:3]
+      input: LogicalGet a cols=[1, 2, 3, 4]
+    on: Expr col:1 + col:2
+
+---
+
+query: |
+  SELECT DISTINCT ON (a1) a1, a2, a3 FROM a
+ok: |
+  LogicalDistinct cols=[1, 2, 3]
+    input: LogicalProjection cols=[1, 2, 3] exprs: [col:1, col:2, col:3]
+      input: LogicalGet a cols=[1, 2, 3, 4]
+    on: Expr col:1
+
+---
+
+query: |
+  SELECT a1, a2, a3 FROM a LIMIT 4
+ok: |
+  LogicalLimit rows=4
+    input: LogicalProjection cols=[1, 2, 3] exprs: [col:1, col:2, col:3]
+      input: LogicalGet a cols=[1, 2, 3, 4]
+
+---
+
+query: |
+  SELECT a1, a2, a3 FROM a OFFSET 10
+ok: |
+  LogicalOffset rows=10
+    input: LogicalProjection cols=[1, 2, 3] exprs: [col:1, col:2, col:3]
+      input: LogicalGet a cols=[1, 2, 3, 4]
+
+---
+query: |
+  SELECT a1, a2, a3 FROM a LIMIT 4 OFFSET 10
+ok: |
+  LogicalLimit rows=4
+    input: LogicalOffset rows=10
+      input: LogicalProjection cols=[1, 2, 3] exprs: [col:1, col:2, col:3]
+        input: LogicalGet a cols=[1, 2, 3, 4]
