@@ -1,7 +1,8 @@
 use crate::catalog::{Catalog, IndexBuilder, DEFAULT_SCHEMA};
 use crate::operators::builder::{OrderingOption, OrderingOptions};
 use crate::operators::relational::join::JoinType;
-use crate::operators::scalar::{col, cols, scalar};
+use crate::operators::relational::RelNode;
+use crate::operators::scalar::{col, cols, scalar, ScalarExpr};
 use crate::rules::implementation::aggregate::HashAggregateRule;
 use crate::rules::implementation::*;
 use crate::rules::transformation::*;
@@ -92,7 +93,8 @@ fn test_select_with_a_nested_query() {
 
     tester.set_operator(|builder| {
         let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
-        let sub_query = builder.sub_query_builder().get("B", vec!["b2"])?.to_sub_query()?;
+        let sub_query = builder.new_query_builder().get("B", vec!["b2"])?.build()?;
+        let sub_query = ScalarExpr::SubQuery(RelNode::from(sub_query));
         let filter = sub_query.gt(scalar(1));
         let select = from_a.select(Some(filter))?;
 

@@ -1,0 +1,93 @@
+query: |
+  SELECT count(a1) FROM a
+ok: |
+  LogicalAggregate cols=[5] aggr_exprs: [count(col:1)]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+
+---
+query: |
+  SELECT a1, count(a1) FROM a
+ok: |
+  LogicalAggregate cols=[1, 5] aggr_exprs: [col:1, count(col:1)]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+---
+query: |
+  SELECT a1, count(distinct a1) FROM a
+ok: |
+  LogicalAggregate cols=[1, 5] aggr_exprs: [col:1, count(distinct col:1)]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+---
+query: |
+  SELECT count(a1) FROM a GROUP by a1
+ok: |
+  LogicalAggregate cols=[5]
+    aggr_exprs: [count(col:1)]
+    group_exprs: [col:1]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+
+---
+query: |
+  SELECT a1, sum(a2) FROM a GROUP BY a1
+ok: |
+  LogicalAggregate cols=[1, 5]
+    aggr_exprs: [col:1, sum(col:2)]
+    group_exprs: [col:1]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+
+---
+query: |
+  SELECT a1_count FROM (SELECT count(a1) as a1_count FROM a GROUP by a1)
+ok: |
+  LogicalProjection cols=[5] exprs: [col:5]
+    input: LogicalAggregate cols=[5]
+      aggr_exprs: [count(col:1) AS a1_count]
+      group_exprs: [col:1]
+      input: LogicalGet a cols=[1, 2, 3, 4]
+
+---
+query: |
+  SELECT count(1)
+ok: |
+  LogicalAggregate cols=[1] aggr_exprs: [count(1)]
+    input: LogicalEmpty return_one_row=true
+
+---
+query: |
+  SELECT a1+a2, sum(a2) FROM a GROUP BY a1
+error: |
+  Internal error: AGGREGATE column a2 must appear in GROUP BY clause
+
+---
+query: |
+  SELECT sum(a1) FROM a GROUP BY a1 HAVING count(a1) > 0
+ok: |
+  LogicalAggregate cols=[5]
+    aggr_exprs: [sum(col:1)]
+    group_exprs: [col:1]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+    having: Expr count(col:1) > 0
+
+---
+query: |
+  SELECT sum(a1) FROM a GROUP BY a2 HAVING count(a1) > 0 and a2 > 0
+ok: |
+  LogicalAggregate cols=[5]
+    aggr_exprs: [sum(col:1)]
+    group_exprs: [col:2]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+    having: Expr count(col:1) > 0 AND col:2 > 0
+---
+query: |
+  SELECT a2, sum(a1) FROM a GROUP BY a2 HAVING count(a1) > 0 and a2 > 0
+ok: |
+  LogicalAggregate cols=[2, 5]
+    aggr_exprs: [col:2, sum(col:1)]
+    group_exprs: [col:2]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+    having: Expr count(col:1) > 0 AND col:2 > 0
+
+---
+query: |
+  SELECT sum(a1) as x FROM a GROUP BY a1 HAVING x > 100
+error: |
+  Internal error: Unexpected column: x. Input columns: [("a1", 1), ("a2", 2), ("a3", 3), ("a4", 4)], Outer columns: []

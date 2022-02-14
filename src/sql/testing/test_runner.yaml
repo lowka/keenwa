@@ -1,0 +1,53 @@
+catalog:
+  - table: a1
+    columns: a1:int32, a2:int32, a3:int32
+  
+  - table: b1
+    columns: b1:int32, b2:int32, b3:int32
+  
+  - table: c1
+    columns: b1:int32, c2:int32, c3:int32
+  
+  - table: ab
+    columns: a1:int32, b2:int32
+
+---
+
+# testcase 1
+query: | 
+  SELECT 1
+ok: | 
+  Step1
+  Step2
+---
+# testcase 2
+
+query: |
+  SELECT 2
+error: ~
+
+---
+# testcase 3
+query: | 
+  SELECT 3
+ok: |
+  Step3
+  Step4
+
+---
+# testcase 4
+query: |
+  SELECT 4
+error: |
+  Some error
+
+---
+# testcase 5
+
+catalog:
+  - table: x
+    columns: x1:int32
+query: |
+  SELECT * FROM x
+ok: | 
+  Step1

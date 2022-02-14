@@ -1,0 +1,80 @@
+# UNION
+query: |
+  SELECT 1 UNION SELECT 1
+ok: |
+  LogicalUnion all=false cols=[3]
+    left: LogicalProjection cols=[1] exprs: [1]
+      input: LogicalEmpty return_one_row=true
+    right: LogicalProjection cols=[2] exprs: [1]
+      input: LogicalEmpty return_one_row=true
+
+---
+query: |
+  SELECT a1, a2 FROM a
+  UNION ALL
+  SELECT b1, b2 FROM b
+ok: |
+  LogicalUnion all=true cols=[8, 9]
+    left: LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
+      input: LogicalGet a cols=[1, 2, 3, 4]
+    right: LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
+      input: LogicalGet b cols=[5, 6, 7]
+---
+query: |
+  SELECT a1, a2 FROM a
+  UNION
+  SELECT b1, b2 FROM b
+ok: |
+  LogicalUnion all=false cols=[8, 9]
+    left: LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
+      input: LogicalGet a cols=[1, 2, 3, 4]
+    right: LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
+      input: LogicalGet b cols=[5, 6, 7]
+---
+
+# EXCEPT
+query: |
+  SELECT a1, a2 FROM a
+  EXCEPT ALL
+  SELECT b1, b2 FROM b
+ok: |
+  LogicalExcept all=true cols=[8, 9]
+    left: LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
+      input: LogicalGet a cols=[1, 2, 3, 4]
+    right: LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
+      input: LogicalGet b cols=[5, 6, 7]
+---
+query: |
+  SELECT a1, a2 FROM a
+  EXCEPT
+  SELECT b1, b2 FROM b
+ok: |
+  LogicalExcept all=false cols=[8, 9]
+    left: LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
+      input: LogicalGet a cols=[1, 2, 3, 4]
+    right: LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
+      input: LogicalGet b cols=[5, 6, 7]
+---
+
+# INTERSECT
+query: |
+  SELECT a1, a2 FROM a
+  INTERSECT ALL
+  SELECT b1, b2 FROM b
+ok: |
+  LogicalIntersect all=true cols=[8, 9]
+    left: LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
+      input: LogicalGet a cols=[1, 2, 3, 4]
+    right: LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
+      input: LogicalGet b cols=[5, 6, 7]
+---
+query: |
+  SELECT a1, a2 FROM a
+  INTERSECT
+  SELECT b1, b2 FROM b
+ok: |
+  LogicalIntersect all=false cols=[8, 9]
+    left: LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
+      input: LogicalGet a cols=[1, 2, 3, 4]
+    right: LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
+      input: LogicalGet b cols=[5, 6, 7]

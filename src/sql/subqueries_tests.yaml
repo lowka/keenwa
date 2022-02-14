@@ -1,0 +1,231 @@
+query: |
+  SELECT 1 as a, (SELECT 2)
+ok: |
+  LogicalProjection cols=[2, 3] exprs: [1 AS a, SubQuery 02]
+    input: LogicalEmpty return_one_row=true
+
+  Sub query from column 3:
+  LogicalProjection cols=[1] exprs: [2]
+    input: LogicalEmpty return_one_row=true
+
+---
+query: |
+  SELECT 1, (SELECT 2 as x)
+
+ok: |
+  LogicalProjection cols=[2, 3] exprs: [1, SubQuery 02]
+    input: LogicalEmpty return_one_row=true
+  
+  Sub query from column 3:
+  LogicalProjection cols=[1] exprs: [2 AS x]
+    input: LogicalEmpty return_one_row=true
+
+---
+query: |
+  SELECT 1 as a, (SELECT 2 + b1) as b FROM (SELECT 1 as b1)
+ok: |
+  LogicalProjection cols=[3, 4] exprs: [1 AS a, SubQuery 03 AS b]
+    input: LogicalProjection cols=[1] exprs: [1 AS b1]
+      input: LogicalEmpty return_one_row=true
+  
+  Sub query from column 4:
+  LogicalProjection cols=[2] exprs: [2 + col:1]
+    input: LogicalEmpty return_one_row=true
+
+---
+query: |
+  SELECT a2, (SELECT a2) FROM a
+ok: |
+  LogicalProjection cols=[2, 5] exprs: [col:2, SubQuery 02]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+  
+  Sub query from column 5:
+  LogicalProjection cols=[2] exprs: [col:2]
+    input: LogicalEmpty return_one_row=true
+
+---
+# subquery in WHERE clause
+query: |
+  SELECT a2 FROM a WHERE (SELECT true)
+ok: |
+  LogicalProjection cols=[2] exprs: [col:2]
+    input: LogicalSelect
+      input: LogicalGet a cols=[1, 2, 3, 4]
+      filter: Expr SubQuery 02
+  
+  Sub query from filter SubQuery 02:
+  LogicalProjection cols=[5] exprs: [true]
+    input: LogicalEmpty return_one_row=true
+
+---
+# subquery in nested WHERE clauses
+query: |
+  SELECT a2 FROM a WHERE (SELECT true WHERE (SELECT true))
+ok: |
+  LogicalProjection cols=[2] exprs: [col:2]
+    input: LogicalSelect
+      input: LogicalGet a cols=[1, 2, 3, 4]
+      filter: Expr SubQuery 05
+  
+  Sub query from filter SubQuery 05:
+  LogicalProjection cols=[6] exprs: [true]
+    input: LogicalSelect
+      input: LogicalEmpty return_one_row=true
+      filter: Expr SubQuery 02
+  Sub query from filter SubQuery 02:
+  LogicalProjection cols=[5] exprs: [true]
+    input: LogicalEmpty return_one_row=true
+
+---
+
+queries:
+  - SELECT (SELECT a1 + b.b1) FROM a as t, b
+  - SELECT (SELECT a.a1 + b.b1) FROM a, b
+ok: |
+  LogicalProjection cols=[9] exprs: [SubQuery 05]
+    input: LogicalJoin type=Cross on=true
+      left: LogicalGet a cols=[1, 2, 3, 4]
+      right: LogicalGet b cols=[5, 6, 7]
+  
+  Sub query from column 9:
+  LogicalProjection cols=[8] exprs: [col:1 + col:5]
+    input: LogicalEmpty return_one_row=true
+
+---
+
+# Join with subqueries
+
+# c1 is from the outer scope
+query: |
+  SELECT *, (SELECT a1+b1+c1 FROM a JOIN b on a1 = b1 and a1 = c1) FROM c
+ok: |
+  LogicalProjection cols=[1, 2, 3, 12] exprs: [col:1, col:2, col:3, SubQuery 05]
+    input: LogicalGet c cols=[1, 2, 3]
+  
+  Sub query from column 12:
+  LogicalProjection cols=[11] exprs: [col:4 + col:8 + col:1]
+    input: LogicalJoin type=Inner on=col:4 = col:8 AND col:4 = col:1
+      left: LogicalGet a cols=[4, 5, 6, 7]
+      right: LogicalGet b cols=[8, 9, 10]
+
+---
+
+# Aggregates with subqueries
+query: |
+  SELECT (SELECT count(a1) FROM a) FROM a
+ok: |
+  LogicalProjection cols=[6] exprs: [SubQuery 02]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+  
+  Sub query from column 6:
+  LogicalAggregate cols=[5] aggr_exprs: [count(col:1)]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+---
+query: |
+  SELECT a1, (SELECT count(b1) FROM b WHERE b1=a1) FROM a
+ok: |
+  LogicalProjection cols=[1, 9] exprs: [col:1, SubQuery 04]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+  
+  Sub query from column 9:
+  LogicalAggregate cols=[8] aggr_exprs: [count(col:5)]
+    input: LogicalSelect
+      input: LogicalGet b cols=[5, 6, 7]
+      filter: Expr col:5 = col:1
+
+---
+query: |
+  SELECT a1, (SELECT sum(b1 + a1) FROM b) FROM a
+ok: |
+  LogicalProjection cols=[1, 9] exprs: [col:1, SubQuery 02]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+  
+  Sub query from column 9:
+  LogicalAggregate cols=[8] aggr_exprs: [sum(col:5 + col:1)]
+    input: LogicalGet b cols=[5, 6, 7]
+
+---
+query: |
+  SELECT a1, (SELECT sum(b1 + a1) FROM b GROUP BY a1) FROM a
+ok: |
+  LogicalProjection cols=[1, 9] exprs: [col:1, SubQuery 03]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+  
+  Sub query from column 9:
+  LogicalAggregate cols=[8]
+    aggr_exprs: [sum(col:5 + col:1)]
+    group_exprs: [col:1]
+    input: LogicalGet b cols=[5, 6, 7]
+
+---
+query: |
+  SELECT (SELECT count(a1) FROM a)
+  FROM a
+  GROUP BY (SELECT count(b2) FROM b GROUP BY a1)
+ok: |
+  LogicalAggregate cols=[10]
+    aggr_exprs: [SubQuery 02]
+    group_exprs: [SubQuery 06]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+  
+  Sub query from column 10:
+  LogicalAggregate cols=[5] aggr_exprs: [count(col:1)]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+  Sub query from aggregate SubQuery 02:
+  LogicalAggregate cols=[5] aggr_exprs: [count(col:1)]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+  Sub query from aggregate SubQuery 02:
+  LogicalAggregate cols=[9]
+    aggr_exprs: [count(col:7)]
+    group_exprs: [col:1]
+    input: LogicalGet b cols=[6, 7, 8]
+
+---
+query: |
+  SELECT * FROM a WHERE EXISTS (SELECT 1)
+ok: |
+  LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:3, col:4]
+    input: LogicalSelect
+      input: LogicalGet a cols=[1, 2, 3, 4]
+      filter: Expr EXISTS 02
+
+  Sub query from filter EXISTS 02:
+  LogicalProjection cols=[5] exprs: [1]
+    input: LogicalEmpty return_one_row=true
+---
+query: |
+  SELECT * FROM a WHERE NOT EXISTS (SELECT 1)
+ok: |
+  LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:3, col:4]
+    input: LogicalSelect
+      input: LogicalGet a cols=[1, 2, 3, 4]
+      filter: Expr NOT EXISTS 02
+
+  Sub query from filter NOT EXISTS 02:
+  LogicalProjection cols=[5] exprs: [1]
+    input: LogicalEmpty return_one_row=true
+---
+query: |
+  SELECT * FROM a WHERE a IN (SELECT 1)
+ok: |
+  LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:3, col:4]
+    input: LogicalSelect
+      input: LogicalGet a cols=[1, 2, 3, 4]
+      filter: Expr col:a IN 02
+
+  Sub query from filter col:a IN 02:
+  LogicalProjection cols=[5] exprs: [1]
+    input: LogicalEmpty return_one_row=true
+---
+query: |
+  SELECT * FROM a WHERE a NOT IN (SELECT 1)
+ok: |
+  LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:3, col:4]
+    input: LogicalSelect
+      input: LogicalGet a cols=[1, 2, 3, 4]
+      filter: Expr col:a NOT IN 02
+
+  Sub query from filter col:a NOT IN 02:
+  LogicalProjection cols=[5] exprs: [1]
+    input: LogicalEmpty return_one_row=true
+---
