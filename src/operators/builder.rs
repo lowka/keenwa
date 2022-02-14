@@ -343,15 +343,33 @@ impl OperatorBuilder {
     }
 
     /// Adds a union operator.
-    pub fn union(mut self, right: OperatorBuilder) -> Result<Self, OptimizerError> {
-        self.build_set_operator(SetOperator::Union, false, right)?;
-        Ok(self)
+    pub fn union(self, right: OperatorBuilder) -> Result<Self, OptimizerError> {
+        self.set_operator(SetOperator::Union, false, right)
     }
 
     /// Adds a union all operator.
-    pub fn union_all(mut self, right: OperatorBuilder) -> Result<Self, OptimizerError> {
-        self.build_set_operator(SetOperator::Union, true, right)?;
-        Ok(self)
+    pub fn union_all(self, right: OperatorBuilder) -> Result<Self, OptimizerError> {
+        self.set_operator(SetOperator::Union, true, right)
+    }
+
+    /// Adds an except operator.
+    pub fn except(self, right: OperatorBuilder) -> Result<Self, OptimizerError> {
+        self.set_operator(SetOperator::Except, false, right)
+    }
+
+    /// Adds an except all operator.
+    pub fn except_all(self, right: OperatorBuilder) -> Result<Self, OptimizerError> {
+        self.set_operator(SetOperator::Except, true, right)
+    }
+
+    /// Adds an intersect operator.
+    pub fn intersect(self, right: OperatorBuilder) -> Result<Self, OptimizerError> {
+        self.set_operator(SetOperator::Intersect, false, right)
+    }
+
+    /// Adds an intersect all operator.
+    pub fn intersect_all(self, right: OperatorBuilder) -> Result<Self, OptimizerError> {
+        self.set_operator(SetOperator::Intersect, true, right)
     }
 
     /// Adds a relation that produces no rows.
@@ -420,12 +438,12 @@ impl OperatorBuilder {
         }
     }
 
-    fn build_set_operator(
-        &mut self,
+    fn set_operator(
+        mut self,
         set_op: SetOperator,
         all: bool,
         mut right: OperatorBuilder,
-    ) -> Result<(), OptimizerError> {
+    ) -> Result<Self, OptimizerError> {
         let (left, left_scope) = self.rel_node()?;
         let (right, right_scope) = right.rel_node()?;
 
@@ -477,7 +495,7 @@ impl OperatorBuilder {
         };
 
         self.add_operator(expr, columns);
-        Ok(())
+        Ok(self)
     }
 
     fn add_operator(&mut self, expr: LogicalExpr, columns: Vec<(String, ColumnId)>) {
@@ -1247,6 +1265,82 @@ Memo:
   00 LogicalGet B cols=[4]
 "#,
         )
+    }
+
+    #[test]
+    fn test_union() {
+        expect_set_op(SetOperator::Union, false, "LogicalUnion");
+        expect_set_op(SetOperator::Union, true, "LogicalUnion");
+    }
+
+    #[test]
+    fn test_intersect() {
+        expect_set_op(SetOperator::Intersect, false, "LogicalIntersect");
+        expect_set_op(SetOperator::Intersect, true, "LogicalIntersect");
+    }
+
+    #[test]
+    fn test_except() {
+        expect_set_op(SetOperator::Except, false, "LogicalExcept");
+        expect_set_op(SetOperator::Except, true, "LogicalExcept");
+    }
+
+    fn expect_set_op(set_op: SetOperator, all: bool, logical_op: &str) {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(move |builder| {
+            let left = builder.clone().get("A", vec!["a1", "a2"])?;
+            let right = builder.get("B", vec!["b1", "b2"])?;
+
+            let op = match set_op {
+                SetOperator::Union => {
+                    if all {
+                        left.union_all(right)?
+                    } else {
+                        left.union(right)?
+                    }
+                }
+                SetOperator::Intersect => {
+                    if all {
+                        left.intersect_all(right)?
+                    } else {
+                        left.intersect(right)?
+                    }
+                }
+                SetOperator::Except => {
+                    if all {
+                        left.except_all(right)?
+                    } else {
+                        left.except(right)?
+                    }
+                }
+            };
+
+            op.build()
+        });
+
+        tester.expect_expr(
+            r#"
+:set_op all=:all
+  left: LogicalGet A cols=[1, 2]
+  right: LogicalGet B cols=[3, 4]
+  output cols: [5, 6]
+Metadata:
+  col:1 A.a1 Int32
+  col:2 A.a2 Int32
+  col:3 B.b1 Int32
+  col:4 B.b2 Int32
+  col:5 ?column? Int32
+  col:6 ?column? Int32
+Memo:
+  02 :set_op left=00 right=01 all=:all
+  01 LogicalGet B cols=[3, 4]
+  00 LogicalGet A cols=[1, 2]
+"#
+            .replace(":set_op", logical_op)
+            .replace(":all", format!("{}", all).as_str())
+            .as_str(),
+        );
     }
 
     struct OperatorBuilderTester {
