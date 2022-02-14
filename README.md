@@ -164,8 +164,28 @@ TODO
 
 ---
 
-### SQL-support
+### SQL-support (sqlparser-rs)
 
-See `sqlparser` branch.
+See test cases in `sql/*_tests.yaml`.
+
+- [x] Basic operators.
+- [x] Basic subqueries.
+- [x] Joins: Inner, Left, Right, Full, Cross
+
+- [ ] SELECT DISTINCT
+- [ ] FETCH/LIMIT/OFFSET
+- [ ] EXPLAIN/ANALYZE
+- [ ] ALIAS (column list)
+- [ ] AGGREGATE DISTINCT
+- [ ] VALUES(..)
+- TODO
+
+#### Basic DML operators
+
+TODO
+
+#### Basic DDL operators
+
+TODO
 
 ---

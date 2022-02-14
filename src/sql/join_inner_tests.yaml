@@ -1,0 +1,34 @@
+queries:
+  - SELECT * FROM a JOIN b ON a1 = b1
+  - SELECT * FROM a INNER JOIN b ON a1 = b1
+ok: |
+  LogicalProjection cols=[1, 2, 3, 4, 5, 6, 7] exprs: [col:1, col:2, col:3, col:4, col:5, col:6, col:7]
+    input: LogicalJoin type=Inner on=col:1 = col:5
+      left: LogicalGet a cols=[1, 2, 3, 4]
+      right: LogicalGet b cols=[5, 6, 7]
+---
+query: | 
+  SELECT a1 FROM a JOIN ab USING (a1)
+ok: |
+  LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalJoin type=Inner using=[(1, 5)]
+      left: LogicalGet a cols=[1, 2, 3, 4]
+      right: LogicalGet ab cols=[5, 6]
+
+---
+query: |
+  SELECT * FROM a JOIN ab USING (a1)
+ok: |
+  LogicalProjection cols=[1, 2, 3, 4, 5, 6] exprs: [col:1, col:2, col:3, col:4, col:5, col:6]
+    input: LogicalJoin type=Inner using=[(1, 5)]
+      left: LogicalGet a cols=[1, 2, 3, 4]
+      right: LogicalGet ab cols=[5, 6]
+
+---
+queries:
+  - SELECT * FROM a JOIN b
+  - SELECT * FROM a INNER JOIN b
+error: |
+  Not supported: JOIN without condition is allowed only for CROSS join types
+---
+

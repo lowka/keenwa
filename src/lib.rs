@@ -8,6 +8,7 @@ pub mod operators;
 pub mod optimizer;
 pub mod properties;
 pub mod rules;
+mod sql;
 pub mod statistics;
 #[cfg(test)]
 pub mod testing;

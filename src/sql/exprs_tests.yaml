@@ -1,0 +1,12 @@
+query: |
+  SELECT 1
+ok: |
+  LogicalProjection cols=[1] exprs: [1]
+    input: LogicalEmpty return_one_row=true
+---
+
+query: | 
+  SELECT 1+2*3-4/2
+ok: |
+  LogicalProjection cols=[1] exprs: [1 + 2 * 3 - 4 / 2]
+    input: LogicalEmpty return_one_row=true
