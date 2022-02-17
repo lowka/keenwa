@@ -418,7 +418,7 @@ impl OperatorBuilder {
     /// Creates a builder that shares the metadata with this one.
     /// Unlike [sub_query_builder](Self::sub_query_builder) this method should be used
     /// to build independent operator trees (eg. for tables used in joins operators).
-    pub fn new_builder(&self) -> Self {
+    pub fn new_query_builder(&self) -> Self {
         OperatorBuilder {
             callback: self.callback.clone(),
             catalog: self.catalog.clone(),
@@ -1212,8 +1212,8 @@ Memo:
         let mut tester = OperatorBuilderTester::new();
 
         tester.build_operator(|builder| {
-            let left = builder.clone().get("A", vec!["a1", "a2"])?;
-            let right = builder.get("B", vec!["b1", "b2"])?;
+            let left = builder.get("A", vec!["a1", "a2"])?;
+            let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
             let join = left.join_using(right, vec![("a1", "b2")])?;
 
             join.build()
@@ -1243,8 +1243,8 @@ Memo:
         let mut tester = OperatorBuilderTester::new();
 
         tester.build_operator(|builder| {
-            let left = builder.clone().get("A", vec!["a1", "a2"])?;
-            let right = builder.get("B", vec!["b1", "b2"])?;
+            let left = builder.get("A", vec!["a1", "a2"])?;
+            let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
             let expr = col("a1").eq(col("b1"));
             let join = left.join_on(right, expr)?;
 
@@ -1306,9 +1306,14 @@ Memo:
         let mut tester = OperatorBuilderTester::new();
 
         tester.build_operator(|builder| {
-            let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
+            let from_a = builder.get("A", vec!["a1", "a2"])?;
 
-            let sub_query = builder.sub_query_builder().empty(true)?.project(vec![scalar(true)])?.to_sub_query()?;
+            let sub_query = from_a
+                .new_query_builder()
+                .sub_query_builder()
+                .empty(true)?
+                .project(vec![scalar(true)])?
+                .to_sub_query()?;
 
             let filter = sub_query.eq(scalar(true));
             let select = from_a.select(Some(filter))?;
@@ -1356,9 +1361,9 @@ Memo:
         let mut tester = OperatorBuilderTester::new();
 
         tester.build_operator(|builder| {
-            let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
+            let from_a = builder.get("A", vec!["a1", "a2"])?;
 
-            let sub_query = builder.empty(false)?.project(vec![scalar(true)])?.build()?;
+            let sub_query = from_a.new_query_builder().empty(false)?.project(vec![scalar(true)])?.build()?;
             let expr = ScalarExpr::SubQuery(RelNode::from(sub_query));
 
             let filter = expr.eq(scalar(true));
