@@ -10,6 +10,8 @@ pub enum OptimizerError {
     Internal(String),
     /// This error indicates that a block of code has not been implemented.
     NotImplemented(String),
+    /// This error indicates that the described feature is not supported.
+    Unsupported(String),
 }
 
 impl Display for OptimizerError {
@@ -18,6 +20,7 @@ impl Display for OptimizerError {
             OptimizerError::Argument(msg) => write!(f, "Argument error: {}", msg),
             OptimizerError::Internal(msg) => write!(f, "Internal error: {}", msg),
             OptimizerError::NotImplemented(msg) => write!(f, "Not implemented: {}", msg),
+            OptimizerError::Unsupported(msg) => write!(f, "Not supported: {}", msg),
         }
     }
 }
