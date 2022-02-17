@@ -113,7 +113,7 @@ impl OperatorBuilder {
     }
 
     /// Creates a new builder that shares all properties of the given builder
-    /// and uses the the given operator as its current on operator tree.
+    /// and uses the given operator as its parent node in an operator tree.
     fn from_builder(builder: &OperatorBuilder, operator: Operator, columns: Vec<(String, ColumnId)>) -> Self {
         let scope = if let Some(scope) = &builder.scope {
             // Set columns if scope exists.
@@ -133,7 +133,21 @@ impl OperatorBuilder {
         }
     }
 
-    /// Adds scan operator to an operator tree. A scan operator can only be added as leaf node of a tree.
+    /// Add a scan operator to an operator tree. A scan operator can only be added as a leaf node of a tree.
+    ///
+    /// Unlike [OperatorBuilder::get] this method adds an operator
+    /// that returns all the columns from the given `source`.
+    pub fn from(self, source: &str) -> Result<Self, OptimizerError> {
+        let table = self
+            .catalog
+            .get_table(source)
+            .ok_or_else(|| OptimizerError::Argument(format!("Table does not exist. Table: {}", source)))?;
+        let columns = table.columns().iter().map(|c| c.name()).cloned().collect();
+
+        self.get(source, columns)
+    }
+
+    /// Adds a scan operator to an operator tree. A scan operator can only be added as leaf node of a tree.
     pub fn get(mut self, source: &str, columns: Vec<impl Into<String>>) -> Result<Self, OptimizerError> {
         if self.operator.is_some() {
             return Result::Err(OptimizerError::Internal(
@@ -200,30 +214,44 @@ impl OperatorBuilder {
         let mut new_exprs = vec![];
 
         for expr in exprs {
-            let mut rewriter = RewriteExprs::for_projection(&scope, &output_columns);
-            let expr = expr.clone().rewrite(&mut rewriter)?;
-            let (id, name) = match expr.clone() {
-                ScalarExpr::Column(id) => {
-                    // Should never panic because RewriteExprs set an error when encounters an unknown column id.
-                    let meta = self.metadata.get_column(&id);
-                    (id, meta.name().clone())
+            match expr {
+                ScalarExpr::Wildcard => {
+                    for (column, id) in scope.columns.iter() {
+                        let col_id = *id;
+                        column_ids.push(col_id);
+                        output_columns.push((column.clone(), col_id));
+                        let expr = ScalarExpr::Column(col_id);
+                        let expr = self.add_scalar_node(expr);
+                        new_exprs.push(expr);
+                    }
                 }
                 _ => {
-                    let (expr, name) = if let ScalarExpr::Alias(expr, name) = expr.clone() {
-                        (*expr, name)
-                    } else {
-                        (expr.clone(), "?column?".to_string())
+                    let mut rewriter = RewriteExprs::for_projection(&scope, &output_columns);
+                    let expr = expr.clone().rewrite(&mut rewriter)?;
+                    let (id, name) = match expr.clone() {
+                        ScalarExpr::Column(id) => {
+                            // Should never panic because RewriteExprs set an error when encounters an unknown column id.
+                            let meta = self.metadata.get_column(&id);
+                            (id, meta.name().clone())
+                        }
+                        _ => {
+                            let (expr, name) = if let ScalarExpr::Alias(expr, name) = expr.clone() {
+                                (*expr, name)
+                            } else {
+                                (expr.clone(), "?column?".to_string())
+                            };
+                            let data_type = resolve_expr_type(&expr, &self.metadata)?;
+                            let column_meta = ColumnMetadata::new_synthetic_column(name.clone(), data_type, Some(expr));
+                            let id = self.metadata.add_column(column_meta);
+                            (id, name)
+                        }
                     };
-                    let data_type = resolve_expr_type(&expr, &self.metadata)?;
-                    let column_meta = ColumnMetadata::new_synthetic_column(name.clone(), data_type, Some(expr));
-                    let id = self.metadata.add_column(column_meta);
-                    (id, name)
+                    column_ids.push(id);
+                    output_columns.push((name.clone(), id));
+                    let expr = self.add_scalar_node(expr);
+                    new_exprs.push(expr);
                 }
-            };
-            column_ids.push(id);
-            output_columns.push((name.clone(), id));
-            let expr = self.add_scalar_node(expr);
-            new_exprs.push(expr);
+            }
         }
 
         let expr = LogicalExpr::Projection(LogicalProjection {
@@ -407,6 +435,20 @@ impl OperatorBuilder {
             scope: self.scope.as_ref().map(|scope| scope.new_child_scope()),
             operator: None,
             sub_query_builder: true,
+        }
+    }
+
+    /// Creates a builder that shares the metadata with this one.
+    /// Unlike [sub_query_builder](Self::sub_query_builder) this method should be used
+    /// to build independent operator trees (eg. for tables used in joins operators).
+    pub fn new_builder(&self) -> Self {
+        OperatorBuilder {
+            callback: self.callback.clone(),
+            catalog: self.catalog.clone(),
+            metadata: self.metadata.clone(),
+            scope: None,
+            operator: None,
+            sub_query_builder: false,
         }
     }
 
@@ -636,7 +678,7 @@ impl ExprRewriter<RelNode> for RewriteExprs<'_> {
         match expr {
             ScalarExpr::Column(column_id) => {
                 let exists = self.scope.find_column_by_id(column_id).is_some();
-                if exists {
+                if !exists {
                     return Err(OptimizerError::Internal(format!(
                         "Unexpected column id: {}. Input columns: {:?}",
                         column_id, self.scope.columns
@@ -853,13 +895,34 @@ mod test {
     use crate::datatypes::DataType;
     use crate::memo::{format_memo, MemoBuilder};
     use crate::operators::properties::LogicalPropertiesBuilder;
-    use crate::operators::scalar::{col, scalar};
+    use crate::operators::scalar::{col, scalar, wildcard};
     use crate::operators::Properties;
     use crate::optimizer::SetPropertiesCallback;
     use crate::rules::testing::format_operator_tree;
     use crate::statistics::NoStatisticsBuilder;
 
     use super::*;
+
+    #[test]
+    fn test_from() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| builder.from("A")?.build());
+
+        tester.expect_expr(
+            r#"
+LogicalGet A cols=[1, 2, 3, 4]
+  output cols: [1, 2, 3, 4]
+Metadata:
+  col:1 A.a1 Int32
+  col:2 A.a2 Int32
+  col:3 A.a3 Int32
+  col:4 A.a4 Int32
+Memo:
+  00 LogicalGet A cols=[1, 2, 3, 4]
+"#,
+        );
+    }
 
     #[test]
     fn test_get() {
@@ -963,6 +1026,38 @@ Memo:
   02 Expr 100
   01 Expr col:2
   00 LogicalGet A cols=[1, 2]
+"#,
+        );
+    }
+
+    #[test]
+    fn test_projection_with_wildcard() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let from_a = builder.from("A")?;
+            let projection_list = vec![col("a1"), wildcard(), col("a1")];
+
+            from_a.project(projection_list)?.build()
+        });
+
+        tester.expect_expr(
+            r#"
+LogicalProjection cols=[1, 1, 2, 3, 4, 1] exprs: [col:1, col:1, col:2, col:3, col:4, col:1]
+  input: LogicalGet A cols=[1, 2, 3, 4]
+  output cols: [1, 1, 2, 3, 4, 1]
+Metadata:
+  col:1 A.a1 Int32
+  col:2 A.a2 Int32
+  col:3 A.a3 Int32
+  col:4 A.a4 Int32
+Memo:
+  05 LogicalProjection input=00 exprs=[01, 01, 02, 03, 04, 01] cols=[1, 1, 2, 3, 4, 1]
+  04 Expr col:4
+  03 Expr col:3
+  02 Expr col:2
+  01 Expr col:1
+  00 LogicalGet A cols=[1, 2, 3, 4]
 "#,
         );
     }
