@@ -1,6 +1,7 @@
 use std::any::Any;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, RwLock};
 
 use crate::catalog::{Catalog, Index, IndexRef, Schema, SchemaRef, Table, TableRef, DEFAULT_SCHEMA};
@@ -10,7 +11,7 @@ use crate::catalog::{Catalog, Index, IndexRef, Schema, SchemaRef, Table, TableRe
 /// [database catalog]: crate::catalog::Catalog
 #[derive(Debug)]
 pub struct MutableCatalog {
-    schemas: RwLock<HashMap<String, SchemaRef>>,
+    schemas: RwLock<HashMap<ObjectId, SchemaRef>>,
 }
 
 impl MutableCatalog {
@@ -22,7 +23,7 @@ impl MutableCatalog {
 
     pub fn add_table(&self, schema: &str, table: Table) {
         let mut schemas = self.schemas.write().unwrap();
-        match schemas.entry(schema.to_string()) {
+        match schemas.entry(ObjectId::from(schema)) {
             Entry::Occupied(o) => {
                 let schema = o.get();
                 let schema = MutableSchema::from_ref(schema);
@@ -38,7 +39,7 @@ impl MutableCatalog {
 
     pub fn add_index(&self, schema: &str, index: Index) {
         let mut schemas = self.schemas.write().unwrap();
-        match schemas.entry(schema.to_string()) {
+        match schemas.entry(ObjectId::from(schema)) {
             Entry::Occupied(o) => {
                 let schema = o.get();
                 let schema = MutableSchema::from_ref(schema);
@@ -54,7 +55,7 @@ impl MutableCatalog {
 
     pub fn remove_table(&self, schema: &str, table: &str) {
         let mut schemas = self.schemas.write().unwrap();
-        if let Some(schema) = schemas.get_mut(schema) {
+        if let Some(schema) = schemas.get_mut(&ObjectId::from(schema)) {
             let schema = MutableSchema::from_ref(schema);
             schema.remove_table(table);
         }
@@ -62,7 +63,7 @@ impl MutableCatalog {
 
     pub fn remove_index(&self, schema: &str, index: &str) {
         let mut schemas = self.schemas.write().unwrap();
-        if let Some(schema) = schemas.get_mut(schema) {
+        if let Some(schema) = schemas.get_mut(&ObjectId::from(schema)) {
             let schema = MutableSchema::from_ref(schema);
             schema.remove_index(index);
         }
@@ -86,22 +87,22 @@ impl Catalog for MutableCatalog {
 
     fn get_schema_by_name(&self, name: &str) -> Option<SchemaRef> {
         let schemas = self.schemas.read().unwrap();
-        schemas.get(name).cloned()
+        schemas.get(&ObjectId::from(name)).cloned()
     }
 
     fn get_table(&self, name: &str) -> Option<TableRef> {
         let schemas = self.schemas.read().unwrap();
-        schemas.get(DEFAULT_SCHEMA).map(|s| s.get_table_by_name(name)).flatten()
+        schemas.get(&ObjectId::from(DEFAULT_SCHEMA)).map(|s| s.get_table_by_name(name)).flatten()
     }
 
     fn get_index(&self, name: &str) -> Option<IndexRef> {
         let schemas = self.schemas.read().unwrap();
-        schemas.get(DEFAULT_SCHEMA).map(|s| s.get_index_by_name(name)).flatten()
+        schemas.get(&ObjectId::from(DEFAULT_SCHEMA)).map(|s| s.get_index_by_name(name)).flatten()
     }
 
     fn get_indexes<'a>(&'a self, table: &str) -> Box<dyn Iterator<Item = IndexRef> + 'a> {
         let schemas = self.schemas.read().unwrap();
-        let schema = schemas.get(DEFAULT_SCHEMA);
+        let schema = schemas.get(&ObjectId::from(DEFAULT_SCHEMA));
         match schema {
             Some(schema) => {
                 let indexes = schema.get_indexes(table).collect::<Vec<IndexRef>>();
@@ -133,16 +134,19 @@ impl MutableSchema {
 
     pub fn add_table(&self, table: Table) {
         let mut inner = self.inner.write().unwrap();
-        inner.tables.insert(table.name().into(), Arc::new(table));
+        let table_name = ObjectId::from(table.name().as_str());
+        inner.tables.insert(table_name, Arc::new(table));
     }
 
     pub fn add_index(&self, index: Index) {
         let mut inner = self.inner.write().unwrap();
-        let _ = inner.tables.get(index.table()).unwrap_or_else(|| {
+        let table_name = ObjectId::from(index.table().as_str());
+        let _ = inner.tables.get(&table_name).unwrap_or_else(|| {
             panic!("Unable to add index {:?} - table {:?} does not exist", index.name(), index.table())
         });
 
-        let existing = match inner.indexes.entry(index.name().into()) {
+        let index_name = ObjectId::from(index.name().as_str());
+        let existing = match inner.indexes.entry(index_name) {
             Entry::Occupied(mut o) => {
                 let index = Arc::new(index);
                 let existing = o.get();
@@ -150,12 +154,12 @@ impl MutableSchema {
                 let table = existing.table().clone();
 
                 o.insert(index);
-                Some((name, table))
+                Some((name, ObjectId::from(table)))
             }
             Entry::Vacant(v) => {
                 let index = Arc::new(index);
                 v.insert(index.clone());
-                match inner.table_indexes.entry(index.table().into()) {
+                match inner.table_indexes.entry(table_name) {
                     Entry::Occupied(mut o) => {
                         o.get_mut().push(index);
                     }
@@ -168,20 +172,25 @@ impl MutableSchema {
         };
         if let Some((name, table)) = existing {
             let table_indexes = inner.table_indexes.get_mut(&table).unwrap();
-            table_indexes.retain(|i| i.name() != &name);
+            table_indexes.retain(|i| !i.name().eq_ignore_ascii_case(&name));
         }
     }
 
     pub fn remove_table(&self, name: &str) {
         let mut inner = self.inner.write().unwrap();
-        inner.tables.remove(name);
-        inner.table_indexes.remove(name);
+        let table_name = ObjectId::from(name);
+
+        inner.tables.remove(&table_name);
+        inner.table_indexes.remove(&table_name);
     }
 
     pub fn remove_index(&self, index: &str) {
         let mut inner = self.inner.write().unwrap();
-        if let Some(index) = inner.indexes.remove(index) {
-            let table_index = inner.table_indexes.get_mut(index.table()).unwrap();
+        let index_name = ObjectId::from(index);
+
+        if let Some(index) = inner.indexes.remove(&index_name) {
+            let table_name = ObjectId::from(index.table.as_str());
+            let table_index = inner.table_indexes.get_mut(&table_name).unwrap();
             table_index.retain(|i| i.name() != index.name());
         }
     }
@@ -189,9 +198,9 @@ impl MutableSchema {
 
 #[derive(Default, Debug)]
 struct Inner {
-    tables: HashMap<String, TableRef>,
-    indexes: HashMap<String, IndexRef>,
-    table_indexes: HashMap<String, Vec<IndexRef>>,
+    tables: HashMap<ObjectId, TableRef>,
+    indexes: HashMap<ObjectId, IndexRef>,
+    table_indexes: HashMap<ObjectId, Vec<IndexRef>>,
 }
 
 // see https://github.com/rust-lang/rust-clippy/issues/6066
@@ -209,18 +218,62 @@ impl Schema for MutableSchema {
 
     fn get_table_by_name(&self, name: &str) -> Option<TableRef> {
         let inner = self.inner.write().unwrap();
-        inner.tables.get(name).cloned()
+        inner.tables.get(&ObjectId::from(name)).cloned()
     }
 
     fn get_indexes<'a>(&'a self, table: &str) -> Box<dyn Iterator<Item = IndexRef> + 'a> {
         let inner = self.inner.write().unwrap();
-        let indexes = inner.table_indexes.get(table).cloned().unwrap_or_else(|| Vec::with_capacity(0));
+        let indexes = inner
+            .table_indexes
+            .get(&ObjectId::from(table))
+            .cloned()
+            .unwrap_or_else(|| Vec::with_capacity(0));
         Box::new(indexes.into_iter())
     }
 
     fn get_index_by_name(&self, name: &str) -> Option<IndexRef> {
         let inner = self.inner.write().unwrap();
-        inner.indexes.get(name).cloned()
+        inner.indexes.get(&ObjectId::from(name)).cloned()
+    }
+}
+
+#[derive(Debug, Eq, PartialEq, Hash)]
+struct ObjectId {
+    id: CaseInsensitiveString,
+}
+
+impl From<String> for ObjectId {
+    fn from(id: String) -> Self {
+        ObjectId {
+            id: CaseInsensitiveString(id),
+        }
+    }
+}
+
+impl From<&str> for ObjectId {
+    fn from(id: &str) -> Self {
+        ObjectId {
+            id: CaseInsensitiveString(String::from(id)),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CaseInsensitiveString(String);
+
+impl PartialEq for CaseInsensitiveString {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.eq_ignore_ascii_case(&other.0)
+    }
+}
+
+impl Eq for CaseInsensitiveString {}
+
+impl Hash for CaseInsensitiveString {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        for c in self.0.as_bytes() {
+            c.to_ascii_lowercase().hash(state)
+        }
     }
 }
 

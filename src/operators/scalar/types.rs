@@ -68,7 +68,7 @@ where
             let col_id = cols[0];
             Ok(column_registry.get_column_type(&col_id))
         }
-        Expr::Wildcard => {
+        Expr::Wildcard(_) => {
             let message = format!("Expr {} should have been replaced with Column(id)", expr);
             Err(OptimizerError::Internal(message))
         }

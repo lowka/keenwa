@@ -61,9 +61,14 @@ where
     ScalarExpr::Scalar(val.get_value())
 }
 
-/// Creates a wildcard expression.
+/// Creates a wildcard expression `*`.
 pub fn wildcard() -> ScalarExpr {
-    ScalarExpr::Wildcard
+    ScalarExpr::Wildcard(None)
+}
+
+/// Creates a qualified wildcard expression (eg. `alias.*` ).
+pub fn qualified_wildcard(qualifier: &str) -> ScalarExpr {
+    ScalarExpr::Wildcard(Some(qualifier.into()))
 }
 
 // TODO: Implement ColumnRegistry for all metadata types.
