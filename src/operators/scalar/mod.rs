@@ -61,6 +61,11 @@ where
     ScalarExpr::Scalar(val.get_value())
 }
 
+/// Creates a wildcard expression.
+pub fn wildcard() -> ScalarExpr {
+    ScalarExpr::Wildcard
+}
+
 // TODO: Implement ColumnRegistry for all metadata types.
 impl<T> ColumnTypeRegistry for T
 where

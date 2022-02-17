@@ -59,6 +59,8 @@ where
     /// A subquery expression.
     //TODO: Implement table subquery operators such as ALL, ANY, SOME, EXISTS, UNIQUE.
     SubQuery(T),
+    /// Wildcard (*) expression.
+    Wildcard,
 }
 
 /// Trait that must be implemented by other expressions that can be nested inside [Expr](self::Expr).
@@ -118,6 +120,7 @@ where
                 // Should be handled by visitor::pre_visit because Expr is generic over
                 // the type of a nested sub query.
             }
+            Expr::Wildcard => {}
         }
         visitor.post_visit(self)
     }
@@ -162,6 +165,7 @@ where
                 filter: rewrite_boxed_option(filter, rewriter)?,
             },
             Expr::SubQuery(_) => rewriter.rewrite(self)?,
+            Expr::Wildcard => Expr::Wildcard,
         };
         rewriter.post_rewrite(expr)
     }
@@ -193,6 +197,7 @@ where
                 children
             }
             Expr::SubQuery(_) => vec![],
+            Expr::Wildcard => vec![],
         }
     }
 
@@ -267,6 +272,10 @@ where
             Expr::SubQuery(node) => {
                 expect_children("SubQuery", children.len(), 0);
                 Expr::SubQuery(node.clone())
+            }
+            Expr::Wildcard => {
+                expect_children("Wildcard", children.len(), 0);
+                Expr::Wildcard
             }
         }
     }
@@ -474,6 +483,7 @@ where
                 write!(f, "SubQuery ")?;
                 expr.write_to_fmt(f)
             }
+            Expr::Wildcard => write!(f, "*"),
         }
     }
 }
