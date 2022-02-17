@@ -59,8 +59,8 @@ where
     /// A subquery expression.
     //TODO: Implement table subquery operators such as ALL, ANY, SOME, EXISTS, UNIQUE.
     SubQuery(T),
-    /// Wildcard (*) expression.
-    Wildcard,
+    /// Wildcard expression (eg. `*`, `alias.*` etc).
+    Wildcard(Option<String>),
 }
 
 /// Trait that must be implemented by other expressions that can be nested inside [Expr](self::Expr).
@@ -120,7 +120,7 @@ where
                 // Should be handled by visitor::pre_visit because Expr is generic over
                 // the type of a nested sub query.
             }
-            Expr::Wildcard => {}
+            Expr::Wildcard(_) => {}
         }
         visitor.post_visit(self)
     }
@@ -165,7 +165,7 @@ where
                 filter: rewrite_boxed_option(filter, rewriter)?,
             },
             Expr::SubQuery(_) => rewriter.rewrite(self)?,
-            Expr::Wildcard => Expr::Wildcard,
+            Expr::Wildcard(qualifier) => Expr::Wildcard(qualifier),
         };
         rewriter.post_rewrite(expr)
     }
@@ -197,7 +197,7 @@ where
                 children
             }
             Expr::SubQuery(_) => vec![],
-            Expr::Wildcard => vec![],
+            Expr::Wildcard(_) => vec![],
         }
     }
 
@@ -273,9 +273,9 @@ where
                 expect_children("SubQuery", children.len(), 0);
                 Expr::SubQuery(node.clone())
             }
-            Expr::Wildcard => {
+            Expr::Wildcard(qualifier) => {
                 expect_children("Wildcard", children.len(), 0);
-                Expr::Wildcard
+                Expr::Wildcard(qualifier.clone())
             }
         }
     }
@@ -483,7 +483,10 @@ where
                 write!(f, "SubQuery ")?;
                 expr.write_to_fmt(f)
             }
-            Expr::Wildcard => write!(f, "*"),
+            Expr::Wildcard(qualifier) => match qualifier {
+                None => write!(f, "*"),
+                Some(qualifier) => write!(f, "{}.*", qualifier),
+            },
         }
     }
 }
