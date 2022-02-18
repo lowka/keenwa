@@ -1,5 +1,6 @@
 use crate::catalog::{Catalog, IndexBuilder, DEFAULT_SCHEMA};
 use crate::operators::builder::{OrderingOption, OrderingOptions};
+use crate::operators::relational::join::JoinType;
 use crate::operators::scalar::{col, cols, scalar};
 use crate::rules::implementation::aggregate::HashAggregateRule;
 use crate::rules::implementation::*;
@@ -713,7 +714,7 @@ fn test_nested_loop_join() {
         let right = builder.get("B", vec!["b1", "b2"])?;
 
         let filter = col("a1").gt(scalar(100));
-        let join = left.join_on(right, filter)?;
+        let join = left.join_on(right, JoinType::Inner, filter)?;
         let columns = cols(vec!["a1", "a2", "b1"]);
         let projection = join.project(columns)?;
 
