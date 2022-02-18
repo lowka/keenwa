@@ -536,7 +536,8 @@ impl OperatorBuilder {
                 l.data_type().clone()
             };
 
-            let column_name = "?column?".to_string();
+            // use names of output columns of the first operand.
+            let column_name = l.0.clone();
             let column_meta = ColumnMetadata::new_synthetic_column(column_name.clone(), data_type, None);
             let column_id = self.metadata.add_column(column_meta);
             columns.push((column_name, column_id));
@@ -1529,7 +1530,7 @@ Memo:
 
         tester.expect_expr(
             r#"
-:set_op all=:all
+:set_op all=:all cols=[5, 6]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
   output cols: [5, 6]
@@ -1538,10 +1539,10 @@ Metadata:
   col:2 A.a2 Int32
   col:3 B.b1 Int32
   col:4 B.b2 Int32
-  col:5 ?column? Int32
-  col:6 ?column? Int32
+  col:5 a1 Int32
+  col:6 a2 Int32
 Memo:
-  02 :set_op left=00 right=01 all=:all
+  02 :set_op left=00 right=01 all=:all cols=[5, 6]
   01 LogicalGet B cols=[3, 4]
   00 LogicalGet A cols=[1, 2]
 "#

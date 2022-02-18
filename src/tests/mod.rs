@@ -680,7 +680,7 @@ fn test_union() {
 
     tester.optimize(
         r#"query: union all=false -> unique
-02 Unique [ord:[1, 2]=00 ord:[3, 4]=01]
+02 Unique [ord:[1, 2]=00 ord:[3, 4]=01] cols=[5, 6]
 01 Sort [01] ord=[3, 4]
 01 Scan B cols=[3, 4]
 00 Sort [00] ord=[1, 2]
@@ -697,7 +697,7 @@ fn test_union() {
 
     tester.optimize(
         r#"query: union all=true -> append
-02 Append [00 01]
+02 Append [00 01] cols=[5, 6]
 01 Scan B cols=[3, 4]
 00 Scan A cols=[1, 2]
 "#,
