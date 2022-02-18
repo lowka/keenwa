@@ -1,6 +1,9 @@
 use std::cell::RefCell;
+use std::collections::hash_map::RandomState;
+use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fmt::{Debug, Formatter};
+use std::iter::FromIterator;
 use std::rc::Rc;
 
 use itertools::Itertools;
@@ -9,7 +12,7 @@ use crate::catalog::CatalogRef;
 use crate::error::OptimizerError;
 use crate::memo::MemoExprState;
 use crate::meta::{ColumnId, ColumnMetadata, MutableMetadata, RelationId};
-use crate::operators::relational::join::{JoinCondition, JoinOn, JoinType};
+use crate::operators::relational::join::{JoinCondition, JoinOn, JoinType, JoinUsing};
 use crate::operators::relational::logical::{
     LogicalAggregate, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin,
     LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
@@ -17,6 +20,7 @@ use crate::operators::relational::logical::{
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::{AggregateFunction, Expr, ExprRewriter};
 use crate::operators::scalar::types::resolve_expr_type;
+use crate::operators::scalar::value::ScalarValue;
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
 use crate::operators::{ExprMemo, Operator, OperatorExpr};
 use crate::properties::physical::PhysicalProperties;
@@ -292,8 +296,13 @@ impl OperatorBuilder {
         Ok(self)
     }
 
-    /// Adds a join operator with ON <expr> condition to an operator tree.
-    pub fn join_on(mut self, mut right: OperatorBuilder, expr: ScalarExpr) -> Result<Self, OptimizerError> {
+    /// Adds a join operator with the given join type and ON <expr> condition to an operator tree.
+    pub fn join_on(
+        mut self,
+        mut right: OperatorBuilder,
+        join_type: JoinType,
+        expr: ScalarExpr,
+    ) -> Result<Self, OptimizerError> {
         let (left, left_scope) = self.rel_node()?;
         let (right, right_scope) = right.rel_node()?;
         let scope = left_scope.join(right_scope);
@@ -303,7 +312,40 @@ impl OperatorBuilder {
         let expr = self.add_scalar_node(expr);
         let condition = JoinCondition::On(JoinOn::new(expr));
         let expr = LogicalExpr::Join(LogicalJoin {
-            join_type: JoinType::Inner,
+            join_type,
+            left,
+            right,
+            condition,
+        });
+
+        self.add_operator_and_scope(expr, scope);
+        Ok(self)
+    }
+
+    /// Adds a natural join operator to an operator tree.
+    pub fn natural_join(mut self, mut right: OperatorBuilder, join_type: JoinType) -> Result<Self, OptimizerError> {
+        let (left, left_scope) = self.rel_node()?;
+        let (right, right_scope) = right.rel_node()?;
+
+        let left_name_id: HashMap<String, ColumnId, RandomState> =
+            HashMap::from_iter(left_scope.columns.clone().into_iter());
+        let mut column_ids = vec![];
+        for (right_name, right_id) in right_scope.columns.iter() {
+            if let Some(left_id) = left_name_id.get(right_name) {
+                column_ids.push((*left_id, *right_id));
+            }
+        }
+
+        let condition = if !column_ids.is_empty() {
+            JoinCondition::Using(JoinUsing::new(column_ids))
+        } else {
+            let expr = self.add_scalar_node(ScalarExpr::Scalar(ScalarValue::Bool(true)));
+            JoinCondition::On(JoinOn::new(expr))
+        };
+
+        let scope = left_scope.join(right_scope);
+        let expr = LogicalExpr::Join(LogicalJoin {
+            join_type,
             left,
             right,
             condition,
@@ -1247,7 +1289,7 @@ Memo:
             let left = builder.get("A", vec!["a1", "a2"])?;
             let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
             let expr = col("a1").eq(col("b1"));
-            let join = left.join_on(right, expr)?;
+            let join = left.join_on(right, JoinType::Inner, expr)?;
 
             join.build()
         });
@@ -1266,6 +1308,83 @@ Metadata:
 Memo:
   03 LogicalJoin left=00 right=01 on=col:1 = col:3
   02 Expr col:1 = col:3
+  01 LogicalGet B cols=[3, 4]
+  00 LogicalGet A cols=[1, 2]
+"#,
+        );
+    }
+
+    #[test]
+    fn test_natural_join() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.update_catalog(|catalog| {
+            catalog.add_table(
+                DEFAULT_SCHEMA,
+                TableBuilder::new("A2")
+                    .add_column("a2", DataType::Int32)
+                    .add_column("a1", DataType::Int32)
+                    .add_column("a22", DataType::Int32)
+                    .build(),
+            );
+        });
+
+        tester.build_operator(|builder| {
+            let left = builder.from("A", None)?;
+            let right = left.new_query_builder().from("A2", None)?;
+            let join = left.natural_join(right, JoinType::Inner)?;
+
+            join.build()
+        });
+
+        tester.expect_expr(
+            r#"
+LogicalJoin using=[(2, 5), (1, 6)]
+  left: LogicalGet A cols=[1, 2, 3, 4]
+  right: LogicalGet A2 cols=[5, 6, 7]
+  output cols: [1, 2, 3, 4, 5, 6, 7]
+Metadata:
+  col:1 A.a1 Int32
+  col:2 A.a2 Int32
+  col:3 A.a3 Int32
+  col:4 A.a4 Int32
+  col:5 A2.a2 Int32
+  col:6 A2.a1 Int32
+  col:7 A2.a22 Int32
+Memo:
+  02 LogicalJoin left=00 right=01 using=[(2, 5), (1, 6)]
+  01 LogicalGet A2 cols=[5, 6, 7]
+  00 LogicalGet A cols=[1, 2, 3, 4]
+"#,
+        );
+    }
+
+    #[test]
+    fn test_natural_join_to_join_on_true() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let left = builder.get("A", vec!["a1", "a2"])?;
+            let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
+            let join = left.natural_join(right, JoinType::Inner)?;
+
+            join.build()
+        });
+
+        tester.expect_expr(
+            r#"
+LogicalJoin on=true
+  left: LogicalGet A cols=[1, 2]
+  right: LogicalGet B cols=[3, 4]
+  output cols: [1, 2, 3, 4]
+Metadata:
+  col:1 A.a1 Int32
+  col:2 A.a2 Int32
+  col:3 B.b1 Int32
+  col:4 B.b2 Int32
+Memo:
+  03 LogicalJoin left=00 right=01 on=true
+  02 Expr true
   01 LogicalGet B cols=[3, 4]
   00 LogicalGet A cols=[1, 2]
 "#,
@@ -1554,6 +1673,7 @@ Memo:
 
     struct OperatorBuilderTester {
         operator: Box<dyn Fn(OperatorBuilder) -> Result<Operator, OptimizerError>>,
+        update_catalog: Box<dyn Fn(&MutableCatalog) -> ()>,
         metadata: Rc<MutableMetadata>,
         memoization: Rc<MemoizeOperatorCallback>,
     }
@@ -1569,6 +1689,7 @@ Memo:
 
             OperatorBuilderTester {
                 operator: Box::new(|_| panic!("Operator has not been specified")),
+                update_catalog: Box::new(|_| {}),
                 metadata,
                 memoization,
             }
@@ -1579,6 +1700,13 @@ Memo:
             F: Fn(OperatorBuilder) -> Result<Operator, OptimizerError> + 'static,
         {
             self.operator = Box::new(f)
+        }
+
+        fn update_catalog<F>(&mut self, f: F)
+        where
+            F: Fn(&MutableCatalog) -> () + 'static,
+        {
+            self.update_catalog = Box::new(f)
         }
 
         fn expect_error(mut self, msg: &str) {
@@ -1674,6 +1802,8 @@ Memo:
                     .add_column("b3", DataType::Int32)
                     .build(),
             );
+
+            (self.update_catalog)(catalog.as_ref());
 
             let builder = OperatorBuilder::new(self.memoization.clone(), catalog, self.metadata.clone());
             (self.operator)(builder)
