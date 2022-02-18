@@ -24,16 +24,24 @@ impl Rule for UnionRule {
     }
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
-        if let LogicalExpr::Union(LogicalUnion { left, right, all, .. }) = expr {
+        if let LogicalExpr::Union(LogicalUnion {
+            left,
+            right,
+            all,
+            columns,
+        }) = expr
+        {
             let expr = if *all {
                 PhysicalExpr::Append(Append {
                     left: left.clone(),
                     right: right.clone(),
+                    columns: columns.clone(),
                 })
             } else {
                 PhysicalExpr::Unique(Unique {
                     left: left.clone(),
                     right: right.clone(),
+                    columns: columns.clone(),
                 })
             };
             Ok(Some(RuleResult::Implementation(expr)))
@@ -65,19 +73,29 @@ impl Rule for HashSetOpRule {
 
     fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         let expr = match expr {
-            LogicalExpr::Intersect(LogicalIntersect { left, right, all, .. }) => {
-                PhysicalExpr::HashedSetOp(HashedSetOp {
-                    left: left.clone(),
-                    right: right.clone(),
-                    intersect: true,
-                    all: *all,
-                })
-            }
-            LogicalExpr::Except(LogicalExcept { left, right, all, .. }) => PhysicalExpr::HashedSetOp(HashedSetOp {
+            LogicalExpr::Intersect(LogicalIntersect {
+                left,
+                right,
+                all,
+                columns,
+            }) => PhysicalExpr::HashedSetOp(HashedSetOp {
+                left: left.clone(),
+                right: right.clone(),
+                intersect: true,
+                all: *all,
+                columns: columns.clone(),
+            }),
+            LogicalExpr::Except(LogicalExcept {
+                left,
+                right,
+                all,
+                columns,
+            }) => PhysicalExpr::HashedSetOp(HashedSetOp {
                 left: left.clone(),
                 right: right.clone(),
                 intersect: false,
                 all: *all,
+                columns: columns.clone(),
             }),
             _ => return Ok(None),
         };
@@ -99,7 +117,7 @@ mod test {
                 left: new_src("A", vec![1, 2]),
                 right: new_src("B", vec![3, 4]),
                 all,
-                columns: vec![],
+                columns: vec![5, 6],
             })
         }
 
@@ -107,7 +125,7 @@ mod test {
         tester.apply(
             &union,
             r#"
-Unique
+Unique cols=[5, 6]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]    
 "#,
@@ -117,7 +135,7 @@ Unique
         tester.apply(
             &union_all,
             r#"
-Append
+Append cols=[5, 6]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]    
 "#,
@@ -133,7 +151,7 @@ Append
                 left: new_src("A", vec![1, 2]),
                 right: new_src("B", vec![3, 4]),
                 all,
-                columns: vec![],
+                columns: vec![5, 6],
             })
         }
 
@@ -141,7 +159,7 @@ Append
         tester.apply(
             &intersect,
             r#"
-HashedSetOp intersect=true all=false
+HashedSetOp intersect=true all=false cols=[5, 6]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
     "#,
@@ -151,7 +169,7 @@ HashedSetOp intersect=true all=false
         tester.apply(
             &intersect_all,
             r#"
-HashedSetOp intersect=true all=true
+HashedSetOp intersect=true all=true cols=[5, 6]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
     "#,
@@ -167,7 +185,7 @@ HashedSetOp intersect=true all=true
                 left: new_src("A", vec![1, 2]),
                 right: new_src("B", vec![3, 4]),
                 all,
-                columns: vec![],
+                columns: vec![5, 6],
             })
         }
 
@@ -175,7 +193,7 @@ HashedSetOp intersect=true all=true
         tester.apply(
             &expect,
             r#"
-HashedSetOp intersect=false all=false
+HashedSetOp intersect=false all=false cols=[5, 6]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
     "#,
@@ -185,7 +203,7 @@ HashedSetOp intersect=false all=false
         tester.apply(
             &expect_all,
             r#"
-HashedSetOp intersect=false all=true
+HashedSetOp intersect=false all=true cols=[5, 6]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
     "#,

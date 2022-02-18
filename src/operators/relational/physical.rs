@@ -657,6 +657,7 @@ impl Sort {
 pub struct Append {
     pub left: RelNode,
     pub right: RelNode,
+    pub columns: Vec<ColumnId>,
 }
 
 impl Append {
@@ -671,6 +672,7 @@ impl Append {
         Append {
             left: inputs.rel_node(),
             right: inputs.rel_node(),
+            columns: self.columns.clone(),
         }
     }
 
@@ -697,6 +699,7 @@ impl Append {
         f.write_name("Append");
         f.write_expr("left", &self.left);
         f.write_expr("right", &self.right);
+        f.write_values("cols", &self.columns);
     }
 }
 
@@ -704,6 +707,7 @@ impl Append {
 pub struct Unique {
     pub left: RelNode,
     pub right: RelNode,
+    pub columns: Vec<ColumnId>,
 }
 
 impl Unique {
@@ -718,6 +722,7 @@ impl Unique {
         Unique {
             left: inputs.rel_node(),
             right: inputs.rel_node(),
+            columns: self.columns.clone(),
         }
     }
 
@@ -750,6 +755,7 @@ impl Unique {
         f.write_name("Unique");
         f.write_expr("left", &self.left);
         f.write_expr("right", &self.right);
+        f.write_values("cols", &self.columns);
     }
 }
 
@@ -761,6 +767,8 @@ pub struct HashedSetOp {
     pub intersect: bool,
     /// If `true` this an INTERSECT ALL/EXCEPT ALL operator.
     pub all: bool,
+    /// Output columns produced by a set operator.
+    pub columns: Vec<ColumnId>,
 }
 
 impl HashedSetOp {
@@ -770,13 +778,14 @@ impl HashedSetOp {
     }
 
     fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(2, "Unique");
+        inputs.expect_len(2, "HashedSetOp");
 
         HashedSetOp {
             left: inputs.rel_node(),
             right: inputs.rel_node(),
             intersect: self.intersect,
             all: self.all,
+            columns: self.columns.clone(),
         }
     }
 
@@ -805,6 +814,7 @@ impl HashedSetOp {
         f.write_expr("right", &self.right);
         f.write_value("intersect", &self.intersect);
         f.write_value("all", self.all);
+        f.write_values("cols", &self.columns)
     }
 }
 
