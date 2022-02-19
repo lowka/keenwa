@@ -387,12 +387,25 @@ impl OperatorBuilder {
                     } = option;
                     let mut rewriter = RewriteExprs::new(&scope);
                     let expr = expr.rewrite(&mut rewriter)?;
-                    let column_id = if let ScalarExpr::Column(id) = expr {
-                        id
-                    } else {
-                        let expr_type = resolve_expr_type(&expr, &self.metadata)?;
-                        let column_meta = ColumnMetadata::new_synthetic_column("".into(), expr_type, Some(expr));
-                        self.metadata.add_column(column_meta)
+                    let column_id = match expr {
+                        ScalarExpr::Scalar(ScalarValue::Int32(pos)) => match usize::try_from(pos - 1).ok() {
+                            Some(pos) if pos < scope.columns.len() => {
+                                let (_, id) = scope.columns[pos];
+                                id
+                            }
+                            Some(_) | None => {
+                                return Err(OptimizerError::Argument(format!(
+                                    "ORDER BY position {} is not in select list",
+                                    pos
+                                )))
+                            }
+                        },
+                        ScalarExpr::Column(id) => id,
+                        _ => {
+                            let expr_type = resolve_expr_type(&expr, &self.metadata)?;
+                            let column_meta = ColumnMetadata::new_synthetic_column("".into(), expr_type, Some(expr));
+                            self.metadata.add_column(column_meta)
+                        }
                     };
                     ordering_columns.push(column_id);
                 }
@@ -1072,25 +1085,82 @@ Memo:
     }
 
     #[test]
-    fn test_get_order_by() {
+    fn test_get_order_by_column_name() {
         let mut tester = OperatorBuilderTester::new();
 
         tester.build_operator(|builder| {
+            let from_a = builder.get("A", vec!["a1"])?;
             let ord = OrderingOption::by(("a1", false));
-            let from_a = builder.get("A", vec!["a1"])?.order_by(ord)?;
 
-            from_a.build()
+            from_a.order_by(ord)?.build()
         });
 
-        //TODO: include properties
         tester.expect_expr(
             r#"
 LogicalGet A cols=[1]
   output cols: [1]
+  ordering: [1]
 Metadata:
   col:1 A.a1 Int32
 Memo:
   00 LogicalGet A cols=[1]
+"#,
+        );
+    }
+
+    #[test]
+    fn test_get_order_by_alias() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let from_a = builder.get("A", vec!["a1", "a2"])?;
+            let projection = from_a.project(vec![col("a1").alias("x"), col("a2")])?;
+
+            let ord = OrderingOption::by(("x", false));
+            projection.order_by(ord)?.build()
+        });
+
+        tester.expect_expr(
+            r#"
+LogicalProjection cols=[3, 2] exprs: [col:1 AS x, col:2]
+  input: LogicalGet A cols=[1, 2]
+  output cols: [3, 2]
+  ordering: [3]
+Metadata:
+  col:1 A.a1 Int32
+  col:2 A.a2 Int32
+  col:3 x Int32, expr: col:1
+Memo:
+  03 LogicalProjection input=00 exprs=[01, 02] cols=[3, 2]
+  02 Expr col:2
+  01 Expr col:1 AS x
+  00 LogicalGet A cols=[1, 2]
+"#,
+        );
+    }
+
+    #[test]
+    fn test_get_order_by_position() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let from_a = builder.get("A", vec!["a2", "a1", "a3"])?;
+            let ord = OrderingOption::new(scalar(2), false);
+
+            from_a.order_by(ord)?.build()
+        });
+
+        tester.expect_expr(
+            r#"
+LogicalGet A cols=[1, 2, 3]
+  output cols: [1, 2, 3]
+  ordering: [2]
+Metadata:
+  col:1 A.a2 Int32
+  col:2 A.a1 Int32
+  col:3 A.a3 Int32
+Memo:
+  00 LogicalGet A cols=[1, 2, 3]
 "#,
         );
     }
@@ -1785,6 +1855,11 @@ Memo:
             match props {
                 Properties::Relational(props) => {
                     buf.push_str(format!("  output cols: {:?}\n", props.logical().output_columns()).as_str());
+                    if !props.required.is_empty() {
+                        if let Some(ordering) = props.required().ordering() {
+                            buf.push_str(format!("  ordering: {:?}\n", ordering.columns()).as_str());
+                        }
+                    }
                 }
                 Properties::Scalar(_) => {}
             }
