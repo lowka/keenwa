@@ -115,6 +115,7 @@ fn rewrite_inputs(expr: &RelNode) -> RelNode {
 mod test {
     use crate::error::OptimizerError;
     use crate::operators::builder::OperatorBuilder;
+    use crate::operators::relational::join::JoinType;
     use crate::operators::scalar::{col, scalar};
     use crate::rules::rewrite::testing::build_and_rewrite_expr;
 
@@ -410,13 +411,13 @@ LogicalProjection cols=[4, 5] exprs: [col:3 AS s, col:1 + col:1 AS s2]
             |builder| {
                 let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
                 let from_b = builder.get("B", vec!["b1", "b2"])?;
-                let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
+                let join = from_a.join_using(from_b, JoinType::Inner, vec![("a1", "b1")])?;
                 let projection = join.project(vec![col("a1"), col("b1")])?;
 
                 Ok(projection)
             },
             r#"
-LogicalJoin using=[(1, 3)]
+LogicalJoin type=Inner using=[(1, 3)]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
 "#,
@@ -429,14 +430,14 @@ LogicalJoin using=[(1, 3)]
             |builder| {
                 let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
                 let from_b = builder.get("B", vec!["b1", "b2"])?;
-                let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
+                let join = from_a.join_using(from_b, JoinType::Inner, vec![("a1", "b1")])?;
                 let projection = join.project(vec![col("a1"), col("b1"), col("b2")])?;
 
                 Ok(projection)
             },
             r#"
 LogicalProjection cols=[1, 3, 4] exprs: [col:1, col:3, col:4]
-  input: LogicalJoin using=[(1, 3)]
+  input: LogicalJoin type=Inner using=[(1, 3)]
     left: LogicalGet A cols=[1, 2]
     right: LogicalGet B cols=[3, 4]
 "#,
@@ -446,14 +447,14 @@ LogicalProjection cols=[1, 3, 4] exprs: [col:1, col:3, col:4]
             |builder| {
                 let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
                 let from_b = builder.get("B", vec!["b1", "b2"])?;
-                let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
+                let join = from_a.join_using(from_b, JoinType::Inner, vec![("a1", "b1")])?;
                 let projection = join.project(vec![col("a1"), col("b1"), col("a1").alias("c1")])?;
 
                 Ok(projection)
             },
             r#"
 LogicalProjection cols=[1, 3, 5] exprs: [col:1, col:3, col:1 AS c1]
-  input: LogicalJoin using=[(1, 3)]
+  input: LogicalJoin type=Inner using=[(1, 3)]
     left: LogicalGet A cols=[1, 2]
     right: LogicalGet B cols=[3, 4]
 "#,
@@ -464,14 +465,14 @@ LogicalProjection cols=[1, 3, 5] exprs: [col:1, col:3, col:1 AS c1]
             |builder| {
                 let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
                 let from_b = builder.get("B", vec!["b1", "b2"])?;
-                let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
+                let join = from_a.join_using(from_b, JoinType::Inner, vec![("a1", "b1")])?;
                 let projection = join.project(vec![col("a1"), col("b1").alias("c1")])?;
 
                 Ok(projection)
             },
             r#"
 LogicalProjection cols=[1, 5] exprs: [col:1, col:3 AS c1]
-  input: LogicalJoin using=[(1, 3)]
+  input: LogicalJoin type=Inner using=[(1, 3)]
     left: LogicalGet A cols=[1, 2]
     right: LogicalGet B cols=[3, 4]
 "#,
@@ -485,14 +486,14 @@ LogicalProjection cols=[1, 5] exprs: [col:1, col:3 AS c1]
             |builder| {
                 let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
                 let from_b = builder.get("B", vec!["b1", "b2"])?;
-                let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
+                let join = from_a.join_using(from_b, JoinType::Inner, vec![("a1", "b1")])?;
                 let projection = join.project(vec![col("a1"), col("b1").alias("c1")])?;
 
                 Ok(projection)
             },
             r#"
 LogicalProjection cols=[1, 5] exprs: [col:1, col:3 AS c1]
-  input: LogicalJoin using=[(1, 3)]
+  input: LogicalJoin type=Inner using=[(1, 3)]
     left: LogicalGet A cols=[1, 2]
     right: LogicalGet B cols=[3, 4]
 "#,

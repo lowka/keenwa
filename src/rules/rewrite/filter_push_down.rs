@@ -378,6 +378,7 @@ fn split_filter(filter: &ScalarExpr, filters: &mut Vec<ScalarExpr>) {
 mod test {
     use crate::error::OptimizerError;
     use crate::operators::builder::OperatorBuilder;
+    use crate::operators::relational::join::JoinType;
     use crate::operators::scalar::{col, scalar};
     use crate::rules::rewrite::testing::build_and_rewrite_expr;
 
@@ -562,13 +563,13 @@ LogicalSelect
             |builder| {
                 let from_a = builder.clone().get("A", vec!["a1", "a2", "a3"])?;
                 let from_b = builder.get("B", vec!["b1", "b2", "b3"])?;
-                let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
+                let join = from_a.join_using(from_b, JoinType::Inner, vec![("a1", "b1")])?;
                 let filter = col("a1").gt(scalar(100));
                 let select = join.select(Some(filter))?;
                 Ok(select)
             },
             r#"
-LogicalJoin using=[(1, 4)]
+LogicalJoin type=Inner using=[(1, 4)]
   left: LogicalSelect
     input: LogicalGet A cols=[1, 2, 3]
     filter: Expr col:1 > 100
@@ -583,13 +584,13 @@ LogicalJoin using=[(1, 4)]
                 let from_a = builder.clone().get("A", vec!["a1", "a2", "a3"])?;
                 let project_a = from_a.project(vec![col("a1"), col("a2")])?;
                 let from_b = builder.get("B", vec!["b1", "b2", "b3"])?;
-                let join = project_a.join_using(from_b, vec![("a1", "b1")])?;
+                let join = project_a.join_using(from_b, JoinType::Inner, vec![("a1", "b1")])?;
                 let filter = col("a1").gt(scalar(100));
                 let select = join.select(Some(filter))?;
                 Ok(select)
             },
             r#"
-LogicalJoin using=[(1, 4)]
+LogicalJoin type=Inner using=[(1, 4)]
   left: LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
     input: LogicalSelect
       input: LogicalGet A cols=[1, 2, 3]
@@ -607,13 +608,13 @@ LogicalJoin using=[(1, 4)]
             |builder| {
                 let from_a = builder.clone().get("A", vec!["a1", "a2", "a3"])?;
                 let from_b = builder.get("B", vec!["b1", "b2", "b3"])?;
-                let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
+                let join = from_a.join_using(from_b, JoinType::Inner, vec![("a1", "b1")])?;
                 let filter = col("a1").gt(scalar(100));
                 let select = join.select(Some(filter))?;
                 Ok(select)
             },
             r#"
-LogicalJoin using=[(1, 4)]
+LogicalJoin type=Inner using=[(1, 4)]
   left: LogicalSelect
     input: LogicalGet A cols=[1, 2, 3]
     filter: Expr col:1 > 100
@@ -628,13 +629,13 @@ LogicalJoin using=[(1, 4)]
                 let from_a = builder.clone().get("A", vec!["a1", "a2", "a3"])?;
                 let from_b = builder.get("B", vec!["b1", "b2", "b3"])?;
                 let project_b = from_b.project(vec![col("b1"), col("b2")])?;
-                let join = from_a.join_using(project_b, vec![("a1", "b1")])?;
+                let join = from_a.join_using(project_b, JoinType::Inner, vec![("a1", "b1")])?;
                 let filter = col("a1").gt(scalar(100));
                 let select = join.select(Some(filter))?;
                 Ok(select)
             },
             r#"
-LogicalJoin using=[(1, 4)]
+LogicalJoin type=Inner using=[(1, 4)]
   left: LogicalSelect
     input: LogicalGet A cols=[1, 2, 3]
     filter: Expr col:1 > 100
@@ -652,13 +653,13 @@ LogicalJoin using=[(1, 4)]
             |builder| {
                 let from_a = builder.clone().get("A", vec!["a1", "a2", "a3"])?;
                 let from_b = builder.get("A", vec!["a1", "a2", "a3"])?;
-                let join = from_a.join_using(from_b, vec![("a1", "a1")])?;
+                let join = from_a.join_using(from_b, JoinType::Inner, vec![("a1", "a1")])?;
                 let filter = col("a1").gt(scalar(100));
                 let select = join.select(Some(filter))?;
                 Ok(select)
             },
             r#"
-LogicalJoin using=[(1, 1)]
+LogicalJoin type=Inner using=[(1, 1)]
   left: LogicalSelect
     input: LogicalGet A cols=[1, 2, 3]
     filter: Expr col:1 > 100
@@ -675,7 +676,7 @@ LogicalJoin using=[(1, 1)]
             |builder| {
                 let from_a = builder.clone().get("A", vec!["a1", "a2", "a3"])?;
                 let from_b = builder.get("B", vec!["b1", "b2", "b3"])?;
-                let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
+                let join = from_a.join_using(from_b, JoinType::Inner, vec![("a1", "b1")])?;
 
                 // col:a1 = col:b1 AND a1 > 10
                 let a1_eq_b1 = col("a1").eq(col("b1"));
@@ -687,7 +688,7 @@ LogicalJoin using=[(1, 1)]
             },
             r#"
 LogicalSelect
-  input: LogicalJoin using=[(1, 4)]
+  input: LogicalJoin type=Inner using=[(1, 4)]
     left: LogicalSelect
       input: LogicalGet A cols=[1, 2, 3]
       filter: Expr col:1 > 10
@@ -705,7 +706,7 @@ LogicalSelect
             |builder| {
                 let from_a = builder.clone().get("A", vec!["a1", "a2", "a3"])?;
                 let from_b = builder.get("B", vec!["b1", "b2", "b3"])?;
-                let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
+                let join = from_a.join_using(from_b, JoinType::Inner, vec![("a1", "b1")])?;
 
                 // col:a1 + col:b1 = 10
                 let filter = (col("a1") + col("b1")).eq(scalar(10));
@@ -715,7 +716,7 @@ LogicalSelect
             },
             r#"
 LogicalSelect
-  input: LogicalJoin using=[(1, 4)]
+  input: LogicalJoin type=Inner using=[(1, 4)]
     left: LogicalGet A cols=[1, 2, 3]
     right: LogicalGet B cols=[4, 5, 6]
   filter: Expr col:1 + col:4 = 10 AND col:4 + col:1 = 10
@@ -729,7 +730,7 @@ LogicalSelect
             |builder| {
                 let from_a = builder.clone().get("A", vec!["a1", "a2", "a3"])?;
                 let from_b = builder.get("B", vec!["b1", "b2", "b3"])?;
-                let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
+                let join = from_a.join_using(from_b, JoinType::Inner, vec![("a1", "b1")])?;
 
                 // col:a1 + col:b1 = 10 AND col:a1 > 5
                 let a1_plus_b1 = col("a1") + col("b1");
@@ -742,7 +743,7 @@ LogicalSelect
             },
             r#"
 LogicalSelect
-  input: LogicalJoin using=[(1, 4)]
+  input: LogicalJoin type=Inner using=[(1, 4)]
     left: LogicalSelect
       input: LogicalGet A cols=[1, 2, 3]
       filter: Expr col:1 > 5

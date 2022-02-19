@@ -364,22 +364,22 @@ NestedLoopJoin type=:type
     #[test]
     fn test_hash_join_using() {
         let expr = r#"
-HashJoin:type using=[(1, 3)]
+HashJoin type=:type using=[(1, 3)]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
 "#;
-        expect_apply(HashJoinRule, &join_expr(JoinType::Inner), expr.replace(":type", ""));
+        expect_apply(HashJoinRule, &join_expr(JoinType::Inner), expr.replace(":type", "Inner"));
         expect_no_match(HashJoinRule, &join_expr(JoinType::Cross));
-        expect_apply(HashJoinRule, &join_expr(JoinType::Left), expr.replace(":type", " type=Left"));
-        expect_apply(HashJoinRule, &join_expr(JoinType::Right), expr.replace(":type", " type=Right"));
-        expect_apply(HashJoinRule, &join_expr(JoinType::Full), expr.replace(":type", " type=Full"));
+        expect_apply(HashJoinRule, &join_expr(JoinType::Left), expr.replace(":type", "Left"));
+        expect_apply(HashJoinRule, &join_expr(JoinType::Right), expr.replace(":type", "Right"));
+        expect_apply(HashJoinRule, &join_expr(JoinType::Full), expr.replace(":type", "Full"));
     }
 
     #[test]
     fn test_hash_join_on_expr() {
         fn condition_matches(on_expr: ScalarExpr) {
             let expr = r#"
-HashJoin on=:expr
+HashJoin type=Inner on=:expr
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
 "#;
@@ -415,22 +415,22 @@ HashJoin on=:expr
     #[test]
     fn test_merge_join() {
         let expr = r#"
-MergeSortJoin:type using=[(1, 3)]
+MergeSortJoin type=:type using=[(1, 3)]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
 "#;
-        expect_apply(MergeSortJoinRule, &join_expr(JoinType::Inner), expr.replace(":type", ""));
+        expect_apply(MergeSortJoinRule, &join_expr(JoinType::Inner), expr.replace(":type", "Inner"));
         expect_no_match(MergeSortJoinRule, &join_expr(JoinType::Cross));
-        expect_apply(MergeSortJoinRule, &join_expr(JoinType::Left), expr.replace(":type", " type=Left"));
-        expect_apply(MergeSortJoinRule, &join_expr(JoinType::Right), expr.replace(":type", " type=Right"));
-        expect_apply(MergeSortJoinRule, &join_expr(JoinType::Full), expr.replace(":type", " type=Full"));
+        expect_apply(MergeSortJoinRule, &join_expr(JoinType::Left), expr.replace(":type", "Left"));
+        expect_apply(MergeSortJoinRule, &join_expr(JoinType::Right), expr.replace(":type", "Right"));
+        expect_apply(MergeSortJoinRule, &join_expr(JoinType::Full), expr.replace(":type", "Full"));
     }
 
     #[test]
     fn test_merge_join_on_expr() {
         fn condition_matches(on_expr: ScalarExpr) {
             let expr = r#"
-MergeSortJoin on=:expr
+MergeSortJoin type=Inner on=:expr
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
 "#;

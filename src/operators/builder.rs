@@ -258,11 +258,16 @@ impl OperatorBuilder {
     pub fn join_using(
         mut self,
         mut right: OperatorBuilder,
+        join_type: JoinType,
         columns: Vec<(impl Into<String>, impl Into<String>)>,
     ) -> Result<Self, OptimizerError> {
         let (left, left_scope) = self.rel_node()?;
         let (right, right_scope) = right.rel_node()?;
         let mut columns_ids = Vec::new();
+
+        if join_type == JoinType::Cross {
+            return Err(OptimizerError::Argument(format!("CROSS JOIN: USING (columns) condition is not supported")));
+        }
 
         for (l, r) in columns {
             let l: String = l.into();
@@ -286,7 +291,7 @@ impl OperatorBuilder {
         let scope = left_scope.join(right_scope);
         let condition = JoinCondition::using(columns_ids);
         let expr = LogicalExpr::Join(LogicalJoin {
-            join_type: JoinType::Inner,
+            join_type,
             left,
             right,
             condition,
@@ -305,6 +310,19 @@ impl OperatorBuilder {
     ) -> Result<Self, OptimizerError> {
         let (left, left_scope) = self.rel_node()?;
         let (right, right_scope) = right.rel_node()?;
+
+        if join_type == JoinType::Cross {
+            match expr {
+                ScalarExpr::Scalar(ScalarValue::Bool(true)) => {}
+                _ => {
+                    return Err(OptimizerError::Argument(format!(
+                        "CROSS JOIN: Invalid expression in ON <expr> condition: {}",
+                        expr
+                    )))
+                }
+            }
+        }
+
         let scope = left_scope.join(right_scope);
 
         let mut rewriter = RewriteExprs::new(&scope);
@@ -1257,14 +1275,14 @@ Memo:
         tester.build_operator(|builder| {
             let left = builder.get("A", vec!["a1", "a2"])?;
             let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
-            let join = left.join_using(right, vec![("a1", "b2")])?;
+            let join = left.join_using(right, JoinType::Inner, vec![("a1", "b2")])?;
 
             join.build()
         });
 
         tester.expect_expr(
             r#"
-LogicalJoin using=[(1, 4)]
+LogicalJoin type=Inner using=[(1, 4)]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
   output cols: [1, 2, 3, 4]
@@ -1274,11 +1292,31 @@ Metadata:
   col:3 B.b1 Int32
   col:4 B.b2 Int32
 Memo:
-  02 LogicalJoin left=00 right=01 using=[(1, 4)]
+  02 LogicalJoin left=00 right=01 type=Inner using=[(1, 4)]
   01 LogicalGet B cols=[3, 4]
   00 LogicalGet A cols=[1, 2]
 "#,
         );
+    }
+
+    #[test]
+    fn test_join_using_reject_cross_join() {
+        fn expect_cross_join_is_rejected(columns: Vec<(String, String)>) {
+            let mut tester = OperatorBuilderTester::new();
+
+            tester.build_operator(move |builder| {
+                let left = builder.get("A", vec!["a1", "a2"])?;
+                let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
+                let join = left.join_using(right, JoinType::Cross, columns.clone())?;
+
+                join.build()
+            });
+
+            tester.expect_error("CROSS JOIN: USING (columns) condition is not supported");
+        }
+
+        expect_cross_join_is_rejected(vec![]);
+        expect_cross_join_is_rejected(vec![("a1".into(), "b2".into())]);
     }
 
     #[test]
@@ -1296,7 +1334,7 @@ Memo:
 
         tester.expect_expr(
             r#"
-LogicalJoin on=col:1 = col:3
+LogicalJoin type=Inner on=col:1 = col:3
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
   output cols: [1, 2, 3, 4]
@@ -1306,12 +1344,32 @@ Metadata:
   col:3 B.b1 Int32
   col:4 B.b2 Int32
 Memo:
-  03 LogicalJoin left=00 right=01 on=col:1 = col:3
+  03 LogicalJoin left=00 right=01 type=Inner on=col:1 = col:3
   02 Expr col:1 = col:3
   01 LogicalGet B cols=[3, 4]
   00 LogicalGet A cols=[1, 2]
 "#,
         );
+    }
+
+    #[test]
+    fn test_join_on_reject_cross_join_for_non_true_expr() {
+        fn expect_cross_join_is_rejected(expr: ScalarExpr) {
+            let mut tester = OperatorBuilderTester::new();
+
+            tester.build_operator(move |builder| {
+                let left = builder.get("A", vec!["a1", "a2"])?;
+                let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
+                let join = left.join_on(right, JoinType::Cross, expr.clone())?;
+
+                join.build()
+            });
+
+            tester.expect_error("CROSS JOIN: Invalid expression in ON <expr> condition");
+        }
+
+        expect_cross_join_is_rejected(ScalarExpr::Scalar(ScalarValue::Bool(false)));
+        expect_cross_join_is_rejected(ScalarExpr::Scalar(ScalarValue::Int32(1)));
     }
 
     #[test]
@@ -1339,7 +1397,7 @@ Memo:
 
         tester.expect_expr(
             r#"
-LogicalJoin using=[(2, 5), (1, 6)]
+LogicalJoin type=Inner using=[(2, 5), (1, 6)]
   left: LogicalGet A cols=[1, 2, 3, 4]
   right: LogicalGet A2 cols=[5, 6, 7]
   output cols: [1, 2, 3, 4, 5, 6, 7]
@@ -1352,7 +1410,7 @@ Metadata:
   col:6 A2.a1 Int32
   col:7 A2.a22 Int32
 Memo:
-  02 LogicalJoin left=00 right=01 using=[(2, 5), (1, 6)]
+  02 LogicalJoin left=00 right=01 type=Inner using=[(2, 5), (1, 6)]
   01 LogicalGet A2 cols=[5, 6, 7]
   00 LogicalGet A cols=[1, 2, 3, 4]
 "#,
@@ -1373,7 +1431,7 @@ Memo:
 
         tester.expect_expr(
             r#"
-LogicalJoin on=true
+LogicalJoin type=Inner on=true
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
   output cols: [1, 2, 3, 4]
@@ -1383,7 +1441,7 @@ Metadata:
   col:3 B.b1 Int32
   col:4 B.b2 Int32
 Memo:
-  03 LogicalJoin left=00 right=01 on=true
+  03 LogicalJoin left=00 right=01 type=Inner on=true
   02 Expr true
   01 LogicalGet B cols=[3, 4]
   00 LogicalGet A cols=[1, 2]
