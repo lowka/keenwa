@@ -408,9 +408,12 @@ LogicalProjection cols=[1] exprs: [col:1]
         rewrite_expr(
             |builder| {
                 let from_a = builder.get("A", vec!["a1", "a2"])?;
+                let col_a1 = col("a1");
+                let col_a2 = col("a2");
                 let col_a3 = (col("a1") + col("a2")).alias("a3");
-                let project = from_a.project(vec![col("a1"), col("a2"), col_a3])?;
-                let filter = col("a3").gt(scalar(100));
+
+                let project = from_a.project(vec![col_a1, col_a2, col_a3])?;
+                let filter = col("a3").gt(scalar(100)).and(col("a1").gt(scalar(10)));
                 let filter_a1 = project.select(Some(filter))?;
 
                 Ok(filter_a1)
@@ -419,32 +422,7 @@ LogicalProjection cols=[1] exprs: [col:1]
 LogicalProjection cols=[1, 2, 3] exprs: [col:1, col:2, col:1 + col:2 AS a3]
   input: LogicalSelect
     input: LogicalGet A cols=[1, 2]
-    filter: Expr col:1 + col:2 > 100
-"#,
-        );
-    }
-
-    #[test]
-    fn test_push_past_project_with_nested_aliases() {
-        rewrite_expr(
-            |builder| {
-                let from_a = builder.get("A", vec!["a1", "a2"])?;
-                let col_a1 = col("a1");
-                let col_a2 = col("a2");
-                let col_a3 = col("a2").alias("a3");
-                let col_a4 = (col("a1") + col("a3")).alias("a4");
-
-                let project = from_a.project(vec![col_a1, col_a2, col_a3, col_a4])?;
-                let filter = col("a4").gt(scalar(100)).and(col("a3").gt(scalar(50)));
-                let filter_a1 = project.select(Some(filter))?;
-
-                Ok(filter_a1)
-            },
-            r#"
-LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:2 AS a3, col:1 + col:3 AS a4]
-  input: LogicalSelect
-    input: LogicalGet A cols=[1, 2]
-    filter: Expr col:1 + col:2 > 100 AND col:2 > 50
+    filter: Expr col:1 + col:2 > 100 AND col:1 > 10
 "#,
         );
     }

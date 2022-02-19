@@ -216,7 +216,7 @@ impl OperatorBuilder {
                     }
                 }
                 _ => {
-                    let mut rewriter = RewriteExprs::for_projection(&scope, &output_columns);
+                    let mut rewriter = RewriteExprs::new(&scope);
                     let expr = expr.clone().rewrite(&mut rewriter)?;
                     let (id, name) = match expr.clone() {
                         ScalarExpr::Column(id) => {
@@ -790,17 +790,11 @@ impl OperatorScope {
 
 struct RewriteExprs<'a> {
     scope: &'a OperatorScope,
-    // Aliased expressions must be visible inside a scope of a projection.
-    projection: &'a [(String, ColumnId)],
 }
 
 impl<'a> RewriteExprs<'a> {
     fn new(scope: &'a OperatorScope) -> Self {
-        RewriteExprs { scope, projection: &[] }
-    }
-
-    fn for_projection(scope: &'a OperatorScope, projection: &'a [(String, ColumnId)]) -> Self {
-        RewriteExprs { scope, projection }
+        RewriteExprs { scope }
     }
 }
 
@@ -825,8 +819,6 @@ impl ExprRewriter<RelNode> for RewriteExprs<'_> {
             }
             ScalarExpr::ColumnName(ref column_name) => {
                 let column_id = self.scope.find_column_by_name(column_name);
-                let column_id = column_id
-                    .or_else(|| self.projection.iter().find(|(name, _)| column_name == name).map(|(_, id)| *id));
 
                 match column_id {
                     Some(column_id) => Ok(ScalarExpr::Column(column_id)),
