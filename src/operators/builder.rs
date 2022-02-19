@@ -263,11 +263,12 @@ impl OperatorBuilder {
     ) -> Result<Self, OptimizerError> {
         let (left, left_scope) = self.rel_node()?;
         let (right, right_scope) = right.rel_node()?;
-        let mut columns_ids = Vec::new();
 
         if join_type == JoinType::Cross {
             return Err(OptimizerError::Argument(format!("CROSS JOIN: USING (columns) condition is not supported")));
         }
+
+        let mut columns_ids = Vec::new();
 
         for (l, r) in columns {
             let l: String = l.into();
@@ -344,6 +345,10 @@ impl OperatorBuilder {
     pub fn natural_join(mut self, mut right: OperatorBuilder, join_type: JoinType) -> Result<Self, OptimizerError> {
         let (left, left_scope) = self.rel_node()?;
         let (right, right_scope) = right.rel_node()?;
+
+        if join_type == JoinType::Cross {
+            return Err(OptimizerError::Argument(format!("CROSS JOIN: Natural join condition is not allowed")));
+        }
 
         let left_name_id: HashMap<String, ColumnId, RandomState> =
             HashMap::from_iter(left_scope.columns.clone().into_iter());
@@ -865,11 +870,12 @@ impl ExprRewriter<RelNode> for RewriteExprs<'_> {
 pub struct AggregateBuilder<'a> {
     builder: &'a mut OperatorBuilder,
     aggr_exprs: Vec<AggrExpr>,
-    group_exprs: Vec<String>,
+    group_exprs: Vec<ScalarExpr>,
 }
 
 enum AggrExpr {
     Function { func: AggregateFunction, column: String },
+    Expr(ScalarExpr),
     Column(String),
 }
 
@@ -892,9 +898,21 @@ impl AggregateBuilder<'_> {
         Ok(self)
     }
 
+    /// Adds an expression to the aggregate operator.
+    pub fn add_expr(mut self, expr: ScalarExpr) -> Result<Self, OptimizerError> {
+        self.aggr_exprs.push(AggrExpr::Expr(expr));
+        Ok(self)
+    }
+
     /// Adds grouping by the given column.
     pub fn group_by(mut self, column_name: &str) -> Result<Self, OptimizerError> {
-        self.group_exprs.push(column_name.into());
+        self.group_exprs.push(ScalarExpr::ColumnName(column_name.into()));
+        Ok(self)
+    }
+
+    /// Adds grouping by the given expression.
+    pub fn group_by_expr(mut self, expr: ScalarExpr) -> Result<Self, OptimizerError> {
+        self.group_exprs.push(expr);
         Ok(self)
     }
 
@@ -927,6 +945,53 @@ impl AggregateBuilder<'_> {
 
                     Ok((expr, (name, id)))
                 }
+                AggrExpr::Expr(expr) => {
+                    let mut rewriter = RewriteExprs::new(&scope);
+                    let expr = expr.rewrite(&mut rewriter)?;
+                    let expr_name_id = match expr {
+                        ScalarExpr::Column(id) => {
+                            let metadata = &self.builder.metadata;
+                            let column = metadata.get_column(&id);
+
+                            let expr = self.builder.add_scalar_node(expr);
+                            (expr, (column.name().clone(), id))
+                        }
+                        ScalarExpr::Aggregate { ref func, .. } => {
+                            let name = format!("{}", func);
+                            let metadata = &self.builder.metadata;
+                            let data_type = resolve_expr_type(&expr, metadata)?;
+
+                            let column_meta =
+                                ColumnMetadata::new_synthetic_column(name.clone(), data_type, Some(expr.clone()));
+                            let id = metadata.add_column(column_meta);
+                            let expr = self.builder.add_scalar_node(expr);
+
+                            (expr, (name, id))
+                        }
+                        ScalarExpr::Alias(expr, alias) if matches!(*expr, ScalarExpr::Aggregate { .. }) => {
+                            if let ScalarExpr::Aggregate { ref func, .. } = *expr {
+                                let metadata = &self.builder.metadata;
+                                let data_type = resolve_expr_type(&expr, metadata)?;
+
+                                let column_meta =
+                                    ColumnMetadata::new_synthetic_column(alias.clone(), data_type, Some(*expr.clone()));
+                                let id = metadata.add_column(column_meta);
+                                let expr = self.builder.add_scalar_node(*expr);
+
+                                (expr, (alias, id))
+                            } else {
+                                unreachable!()
+                            }
+                        }
+                        _ => {
+                            return Err(OptimizerError::Argument(format!(
+                                "AGGREGATE: currently unsupported expression: {}",
+                                expr
+                            )))
+                        }
+                    };
+                    Ok(expr_name_id)
+                }
                 AggrExpr::Column(name) => {
                     let mut rewriter = RewriteExprs::new(&scope);
                     let expr = ScalarExpr::ColumnName(name.clone());
@@ -937,10 +1002,21 @@ impl AggregateBuilder<'_> {
                     } else {
                         unreachable!("Column name has not been replaced with metadata id")
                     };
-                    if self.group_exprs.iter().any(|group_column| group_column == &name) {
+                    if self
+                        .group_exprs
+                        .iter()
+                        .filter_map(|e| match e {
+                            ScalarExpr::ColumnName(name) => Some(name),
+                            _ => None,
+                        })
+                        .any(|group_column| group_column == &name)
+                    {
                         Ok((expr, (name, id)))
                     } else {
-                        Err(OptimizerError::Internal(format!("Column {} must appear in group by clause", name)))
+                        Err(OptimizerError::Internal(format!(
+                            "AGGREGATE: Column {} must appear in group by clause",
+                            name
+                        )))
                     }
                 }
             })
@@ -952,13 +1028,15 @@ impl AggregateBuilder<'_> {
         let group_exprs = std::mem::take(&mut self.group_exprs);
         let group_exprs: Result<Vec<ScalarNode>, OptimizerError> = group_exprs
             .into_iter()
-            .map(|name| {
-                let mut rewriter = RewriteExprs::new(&scope);
-                let expr = ScalarExpr::ColumnName(name);
-                let expr = expr.rewrite(&mut rewriter)?;
-                let expr = self.builder.add_scalar_node(expr);
+            .map(|expr| match expr {
+                ScalarExpr::Column(_) | ScalarExpr::ColumnName(_) => {
+                    let mut rewriter = RewriteExprs::new(&scope);
+                    let expr = expr.rewrite(&mut rewriter)?;
+                    let expr = self.builder.add_scalar_node(expr);
 
-                Ok(expr)
+                    Ok(expr)
+                }
+                _ => Err(OptimizerError::Argument(format!("GROUP BY: currently unsupported expression {}", expr))),
             })
             .collect();
         let group_exprs = group_exprs?;
@@ -1038,9 +1116,8 @@ mod test {
     use crate::memo::{format_memo, MemoBuilder};
     use crate::operators::properties::LogicalPropertiesBuilder;
     use crate::operators::scalar::{col, qualified_wildcard, scalar, wildcard};
-    use crate::operators::Properties;
     use crate::optimizer::SetPropertiesCallback;
-    use crate::rules::testing::format_operator_tree;
+    use crate::rules::testing::{OperatorFormatter, OperatorTreeFormatter, SubQueriesFormatter};
     use crate::statistics::NoStatisticsBuilder;
 
     use super::*;
@@ -1512,6 +1589,21 @@ Memo:
     }
 
     #[test]
+    fn test_natural_join_do_not_allow_cross_join_type() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let left = builder.get("A", vec!["a1", "a2"])?;
+            let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
+            let join = left.natural_join(right, JoinType::Cross)?;
+
+            join.build()
+        });
+
+        tester.expect_error("CROSS JOIN: Natural join condition is not allowed");
+    }
+
+    #[test]
     fn test_empty() {
         let mut tester = OperatorBuilderTester::new();
 
@@ -1567,6 +1659,10 @@ LogicalSelect
   input: LogicalGet A cols=[1, 2]
   filter: Expr SubQuery 02 = true
   output cols: [1, 2]
+
+Sub query from filter SubQuery 02 = true:
+LogicalProjection cols=[3] exprs: [true]
+  input: LogicalEmpty return_one_row=true
 Metadata:
   col:1 A.a1 Int32
   col:2 A.a2 Int32
@@ -1697,6 +1793,11 @@ Memo:
 LogicalProjection cols=[1, 5] exprs: [col:1, SubQuery 02]
   input: LogicalGet A cols=[1, 2, 3]
   output cols: [1, 5]
+
+Sub query from column 5:
+LogicalSelect
+  input: LogicalGet B cols=[4]
+  filter: Expr col:4 = col:1
 Metadata:
   col:1 A.a1 Int32
   col:2 A.a2 Int32
@@ -1848,63 +1949,79 @@ Memo:
             let mut memo = memoization.into_inner();
             let expr = memo.insert_group(expr);
 
-            buf.push_str(format_operator_tree(&expr).as_str());
-            buf.push('\n');
+            let metadata_formatter = AppendMetadata {
+                metadata: self.metadata.clone(),
+            };
+            let memo_formatter = AppendMemo { memo };
+            let subquery_formatter = SubQueriesFormatter::new(self.metadata.clone());
 
-            let props = expr.props();
-            match props {
-                Properties::Relational(props) => {
-                    buf.push_str(format!("  output cols: {:?}\n", props.logical().output_columns()).as_str());
-                    if !props.required.is_empty() {
-                        if let Some(ordering) = props.required().ordering() {
-                            buf.push_str(format!("  ordering: {:?}\n", ordering.columns()).as_str());
-                        }
-                    }
-                }
-                Properties::Scalar(_) => {}
-            }
-            buf.push_str("Metadata:\n");
+            let formatter = OperatorTreeFormatter::new()
+                .properties_last()
+                .add_formatter(Box::new(subquery_formatter))
+                .add_formatter(Box::new(metadata_formatter))
+                .add_formatter(Box::new(memo_formatter));
 
-            let columns: Vec<ColumnMetadata> =
-                self.metadata.get_columns().into_iter().sorted_by(|a, b| a.id().cmp(b.id())).collect();
-
-            for column in columns {
-                let id = column.id();
-                let expr = column.expr();
-                let table = column.table();
-                let column_name = if !column.name().is_empty() {
-                    column.name().as_str()
-                } else {
-                    "?column?"
-                };
-                let column_info = match (expr, table) {
-                    (None, None) => format!("  col:{} {} {:?}", id, column_name, column.data_type()),
-                    (None, Some(table)) => format!("  col:{} {}.{} {:?}", id, table, column_name, column.data_type()),
-                    (Some(expr), _) => format!("  col:{} {} {:?}, expr: {}", id, column_name, column.data_type(), expr),
-                };
-                buf.push_str(column_info.as_str());
-                buf.push('\n');
-            }
-
-            buf.push_str("Memo:\n");
-            let memo_as_string = format_memo(&memo);
-            let lines = memo_as_string
-                .split('\n')
-                .map(|l| {
-                    if !l.is_empty() {
-                        let mut s = String::new();
-                        s.push_str("  ");
-                        s.push_str(l);
-                        s
-                    } else {
-                        l.to_string()
-                    }
-                })
-                .join("\n");
-
-            buf.push_str(lines.as_str());
+            buf.push_str(formatter.format(&expr).as_str());
 
             assert_eq!(buf.as_str(), expected);
+
+            struct AppendMetadata {
+                metadata: Rc<MutableMetadata>,
+            }
+
+            impl OperatorFormatter for AppendMetadata {
+                fn write_operator(&self, _operator: &Operator, buf: &mut String) {
+                    buf.push_str("Metadata:\n");
+
+                    for column in self.metadata.get_columns() {
+                        let id = column.id();
+                        let expr = column.expr();
+                        let table = column.table();
+                        let column_name = if !column.name().is_empty() {
+                            column.name().as_str()
+                        } else {
+                            "?column?"
+                        };
+                        let column_info = match (expr, table) {
+                            (None, None) => format!("  col:{} {} {:?}", id, column_name, column.data_type()),
+                            (None, Some(table)) => {
+                                format!("  col:{} {}.{} {:?}", id, table, column_name, column.data_type())
+                            }
+                            (Some(expr), _) => {
+                                format!("  col:{} {} {:?}, expr: {}", id, column_name, column.data_type(), expr)
+                            }
+                        };
+                        buf.push_str(column_info.as_str());
+                        buf.push('\n');
+                    }
+                }
+            }
+
+            struct AppendMemo {
+                memo: ExprMemo,
+            }
+
+            impl OperatorFormatter for AppendMemo {
+                fn write_operator(&self, _operator: &Operator, buf: &mut String) {
+                    buf.push_str("Memo:\n");
+                    let memo_as_string = format_memo(&self.memo);
+                    let lines = memo_as_string
+                        .split('\n')
+                        .map(|l| {
+                            if !l.is_empty() {
+                                let mut s = String::new();
+                                s.push_str("  ");
+                                s.push_str(l);
+                                s
+                            } else {
+                                l.to_string()
+                            }
+                        })
+                        .join("\n");
+
+                    buf.push_str(lines.as_str());
+                }
+            }
         }
 
         fn do_build_operator(&mut self) -> Result<Operator, OptimizerError> {

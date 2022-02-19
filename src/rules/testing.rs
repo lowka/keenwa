@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use std::fmt::Display;
 use std::rc::Rc;
 
@@ -7,9 +8,13 @@ use rand::seq::SliceRandom;
 use crate::error::OptimizerError;
 use crate::memo::{MemoBuilder, MemoExpr, MemoExprFormatter, MemoGroupCallback, StringMemoFormatter};
 use crate::meta::{ColumnId, MutableMetadata};
-use crate::operators::relational::logical::{LogicalExpr, LogicalGet};
+use crate::operators::relational::join::JoinCondition;
+use crate::operators::relational::logical::{
+    LogicalAggregate, LogicalExpr, LogicalExprVisitor, LogicalGet, LogicalJoin, LogicalSelect,
+};
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::relational::{RelExpr, RelNode};
+use crate::operators::scalar::ScalarExpr;
 use crate::operators::{ExprMemo, Operator, OperatorExpr, OperatorMetadata, Properties, RelationalProperties};
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
@@ -235,6 +240,84 @@ pub fn format_operator_tree(expr: &Operator) -> String {
     buf
 }
 
+/// Build a textual representation of an operator tree.
+pub struct OperatorTreeFormatter {
+    // If Some: Properties first/last
+    // If None: do not write
+    write_properties: Option<bool>,
+    formatters: Vec<Box<dyn OperatorFormatter>>,
+}
+
+/// Allows to write additional information to [OperatorTreeFormatter].
+pub trait OperatorFormatter {
+    /// Writes additional information to the given buffer.
+    fn write_operator(&self, operator: &Operator, buf: &mut String);
+}
+
+impl OperatorTreeFormatter {
+    /// Creates a new instance of `OperatorTreeFormatter`.
+    pub fn new() -> OperatorTreeFormatter {
+        OperatorTreeFormatter {
+            write_properties: None,
+            formatters: vec![],
+        }
+    }
+
+    /// Specifies how to write output columns. Formatter write properties then an operator tree.
+    pub fn properties_first(mut self) -> Self {
+        self.write_properties = Some(true);
+        self
+    }
+
+    /// Specifies how to write output columns. Formatter write an operator then write properties.
+    pub fn properties_last(mut self) -> Self {
+        self.write_properties = Some(false);
+        self
+    }
+
+    /// Adds additional formatter.
+    pub fn add_formatter(mut self, f: Box<dyn OperatorFormatter>) -> Self {
+        self.formatters.push(f);
+        self
+    }
+
+    /// Produces a string representation of the given operator tree.
+    pub fn format(self, operator: &Operator) -> String {
+        fn write_properties(buf: &mut String, props: &Properties, padding: &str) {
+            if let Properties::Relational(props) = props {
+                let logical = props.logical();
+                buf.push_str(format!("{}output cols: {:?}\n", padding, logical.output_columns()).as_str());
+                if !props.required.is_empty() {
+                    if let Some(ordering) = props.required().ordering() {
+                        buf.push_str(format!("{}ordering: {:?}\n", padding, ordering.columns()).as_str());
+                    }
+                }
+            }
+        }
+
+        let mut buf = String::new();
+
+        // properties first
+        if let Some(true) = &self.write_properties {
+            write_properties(&mut buf, operator.props(), "");
+        }
+
+        buf.push_str(format_operator_tree(&operator).as_str());
+        buf.push('\n');
+
+        // properties last
+        if let Some(false) = self.write_properties {
+            write_properties(&mut buf, operator.props(), "  ");
+        }
+
+        for formatter in self.formatters {
+            formatter.write_operator(operator, &mut buf);
+        }
+
+        buf
+    }
+}
+
 struct FormatHeader<'b> {
     fmt: StringMemoFormatter<'b>,
     written_exprs: Vec<String>,
@@ -384,6 +467,111 @@ impl MemoExprFormatter for FormatExprs<'_> {
         D: Display,
     {
         // values are written by FormatHeader
+    }
+}
+
+/// [ExtraFormatter] that writes plans of sub queries.
+pub struct SubQueriesFormatter {
+    metadata: Rc<MutableMetadata>,
+}
+
+impl SubQueriesFormatter {
+    /// Creates an instance of [SubQueriesFormatter].
+    pub fn new(metadata: Rc<MutableMetadata>) -> Self {
+        Self { metadata }
+    }
+}
+
+impl OperatorFormatter for SubQueriesFormatter {
+    fn write_operator(&self, operator: &Operator, buf: &mut String) {
+        let mut new_line = true;
+        // Sub queries from columns:
+        for column in self.metadata.get_columns() {
+            if let Some(ScalarExpr::SubQuery(query)) = column.expr() {
+                if new_line {
+                    new_line = false;
+                    buf.push('\n');
+                }
+                buf.push_str(format!("Sub query from column {}:\n", column.id()).as_str());
+                buf.push_str(format_operator_tree(query.mexpr()).as_str());
+                buf.push('\n');
+            }
+        }
+
+        // Sub queries from other expressions:
+        match operator.expr() {
+            OperatorExpr::Relational(RelExpr::Logical(expr)) => {
+                let mut visitor = CollectSubQueries {
+                    buf,
+                    new_line: &mut new_line,
+                };
+                // CollectSubQueries never returns an error.
+                expr.accept(&mut visitor).unwrap();
+            }
+            OperatorExpr::Scalar(ScalarExpr::SubQuery(query)) => {
+                buf.push_str(format!("Sub query from scalar operator:\n").as_str());
+                buf.push_str(format_operator_tree(query.mexpr()).as_str());
+                buf.push('\n');
+            }
+            _ => {}
+        }
+
+        struct CollectSubQueries<'a> {
+            buf: &'a mut String,
+            new_line: &'a mut bool,
+        }
+
+        impl<'a> CollectSubQueries<'a> {
+            fn add_new_line(&mut self) {
+                if *self.new_line {
+                    self.buf.push('\n');
+                    *self.new_line = false;
+                }
+            }
+
+            fn write_subquery(&mut self, description: &str, subquery: &RelNode) {
+                self.buf.push_str(format!("Sub query from {}:\n", description).as_str());
+                self.buf.push_str(format_operator_tree(subquery.mexpr()).as_str());
+                self.buf.push('\n');
+            }
+        }
+
+        impl<'a> LogicalExprVisitor for CollectSubQueries<'a> {
+            fn pre_visit_subquery(&mut self, expr: &LogicalExpr, subquery: &RelNode) -> Result<bool, OptimizerError> {
+                match expr {
+                    LogicalExpr::Select(LogicalSelect { filter, .. }) => {
+                        if let Some(filter) = filter {
+                            self.add_new_line();
+                            self.write_subquery(format!("filter {}", filter.expr()).as_str(), subquery);
+                            Ok(true)
+                        } else {
+                            Ok(false)
+                        }
+                    }
+                    LogicalExpr::Aggregate(LogicalAggregate { aggr_exprs, .. }) => {
+                        self.add_new_line();
+                        let aggr_str: String = aggr_exprs.iter().map(|s| s.expr()).join(", ");
+                        self.write_subquery(format!("aggregate {}", aggr_str).as_str(), subquery);
+
+                        Ok(true)
+                    }
+                    LogicalExpr::Join(LogicalJoin {
+                        condition: JoinCondition::On(expr),
+                        ..
+                    }) => {
+                        self.add_new_line();
+                        self.write_subquery(format!("join condition: {}", expr.expr().expr()).as_str(), subquery);
+                        Ok(true)
+                    }
+                    // subqueries from projection list are taken from the metadata.
+                    _ => Ok(false),
+                }
+            }
+
+            fn post_visit(&mut self, _expr: &LogicalExpr) -> Result<(), OptimizerError> {
+                Ok(())
+            }
+        }
     }
 }
 

@@ -118,6 +118,7 @@ impl LogicalExpr {
         }
 
         struct VisitNestedLogicalExprs<'a, T> {
+            parent_expr: &'a LogicalExpr,
             visitor: &'a mut T,
         }
         impl<T> ExprVisitor<RelNode> for VisitNestedLogicalExprs<'_, T>
@@ -128,12 +129,17 @@ impl LogicalExpr {
 
             fn post_visit(&mut self, expr: &ScalarExpr) -> Result<(), Self::Error> {
                 if let ScalarExpr::SubQuery(rel_node) = expr {
-                    rel_node.expr().logical().accept(self.visitor)?;
+                    if self.visitor.pre_visit_subquery(&self.parent_expr, rel_node)? {
+                        rel_node.expr().logical().accept(self.visitor)?;
+                    }
                 }
                 Ok(())
             }
         }
-        let mut expr_visitor = VisitNestedLogicalExprs { visitor };
+        let mut expr_visitor = VisitNestedLogicalExprs {
+            parent_expr: self,
+            visitor,
+        };
 
         match self {
             LogicalExpr::Projection(LogicalProjection { input, exprs, .. }) => {
@@ -184,6 +190,12 @@ pub trait LogicalExprVisitor {
     /// Called before all child expressions of `expr` are visited.
     /// Default implementation always returns`Ok(true)`.
     fn pre_visit(&mut self, _expr: &LogicalExpr) -> Result<bool, OptimizerError> {
+        Ok(true)
+    }
+
+    /// Called before the given subquery is visited.
+    /// Default implementation returns `Ok(true)`.
+    fn pre_visit_subquery(&mut self, _expr: &LogicalExpr, _subquery: &RelNode) -> Result<bool, OptimizerError> {
         Ok(true)
     }
 
