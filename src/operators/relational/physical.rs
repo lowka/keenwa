@@ -374,12 +374,9 @@ impl HashJoin {
         F: MemoExprFormatter,
     {
         f.write_name("HashJoin");
-        match &self.join_type {
-            JoinType::Inner => {}
-            _ => f.write_value("type", &self.join_type),
-        };
         f.write_expr("left", &self.left);
         f.write_expr("right", &self.right);
+        f.write_value("type", &self.join_type);
         match &self.condition {
             JoinCondition::Using(using) => f.write_value("using", using),
             JoinCondition::On(on) => f.write_value("on", on),
@@ -457,12 +454,9 @@ impl MergeSortJoin {
         F: MemoExprFormatter,
     {
         f.write_name("MergeSortJoin");
-        match &self.join_type {
-            JoinType::Inner => {}
-            _ => f.write_value("type", &self.join_type),
-        };
         f.write_expr("left", &self.left);
         f.write_expr("right", &self.right);
+        f.write_value("type", &self.join_type);
         match &self.condition {
             JoinCondition::Using(using) => f.write_value("using", using),
             JoinCondition::On(on) => f.write_value("on", on),

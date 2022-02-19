@@ -39,7 +39,7 @@ fn test_join() {
         let join = builder.clone().get("A", vec!["a1", "a2"])?;
         let right = builder.get("B", vec!["b1", "b2"])?;
 
-        let join = join.join_using(right, vec![("a1", "b1")])?;
+        let join = join.join_using(right, JoinType::Inner, vec![("a1", "b1")])?;
         let columns = cols(vec!["a1", "a2", "b1"]);
         let project = join.project(columns)?;
 
@@ -57,7 +57,7 @@ fn test_join() {
 05 Expr col:3
 04 Expr col:2
 03 Expr col:1
-02 HashJoin [00 01] using=[(1, 3)]
+02 HashJoin [00 01] type=Inner using=[(1, 3)]
 01 Scan B cols=[3, 4]
 00 Scan A cols=[1, 2]
 "#,
@@ -195,7 +195,7 @@ fn test_join_commutativity() {
         let left = builder.clone().get("A", vec!["a1"])?;
         let right = builder.get("B", vec!["b1"])?;
 
-        let join = left.join_using(right, vec![("a1", "b1")])?;
+        let join = left.join_using(right, JoinType::Inner, vec![("a1", "b1")])?;
         let filter = col("a1").gt(scalar(10));
         let select = join.select(Some(filter))?;
 
@@ -211,7 +211,7 @@ fn test_join_commutativity() {
         r#"
 04 Select [02 03]
 03 Expr col:1 > 10
-02 HashJoin [01 00] using=[(2, 1)]
+02 HashJoin [01 00] type=Inner using=[(2, 1)]
 00 Scan A cols=[1]
 01 Scan B cols=[2]
 "#,
@@ -226,7 +226,7 @@ fn test_join_commutativity_ordered() {
         let left = builder.clone().get("A", vec!["a1"])?;
         let right = builder.get("B", vec!["b1"])?;
 
-        let join = left.join_using(right, vec![("a1", "b1")])?;
+        let join = left.join_using(right, JoinType::Inner, vec![("a1", "b1")])?;
         let filter = col("a1").gt(scalar(10));
         let select = join.select(Some(filter))?;
         let ordered = select.order_by(OrderingOption::by(("a1", false)))?;
@@ -245,7 +245,7 @@ fn test_join_commutativity_ordered() {
 04 Sort [04] ord=[1]
 04 Select [02 03]
 03 Expr col:1 > 10
-02 HashJoin [00 01] using=[(1, 2)]
+02 HashJoin [00 01] type=Inner using=[(1, 2)]
 01 Scan B cols=[2]
 00 Scan A cols=[1]
 "#,
@@ -294,7 +294,7 @@ fn test_merge_join_requires_sorted_inputs() {
     tester.set_operator(|builder| {
         let left = builder.clone().get("A", vec!["a1", "a2"])?;
         let right = builder.get("B", vec!["b1", "b2"])?;
-        let join = left.join_using(right, vec![("a1", "b2")])?;
+        let join = left.join_using(right, JoinType::Inner, vec![("a1", "b2")])?;
 
         join.build()
     });
@@ -306,7 +306,7 @@ fn test_merge_join_requires_sorted_inputs() {
 
     tester.optimize(
         r#"
-02 MergeSortJoin [ord:[1]=00 ord:[4]=01] using=[(1, 4)]
+02 MergeSortJoin [ord:[1]=00 ord:[4]=01] type=Inner using=[(1, 4)]
 01 Sort [01] ord=[4]
 01 Scan B cols=[3, 4]
 00 Sort [00] ord=[1]
@@ -323,7 +323,7 @@ fn test_merge_join_satisfies_ordering_requirements() {
         let left = builder.clone().get("A", vec!["a1", "a2"])?;
         let right = builder.get("B", vec!["b1", "b2"])?;
 
-        let join = left.join_using(right, vec![("a1", "b2")])?;
+        let join = left.join_using(right, JoinType::Inner, vec![("a1", "b2")])?;
         let ordered = join.order_by(OrderingOption::by(("a1", false)))?;
 
         ordered.build()
@@ -336,7 +336,7 @@ fn test_merge_join_satisfies_ordering_requirements() {
 
     tester.optimize(
         r#"
-02 MergeSortJoin [ord:[1]=00 ord:[4]=01] using=[(1, 4)]
+02 MergeSortJoin [ord:[1]=00 ord:[4]=01] type=Inner using=[(1, 4)]
 01 Sort [01] ord=[4]
 01 Scan B cols=[3, 4]
 00 Sort [00] ord=[1]
@@ -353,7 +353,7 @@ fn test_merge_join_does_no_satisfy_ordering_requirements() {
         let left = builder.clone().get("A", vec!["a1", "a2"])?;
         let right = builder.get("B", vec!["b1", "b2"])?;
 
-        let join = left.join_using(right, vec![("a1", "b2")])?;
+        let join = left.join_using(right, JoinType::Inner, vec![("a1", "b2")])?;
         let ordered = join.order_by(OrderingOption::by(("b1", false)))?;
 
         ordered.build()
@@ -367,7 +367,7 @@ fn test_merge_join_does_no_satisfy_ordering_requirements() {
     tester.optimize(
         r#"
 02 Sort [02] ord=[3]
-02 MergeSortJoin [ord:[1]=00 ord:[4]=01] using=[(1, 4)]
+02 MergeSortJoin [ord:[1]=00 ord:[4]=01] type=Inner using=[(1, 4)]
 01 Sort [01] ord=[4]
 01 Scan B cols=[3, 4]
 00 Sort [00] ord=[1]
@@ -384,7 +384,7 @@ fn test_self_joins() {
         let left = builder.clone().get("A", vec!["a1", "a2"])?;
         let right = builder.get("A", vec!["a1", "a2"])?;
 
-        let join = left.join_using(right, vec![("a1", "a1")])?;
+        let join = left.join_using(right, JoinType::Inner, vec![("a1", "a1")])?;
         let ordered = join.order_by(OrderingOption::by(("a1", false)))?;
 
         ordered.build()
@@ -398,7 +398,7 @@ fn test_self_joins() {
     tester.optimize(
         r#"
 01 Sort [01] ord=[1]
-01 HashJoin [00 00] using=[(1, 1)]
+01 HashJoin [00 00] type=Inner using=[(1, 1)]
 00 Scan A cols=[1, 2]
 00 Scan A cols=[1, 2]
 "#,
@@ -408,7 +408,7 @@ fn test_self_joins() {
 
     tester.optimize(
         r#"
-01 MergeSortJoin [ord:[1]=00 ord:[1]=00] using=[(1, 1)]
+01 MergeSortJoin [ord:[1]=00 ord:[1]=00] type=Inner using=[(1, 1)]
 00 Sort [00] ord=[1]
 00 Scan A cols=[1, 2]
 00 Sort [00] ord=[1]
@@ -425,11 +425,11 @@ fn test_self_joins_inner_sort_should_be_ignored() {
         let left = builder.clone().get("A", vec!["a1", "a2"])?;
         let right = builder.clone().get("A", vec!["a1", "a2"])?;
 
-        let join = left.join_using(right, vec![("a1", "a1")])?;
+        let join = left.join_using(right, JoinType::Inner, vec![("a1", "a1")])?;
         let inner = join.order_by(OrderingOption::by(("a1", false)))?;
 
         let right = builder.get("A", vec!["a1", "a2"])?;
-        let join = inner.join_using(right, vec![("a1", "a1")])?;
+        let join = inner.join_using(right, JoinType::Inner, vec![("a1", "a1")])?;
         let ordered = join.order_by(OrderingOption::by(("a1", false)))?;
 
         ordered.build()
@@ -444,10 +444,10 @@ fn test_self_joins_inner_sort_should_be_ignored() {
 
     tester.optimize(
         r#"
-02 MergeSortJoin [ord:[1]=01 ord:[1]=00] using=[(1, 1)]
+02 MergeSortJoin [ord:[1]=01 ord:[1]=00] type=Inner using=[(1, 1)]
 00 Sort [00] ord=[1]
 00 Scan A cols=[1, 2]
-01 MergeSortJoin [ord:[1]=00 ord:[1]=00] using=[(1, 1)]
+01 MergeSortJoin [ord:[1]=00 ord:[1]=00] type=Inner using=[(1, 1)]
 00 Sort [00] ord=[1]
 00 Scan A cols=[1, 2]
 00 Sort [00] ord=[1]
@@ -463,9 +463,9 @@ fn test_self_joins_inner_sort_should_be_ignored() {
     tester.optimize(
         r#"
 02 Sort [02] ord=[1]
-02 HashJoin [01 00] using=[(1, 1)]
+02 HashJoin [01 00] type=Inner using=[(1, 1)]
 00 Scan A cols=[1, 2]
-01 HashJoin [00 00] using=[(1, 1)]
+01 HashJoin [00 00] type=Inner using=[(1, 1)]
 00 Scan A cols=[1, 2]
 00 Scan A cols=[1, 2]
 "#,
@@ -479,7 +479,7 @@ fn test_inner_sort_with_enforcer() {
     tester.set_operator(|builder| {
         let left = builder.clone().get("A", vec!["a1", "a2"])?;
         let right = builder.get("A", vec!["a1", "a2"])?;
-        let join = left.join_using(right, vec![("a1", "a1")])?;
+        let join = left.join_using(right, JoinType::Inner, vec![("a1", "a1")])?;
         let ordered = join.order_by(OrderingOption::by(("a1", false)))?;
         let filter = col("a1").gt(scalar(10));
         let select = ordered.select(Some(filter))?;
@@ -497,7 +497,7 @@ fn test_inner_sort_with_enforcer() {
 03 Select [ord:[1]=01 02]
 02 Expr col:1 > 10
 01 Sort [01] ord=[1]
-01 HashJoin [00 00] using=[(1, 1)]
+01 HashJoin [00 00] type=Inner using=[(1, 1)]
 00 Scan A cols=[1, 2]
 00 Scan A cols=[1, 2]
 "#,
@@ -511,7 +511,7 @@ fn test_inner_sort_satisfied_by_ordering_providing_operator() {
     tester.set_operator(|builder| {
         let left = builder.clone().get("A", vec!["a1", "a2"])?;
         let right = builder.get("A", vec!["a1", "a2"])?;
-        let join = left.join_using(right, vec![("a1", "a1")])?;
+        let join = left.join_using(right, JoinType::Inner, vec![("a1", "a1")])?;
         let ordered = join.order_by(OrderingOption::by(("a1", false)))?;
         let filter = col("a1").gt(scalar(10));
         let select = ordered.select(Some(filter))?;
@@ -529,7 +529,7 @@ fn test_inner_sort_satisfied_by_ordering_providing_operator() {
         r#"
 03 Select [ord:[1]=01 02]
 02 Expr col:1 > 10
-01 MergeSortJoin [ord:[1]=00 ord:[1]=00] using=[(1, 1)]
+01 MergeSortJoin [ord:[1]=00 ord:[1]=00] type=Inner using=[(1, 1)]
 00 Sort [00] ord=[1]
 00 Scan A cols=[1, 2]
 00 Sort [00] ord=[1]
@@ -547,8 +547,8 @@ fn test_join_associativity_ax_bxc() {
 
         let right = builder.clone().get("B", vec!["b1", "b2"])?;
         let from_c = builder.get("C", vec!["c1", "c2"])?;
-        let right = right.join_using(from_c, vec![("b1", "c2")])?;
-        let join = left.join_using(right, vec![("a1", "b1")])?;
+        let right = right.join_using(from_c, JoinType::Inner, vec![("b1", "c2")])?;
+        let join = left.join_using(right, JoinType::Inner, vec![("a1", "b1")])?;
 
         join.build()
     });
@@ -564,9 +564,9 @@ fn test_join_associativity_ax_bxc() {
 
     tester.optimize(
         r#"query: Ax[BxC] => [AxB]xC
-04 HashJoin [05 01] using=[(1, 6)]
+04 HashJoin [05 01] type=Inner using=[(1, 6)]
 01 Scan C cols=[5, 6]
-05 HashJoin [02 00] using=[(1, 3)]
+05 HashJoin [02 00] type=Inner using=[(1, 3)]
 00 Scan B cols=[3, 4]
 02 Scan A cols=[1, 2]
 "#,
@@ -580,8 +580,8 @@ fn test_join_associativity_ax_bxc() {
 
     tester.optimize(
         r#"query: Ax[BxC] => Ax[BxC]
-04 HashJoin [02 03] using=[(1, 3)]
-03 HashJoin [00 01] using=[(3, 6)]
+04 HashJoin [02 03] type=Inner using=[(1, 3)]
+03 HashJoin [00 01] type=Inner using=[(3, 6)]
 01 Scan C cols=[5, 6]
 00 Scan B cols=[3, 4]
 02 Scan A cols=[1, 2]
@@ -594,9 +594,9 @@ fn test_join_associativity_ax_bxc() {
 
     tester.optimize(
         r#"query: Ax[BxC] => [BxC]xA
-04 HashJoin [03 02] using=[(3, 1)]
+04 HashJoin [03 02] type=Inner using=[(3, 1)]
 02 Scan A cols=[1, 2]
-03 HashJoin [00 01] using=[(3, 6)]
+03 HashJoin [00 01] type=Inner using=[(3, 6)]
 01 Scan C cols=[5, 6]
 00 Scan B cols=[3, 4]
 "#,
@@ -610,9 +610,9 @@ fn test_join_associativity_axb_xc() {
     tester.set_operator(|builder| {
         let left = builder.clone().get("A", vec!["a1", "a2"])?;
         let from_b = builder.clone().get("B", vec!["b1", "b2"])?;
-        let left = left.join_using(from_b, vec![("a1", "b2")])?;
+        let left = left.join_using(from_b, JoinType::Inner, vec![("a1", "b2")])?;
         let from_c = builder.get("C", vec!["c1", "c2"])?;
-        let join = left.join_using(from_c, vec![("a1", "c2")])?;
+        let join = left.join_using(from_c, JoinType::Inner, vec![("a1", "c2")])?;
 
         join.build()
     });
@@ -628,8 +628,8 @@ fn test_join_associativity_axb_xc() {
 
     tester.optimize(
         r#"query: [AxB]xC => Ax[BxC]
-04 HashJoin [00 05] using=[(1, 4)]
-05 HashJoin [01 03] using=[(4, 6)]
+04 HashJoin [00 05] type=Inner using=[(1, 4)]
+05 HashJoin [01 03] type=Inner using=[(4, 6)]
 03 Scan C cols=[5, 6]
 01 Scan B cols=[3, 4]
 00 Scan A cols=[1, 2]

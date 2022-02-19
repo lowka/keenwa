@@ -13,6 +13,7 @@ use keenwa::memo::MemoBuilder;
 use keenwa::meta::MutableMetadata;
 use keenwa::operators::builder::{MemoizeOperatorCallback, OperatorBuilder, OrderingOption};
 use keenwa::operators::properties::LogicalPropertiesBuilder;
+use keenwa::operators::relational::join::JoinType;
 use keenwa::operators::scalar::{col, scalar};
 use keenwa::operators::*;
 use keenwa::optimizer::{Optimizer, SetPropertiesCallback};
@@ -105,7 +106,7 @@ fn memo_bench(c: &mut Criterion) {
     ) -> Result<Operator, OptimizerError> {
         let from_a = builder.clone().get("A", vec!["a1"])?;
         let from_b = builder.get("B", vec!["b1"])?;
-        let join = from_a.join_using(from_b, vec![("a1", "b1")])?;
+        let join = from_a.join_using(from_b, JoinType::Inner, vec![("a1", "b1")])?;
 
         let filter = col("a1").gt(scalar(100));
 
