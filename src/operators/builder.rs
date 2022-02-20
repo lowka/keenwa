@@ -123,8 +123,8 @@ impl OperatorBuilder {
             // Set columns if scope exists.
             scope.with_new_columns(columns)
         } else {
-            // If the given builder has does not have the scope yet
-            // use create a new scope with the given columns.
+            // If the given builder does not have the scope yet
+            // create a new scope from the given columns.
             OperatorScope::from_columns(columns)
         };
         OperatorBuilder {
@@ -141,19 +141,18 @@ impl OperatorBuilder {
     ///
     /// Unlike [OperatorBuilder::get] this method adds an operator
     /// that returns all the columns from the given `source`.
-    pub fn from(self, source: &str, alias: Option<String>) -> Result<Self, OptimizerError> {
+    pub fn from(self, source: &str) -> Result<Self, OptimizerError> {
         let table = self
             .catalog
             .get_table(source)
             .ok_or_else(|| OptimizerError::Argument(format!("Table does not exist. Table: {}", source)))?;
         let columns = table.columns().iter().map(|c| c.name()).cloned().collect();
-
-        self.scan_operator(source, columns, alias)
+        self.scan_operator(source, columns)
     }
 
     /// Adds a scan operator to an operator tree. A scan operator can only be added as leaf node of a tree.
     pub fn get(self, source: &str, columns: Vec<impl Into<String>>) -> Result<Self, OptimizerError> {
-        self.scan_operator(source, columns, None::<String>)
+        self.scan_operator(source, columns)
     }
 
     /// Adds a select operator to an operator tree.
@@ -181,31 +180,12 @@ impl OperatorBuilder {
         let mut column_ids = Vec::new();
         let mut output_columns = Vec::new();
         let mut new_exprs = vec![];
+        let input_is_projection = matches!(input.expr().logical(), &LogicalExpr::Projection(_));
 
         for expr in exprs {
             match expr {
                 ScalarExpr::Wildcard(qualifier) => {
-                    let columns: Vec<_> = if let Some(qualifier) = qualifier {
-                        let (_, relation_id) = scope
-                            .relations
-                            .iter()
-                            .find(|(q, _)| q.eq_ignore_ascii_case(&qualifier))
-                            .ok_or_else(|| OptimizerError::Internal(format!("Unknown relation {}", qualifier)))?;
-
-                        let relation = self.metadata.get_relation(relation_id);
-                        relation
-                            .columns()
-                            .iter()
-                            .map(|id| {
-                                // Should never panic because relation contains only valid ids.
-                                let meta = self.metadata.get_column(id);
-                                let column_name = meta.name().clone();
-                                (column_name, *id)
-                            })
-                            .collect()
-                    } else {
-                        scope.columns.iter().cloned().collect()
-                    };
+                    let columns = scope.resolve_columns(qualifier.as_deref(), &self.metadata)?;
 
                     for (column, col_id) in columns {
                         column_ids.push(col_id);
@@ -250,7 +230,7 @@ impl OperatorBuilder {
             columns: column_ids,
         });
 
-        self.add_operator(expr, output_columns);
+        self.add_projection(expr, scope, output_columns, input_is_projection);
         Ok(self)
     }
 
@@ -275,12 +255,14 @@ impl OperatorBuilder {
             let r: String = r.into();
 
             let left_id = left_scope
+                .relation
                 .columns
                 .iter()
                 .find(|(name, _)| name == &l)
                 .map(|(_, id)| *id)
                 .ok_or_else(|| OptimizerError::Argument("Join left side".into()))?;
             let right_id = right_scope
+                .relation
                 .columns
                 .iter()
                 .find(|(name, _)| name == &r)
@@ -351,9 +333,9 @@ impl OperatorBuilder {
         }
 
         let left_name_id: HashMap<String, ColumnId, RandomState> =
-            HashMap::from_iter(left_scope.columns.clone().into_iter());
+            HashMap::from_iter(left_scope.relation.columns.clone().into_iter());
         let mut column_ids = vec![];
-        for (right_name, right_id) in right_scope.columns.iter() {
+        for (right_name, right_id) in right_scope.relation.columns.iter() {
             if let Some(left_id) = left_name_id.get(right_name) {
                 column_ids.push((*left_id, *right_id));
             }
@@ -392,10 +374,11 @@ impl OperatorBuilder {
                     } = option;
                     let mut rewriter = RewriteExprs::new(&scope);
                     let expr = expr.rewrite(&mut rewriter)?;
+                    let columns = &scope.relation.columns;
                     let column_id = match expr {
                         ScalarExpr::Scalar(ScalarValue::Int32(pos)) => match usize::try_from(pos - 1).ok() {
-                            Some(pos) if pos < scope.columns.len() => {
-                                let (_, id) = scope.columns[pos];
+                            Some(pos) if pos < columns.len() => {
+                                let (_, id) = columns[pos];
                                 id
                             }
                             Some(_) | None => {
@@ -468,7 +451,7 @@ impl OperatorBuilder {
             ));
         };
         let expr = LogicalExpr::Empty(LogicalEmpty { return_one_row });
-        self.add_operator(expr, vec![]);
+        self.add_input_operator(expr, RelationInScope::from_columns(vec![]));
         Ok(self)
     }
 
@@ -513,8 +496,13 @@ impl OperatorBuilder {
         if self.sub_query_builder {
             Err(OptimizerError::Internal("Use to_sub_query() to create sub queries".to_string()))
         } else {
-            let operator = self.operator.expect("No operator");
-            Ok(operator)
+            match self.operator {
+                Some(operator) => {
+                    let rel_node = self.callback.new_rel_expr(operator);
+                    Ok(rel_node.into_inner())
+                }
+                None => Err(OptimizerError::Internal("Build: No operator".to_string())),
+            }
         }
     }
 
@@ -535,12 +523,17 @@ impl OperatorBuilder {
         }
     }
 
-    fn scan_operator(
-        mut self,
-        source: &str,
-        columns: Vec<impl Into<String>>,
-        alias: Option<String>,
-    ) -> Result<Self, OptimizerError> {
+    /// Sets an alias to the current operator. If there is no operator returns an error.
+    pub fn with_alias(mut self, alias: &str) -> Result<Self, OptimizerError> {
+        if let Some(scope) = self.scope.as_mut() {
+            scope.set_alias(alias.to_owned());
+            Ok(self)
+        } else {
+            Err(OptimizerError::Argument(format!("ALIAS: no operator")))
+        }
+    }
+
+    fn scan_operator(mut self, source: &str, columns: Vec<impl Into<String>>) -> Result<Self, OptimizerError> {
         if self.operator.is_some() {
             return Result::Err(OptimizerError::Internal(
                 "Adding a scan operator on top of another operator is not allowed".to_string(),
@@ -552,7 +545,7 @@ impl OperatorBuilder {
             .get_table(source)
             .ok_or_else(|| OptimizerError::Argument(format!("Table does not exist. Table: {}", source)))?;
 
-        let relation_name = alias.unwrap_or(source.into());
+        let relation_name = String::from(source);
         let relation_id = self.metadata.add_table(relation_name.as_str());
         //TODO: use a single method to add relation and its columns.
         let columns: Result<Vec<(String, ColumnId)>, OptimizerError> = columns
@@ -582,7 +575,9 @@ impl OperatorBuilder {
             columns: column_ids,
         });
 
-        self.add_scan_operator(expr, (relation_name, relation_id), columns);
+        let relation = RelationInScope::new(relation_id, relation_name, columns);
+
+        self.add_input_operator(expr, relation);
         Ok(self)
     }
 
@@ -595,13 +590,13 @@ impl OperatorBuilder {
         let (left, left_scope) = self.rel_node()?;
         let (right, right_scope) = right.rel_node()?;
 
-        if left_scope.columns.len() != right_scope.columns.len() {
+        if left_scope.relation.columns.len() != right_scope.relation.columns.len() {
             return Err(OptimizerError::Argument("Union: Number of columns does not match".to_string()));
         }
 
         let mut columns = Vec::new();
         let mut column_ids = Vec::new();
-        for (i, (l, r)) in left_scope.columns.iter().zip(right_scope.columns.iter()).enumerate() {
+        for (i, (l, r)) in left_scope.relation.columns.iter().zip(right_scope.relation.columns.iter()).enumerate() {
             let data_type = {
                 let l = self.metadata.get_column(&l.1);
                 let r = self.metadata.get_column(&r.1);
@@ -614,7 +609,7 @@ impl OperatorBuilder {
                 l.data_type().clone()
             };
 
-            // use names of output columns of the first operand.
+            // use column names of the first operand.
             let column_name = l.0.clone();
             let column_meta = ColumnMetadata::new_synthetic_column(column_name.clone(), data_type, None);
             let column_id = self.metadata.add_column(column_meta);
@@ -643,37 +638,36 @@ impl OperatorBuilder {
             }),
         };
 
-        self.add_operator(expr, columns);
+        self.add_input_operator(expr, RelationInScope::from_columns(columns));
         Ok(self)
     }
 
-    fn add_operator(&mut self, expr: LogicalExpr, columns: Vec<(String, ColumnId)>) {
-        let operator = Operator::from(OperatorExpr::from(expr));
-        self.operator = Some(operator);
-
-        if let Some(mut scope) = self.scope.take() {
-            scope.columns = columns;
-            self.scope = Some(scope);
-        } else {
-            self.scope = Some(OperatorScope::from_columns(columns));
-        }
-    }
-
-    fn add_scan_operator(
+    fn add_projection(
         &mut self,
         expr: LogicalExpr,
-        relation: (String, RelationId),
+        input: OperatorScope,
         columns: Vec<(String, ColumnId)>,
+        input_is_projection: bool,
     ) {
         let operator = Operator::from(OperatorExpr::from(expr));
         self.operator = Some(operator);
 
+        let mut scope = OperatorScope::from_columns(columns);
+        if !input_is_projection {
+            scope.relations.extend(input.relations);
+        }
+        self.scope = Some(scope);
+    }
+
+    fn add_input_operator(&mut self, expr: LogicalExpr, relation: RelationInScope) {
+        let operator = Operator::from(OperatorExpr::from(expr));
+        self.operator = Some(operator);
+
         if let Some(mut scope) = self.scope.take() {
-            scope.columns = columns;
-            scope.relations.push(relation);
+            scope.relation = relation;
             self.scope = Some(scope);
         } else {
-            self.scope = Some(OperatorScope::new_source(relation, columns));
+            self.scope = Some(OperatorScope::new_source(relation));
         }
     }
 
@@ -715,63 +709,176 @@ impl Debug for OperatorBuilder {
 /// Stores columns available to the current node of an operator tree.
 #[derive(Debug, Clone)]
 struct OperatorScope {
-    // (alias, column_id)
-    columns: Vec<(String, ColumnId)>,
-    // (alias, relation_id)
-    relations: Vec<(String, RelationId)>,
+    relation: RelationInScope,
+    relations: Vec<RelationInScope>,
     parent: Option<Rc<OperatorScope>>,
 }
 
-impl OperatorScope {
-    fn new_source(relation_id: (String, RelationId), columns: Vec<(String, ColumnId)>) -> Self {
-        OperatorScope {
+#[derive(Debug, Clone)]
+struct RelationInScope {
+    name: String,
+    alias: Option<String>,
+    relation_id: Option<RelationId>,
+    // (name/alias, column_id)
+    columns: Vec<(String, ColumnId)>,
+}
+
+impl RelationInScope {
+    fn new(relation_id: RelationId, name: String, columns: Vec<(String, ColumnId)>) -> Self {
+        RelationInScope {
+            name,
+            alias: None,
+            relation_id: Some(relation_id),
             columns,
-            parent: None,
-            relations: vec![relation_id],
         }
     }
 
     fn from_columns(columns: Vec<(String, ColumnId)>) -> Self {
-        OperatorScope {
+        RelationInScope {
+            name: String::from(""),
+            alias: None,
+            relation_id: None,
             columns,
+        }
+    }
+
+    fn has_name(&self, other: &str) -> bool {
+        if let Some(alias) = &self.alias {
+            alias.eq_ignore_ascii_case(other)
+        } else {
+            self.name.eq_ignore_ascii_case(other)
+        }
+    }
+
+    fn find_column<F>(&self, predicate: &F) -> Option<ColumnId>
+    where
+        F: Fn(&(String, ColumnId)) -> bool,
+    {
+        self.columns
+            .iter()
+            .find_map(|column| if (predicate)(column) { Some(column.1) } else { None })
+    }
+}
+
+impl OperatorScope {
+    fn new_source(relation: RelationInScope) -> Self {
+        OperatorScope {
+            relation: relation.clone(),
             parent: None,
-            relations: vec![],
+            relations: vec![relation],
+        }
+    }
+
+    fn from_columns(columns: Vec<(String, ColumnId)>) -> Self {
+        let relation = RelationInScope::from_columns(columns);
+        OperatorScope {
+            relation: relation.clone(),
+            parent: None,
+            relations: vec![relation],
         }
     }
 
     fn new_child_scope(&self) -> Self {
         OperatorScope {
+            relation: RelationInScope::from_columns(vec![]),
             parent: Some(Rc::new(self.clone())),
-            columns: vec![],
             relations: self.relations.clone(),
         }
     }
 
     fn with_new_columns(&self, columns: Vec<(String, ColumnId)>) -> Self {
+        let relation = RelationInScope::from_columns(columns);
         OperatorScope {
-            columns,
+            relation: relation.clone(),
             parent: self.parent.clone(),
-            relations: self.relations.clone(),
+            relations: vec![relation],
         }
     }
 
     fn join(self, right: OperatorScope) -> Self {
-        let mut columns = self.columns;
-        columns.extend_from_slice(&right.columns);
+        let mut columns = self.relation.columns;
+        columns.extend_from_slice(&right.relation.columns);
 
         let mut relations = self.relations;
         relations.extend(right.relations);
 
         OperatorScope {
-            columns,
+            relation: RelationInScope::from_columns(columns),
             relations,
             parent: self.parent,
         }
     }
 
+    fn set_alias(&mut self, alias: String) {
+        for relation in self.relations.iter_mut() {
+            if let Some(relation_id) = self.relation.relation_id {
+                if relation.relation_id == Some(relation_id) {
+                    relation.alias = Some(alias.clone());
+                }
+            } else {
+                if relation.name == self.relation.name {
+                    relation.name = alias.clone();
+                    relation.alias = Some(alias.clone());
+                }
+            }
+        }
+    }
+
+    fn resolve_columns(
+        &self,
+        qualifier: Option<&str>,
+        metadata: &MutableMetadata,
+    ) -> Result<Vec<(String, ColumnId)>, OptimizerError> {
+        if let Some(qualifier) = qualifier {
+            let relation = self.relations.iter().find(|r| r.has_name(qualifier));
+
+            match relation {
+                Some(relation) => {
+                    let columns = relation
+                        .columns
+                        .iter()
+                        .map(|(_, id)| {
+                            // Should never panic because relation contains only valid ids.
+                            let meta = metadata.get_column(id);
+                            let column_name = meta.name().clone();
+                            (column_name, *id)
+                        })
+                        .collect();
+                    Ok(columns)
+                }
+                None if self
+                    .relations
+                    .iter()
+                    .find(|r| r.name.eq_ignore_ascii_case(qualifier) && r.alias.is_some())
+                    .is_some() =>
+                {
+                    Err(OptimizerError::Internal(format!("Invalid reference to relation {}", qualifier)))
+                }
+                None => Err(OptimizerError::Internal(format!("Unknown relation {}", qualifier))),
+            }
+        } else {
+            Ok(self.relation.columns.iter().cloned().collect())
+        }
+    }
+
     fn find_column_by_name(&self, name: &str) -> Option<ColumnId> {
-        let by_name = |a: &(String, ColumnId)| a.0 == name;
-        self.find_by(&by_name)
+        // FIXME: use object names instead of str.
+        if let Some(pos) = name.find('.') {
+            let (relation_name, col_name) = name.split_at(pos);
+            let relation = self.relations.iter().find(|r| r.has_name(relation_name));
+            if let Some(relation) = relation {
+                relation
+                    .columns
+                    .iter()
+                    .find(|(name, _id)| name.eq_ignore_ascii_case(&col_name[1..]))
+                    .map(|(_, id)| *id)
+            } else {
+                None
+            }
+        } else {
+            let by_name = |a: &(String, ColumnId)| a.0.eq_ignore_ascii_case(name);
+            self.find_by(&by_name)
+        }
     }
 
     fn find_column_by_id(&self, id: ColumnId) -> Option<ColumnId> {
@@ -779,15 +886,15 @@ impl OperatorScope {
         self.find_by(&by_id)
     }
 
-    fn find_by<F>(&self, f: &F) -> Option<ColumnId>
+    fn find_by<F>(&self, predicate: &F) -> Option<ColumnId>
     where
         F: Fn(&(String, ColumnId)) -> bool,
     {
-        let r = self.find_internal(f, &self.columns);
+        let r = self.find_in_scope(predicate);
         r.or_else(|| {
             let mut parent_scope = &self.parent;
             while let Some(p) = parent_scope {
-                let r = self.find_internal(f, &p.columns);
+                let r = p.find_in_scope(predicate);
                 if r.is_some() {
                     return r;
                 } else {
@@ -798,14 +905,26 @@ impl OperatorScope {
         })
     }
 
-    fn find_internal<F>(&self, f: &F, columns: &[(String, ColumnId)]) -> Option<ColumnId>
+    fn find_in_scope<F>(&self, predicate: &F) -> Option<ColumnId>
     where
         F: Fn(&(String, ColumnId)) -> bool,
     {
-        columns.iter().find(|c| (f)(c)).map(|(_, id)| *id)
+        if let Some(id) = self.relation.find_column(predicate) {
+            Some(id)
+        } else {
+            self.relations.iter().filter_map(|r| r.find_column(predicate)).find(|_| true)
+        }
     }
 }
 
+// Remove alias is post_rewrite
+//TODO: RewriteExpr should produce generated expr name
+// (or an alias if present) for items in projection list.
+// This will allow to reduce code duplication in aggregate builder.
+// TODO: validation:
+//  - do not allow nesting of aggregate functions
+//  - do not allow nested aliases
+//  - ...
 struct RewriteExprs<'a> {
     scope: &'a OperatorScope,
 }
@@ -830,7 +949,7 @@ impl ExprRewriter<RelNode> for RewriteExprs<'_> {
                 if !exists {
                     return Err(OptimizerError::Internal(format!(
                         "Unexpected column id: {}. Input columns: {:?}",
-                        column_id, self.scope.columns
+                        column_id, self.scope.relation.columns
                     )));
                 }
                 Ok(expr)
@@ -842,10 +961,10 @@ impl ExprRewriter<RelNode> for RewriteExprs<'_> {
                     Some(column_id) => Ok(ScalarExpr::Column(column_id)),
                     None => {
                         return Err(OptimizerError::Internal(format!(
-                            "Unexpected column: {}. Input columns: {:?}, Outer: {:?}",
+                            "Unexpected column: {}. Input columns: {:?}, Outer columns: {:?}",
                             column_name,
-                            self.scope.columns,
-                            self.scope.parent.as_ref().map(|s| &s.columns),
+                            self.scope.relation.columns,
+                            self.scope.parent.as_ref().map(|s| &s.relation.columns).unwrap_or(&vec![]),
                         )));
                     }
                 }
@@ -969,7 +1088,7 @@ impl AggregateBuilder<'_> {
                             (expr, (name, id))
                         }
                         ScalarExpr::Alias(expr, alias) if matches!(*expr, ScalarExpr::Aggregate { .. }) => {
-                            if let ScalarExpr::Aggregate { ref func, .. } = *expr {
+                            if let ScalarExpr::Aggregate { .. } = *expr {
                                 let metadata = &self.builder.metadata;
                                 let data_type = resolve_expr_type(&expr, metadata)?;
 
@@ -1126,7 +1245,7 @@ mod test {
     fn test_from() {
         let mut tester = OperatorBuilderTester::new();
 
-        tester.build_operator(|builder| builder.from("A", None)?.build());
+        tester.build_operator(|builder| builder.from("A")?.build());
 
         tester.expect_expr(
             r#"
@@ -1275,7 +1394,7 @@ Memo:
         tester.build_operator(|builder| {
             let from_a = builder.get("A", vec!["a1", "a2"])?;
 
-            let col_a2 = col("a2");
+            let col_a2 = col("A2");
             let val_i100 = scalar(100);
             let alias = col_a2.clone().alias("a2_alias");
             let use_alias = alias.clone().alias("a2_alias_alias");
@@ -1311,7 +1430,7 @@ Memo:
         let mut tester = OperatorBuilderTester::new();
 
         tester.build_operator(|builder| {
-            let from_a = builder.from("A", None)?;
+            let from_a = builder.from("A")?;
             let projection_list = vec![col("a1"), wildcard(), col("a1")];
 
             from_a.project(projection_list)?.build()
@@ -1343,24 +1462,24 @@ Memo:
         let mut tester = OperatorBuilderTester::new();
 
         tester.build_operator(|builder| {
-            let from_a = builder.from("A", None)?;
-            let projection_list = vec![col("a1"), qualified_wildcard("a"), col("a1")];
+            let from_a = builder.from("A")?;
+            let projection_list = vec![col("a1"), qualified_wildcard("a"), col("a.a2")];
 
             from_a.project(projection_list)?.build()
         });
 
         tester.expect_expr(
             r#"
-LogicalProjection cols=[1, 1, 2, 3, 4, 1] exprs: [col:1, col:1, col:2, col:3, col:4, col:1]
+LogicalProjection cols=[1, 1, 2, 3, 4, 2] exprs: [col:1, col:1, col:2, col:3, col:4, col:2]
   input: LogicalGet A cols=[1, 2, 3, 4]
-  output cols: [1, 1, 2, 3, 4, 1]
+  output cols: [1, 1, 2, 3, 4, 2]
 Metadata:
   col:1 A.a1 Int32
   col:2 A.a2 Int32
   col:3 A.a3 Int32
   col:4 A.a4 Int32
 Memo:
-  05 LogicalProjection input=00 exprs=[01, 01, 02, 03, 04, 01] cols=[1, 1, 2, 3, 4, 1]
+  05 LogicalProjection input=00 exprs=[01, 01, 02, 03, 04, 02] cols=[1, 1, 2, 3, 4, 2]
   04 Expr col:4
   03 Expr col:3
   02 Expr col:2
@@ -1527,8 +1646,8 @@ Memo:
         });
 
         tester.build_operator(|builder| {
-            let left = builder.from("A", None)?;
-            let right = left.new_query_builder().from("A2", None)?;
+            let left = builder.from("A")?;
+            let right = left.new_query_builder().from("A2")?;
             let join = left.natural_join(right, JoinType::Inner)?;
 
             join.build()
@@ -1693,13 +1812,14 @@ Memo:
     }
 
     #[test]
+    //FIXME: This restriction is unnecessary.
     fn test_prohibit_non_memoized_expressions_in_nested_sub_queries() {
         let mut tester = OperatorBuilderTester::new();
 
         tester.build_operator(|builder| {
             let from_a = builder.get("A", vec!["a1", "a2"])?;
 
-            let sub_query = from_a.new_query_builder().empty(false)?.project(vec![scalar(true)])?.build()?;
+            let sub_query = from_a.new_query_builder().empty(false)?.project(vec![scalar(true)])?.operator.unwrap();
             let expr = ScalarExpr::SubQuery(RelNode::from(sub_query));
 
             let filter = expr.eq(scalar(true));
@@ -1946,8 +2066,7 @@ Memo:
             buf.push('\n');
 
             let memoization = Rc::try_unwrap(self.memoization).unwrap();
-            let mut memo = memoization.into_inner();
-            let expr = memo.insert_group(expr);
+            let memo = memoization.into_inner();
 
             let metadata_formatter = AppendMetadata {
                 metadata: self.metadata.clone(),
@@ -1977,11 +2096,7 @@ Memo:
                         let id = column.id();
                         let expr = column.expr();
                         let table = column.table();
-                        let column_name = if !column.name().is_empty() {
-                            column.name().as_str()
-                        } else {
-                            "?column?"
-                        };
+                        let column_name = column.name();
                         let column_info = match (expr, table) {
                             (None, None) => format!("  col:{} {} {:?}", id, column_name, column.data_type()),
                             (None, Some(table)) => {
