@@ -1,6 +1,6 @@
 use std::cell::RefCell;
 use std::collections::hash_map::RandomState;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::TryFrom;
 use std::fmt::{Debug, Formatter};
 use std::iter::FromIterator;
@@ -18,7 +18,8 @@ use crate::operators::relational::logical::{
     LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
 };
 use crate::operators::relational::RelNode;
-use crate::operators::scalar::expr::{AggregateFunction, Expr, ExprRewriter};
+use crate::operators::scalar::expr::{AggregateFunction, ExprRewriter};
+use crate::operators::scalar::exprs::collect_columns;
 use crate::operators::scalar::types::resolve_expr_type;
 use crate::operators::scalar::value::ScalarValue;
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
@@ -147,19 +148,19 @@ impl OperatorBuilder {
             .get_table(source)
             .ok_or_else(|| OptimizerError::Argument(format!("Table does not exist. Table: {}", source)))?;
         let columns = table.columns().iter().map(|c| c.name()).cloned().collect();
-        self.scan_operator(source, columns)
+        self.add_scan_operator(source, columns)
     }
 
     /// Adds a scan operator to an operator tree. A scan operator can only be added as leaf node of a tree.
     pub fn get(self, source: &str, columns: Vec<impl Into<String>>) -> Result<Self, OptimizerError> {
-        self.scan_operator(source, columns)
+        self.add_scan_operator(source, columns)
     }
 
     /// Adds a select operator to an operator tree.
     pub fn select(mut self, filter: Option<ScalarExpr>) -> Result<Self, OptimizerError> {
         let (input, scope) = self.rel_node()?;
         let filter = if let Some(filter) = filter {
-            let mut rewriter = RewriteExprs::new(&scope);
+            let mut rewriter = RewriteExprs::new(&scope, ValidateFilterExpr::where_clause());
             let filter = filter.rewrite(&mut rewriter)?;
             let expr = self.add_scalar_node(filter);
             Some(expr)
@@ -176,53 +177,19 @@ impl OperatorBuilder {
     /// Adds a projection operator to an operator tree.
     pub fn project(mut self, exprs: Vec<ScalarExpr>) -> Result<Self, OptimizerError> {
         let (input, scope) = self.rel_node()?;
-
-        let mut column_ids = Vec::new();
-        let mut output_columns = Vec::new();
-        let mut new_exprs = vec![];
         let input_is_projection = matches!(input.expr().logical(), &LogicalExpr::Projection(_));
 
-        for expr in exprs {
-            match expr {
-                ScalarExpr::Wildcard(qualifier) => {
-                    let columns = scope.resolve_columns(qualifier.as_deref(), &self.metadata)?;
+        let mut projection_builder = ProjectionListBuilder::new(&mut self, &scope);
 
-                    for (column, col_id) in columns {
-                        column_ids.push(col_id);
-                        output_columns.push((column.clone(), col_id));
-                        let expr = ScalarExpr::Column(col_id);
-                        let expr = self.add_scalar_node(expr);
-                        new_exprs.push(expr);
-                    }
-                }
-                _ => {
-                    let mut rewriter = RewriteExprs::new(&scope);
-                    let expr = expr.clone().rewrite(&mut rewriter)?;
-                    let (id, name) = match expr.clone() {
-                        ScalarExpr::Column(id) => {
-                            // Should never panic because RewriteExprs set an error when encounters an unknown column id.
-                            let meta = self.metadata.get_column(&id);
-                            (id, meta.name().clone())
-                        }
-                        _ => {
-                            let (expr, name) = if let ScalarExpr::Alias(expr, name) = expr.clone() {
-                                (*expr, name)
-                            } else {
-                                (expr.clone(), "?column?".to_string())
-                            };
-                            let data_type = resolve_expr_type(&expr, &self.metadata)?;
-                            let column_meta = ColumnMetadata::new_synthetic_column(name.clone(), data_type, Some(expr));
-                            let id = self.metadata.add_column(column_meta);
-                            (id, name)
-                        }
-                    };
-                    column_ids.push(id);
-                    output_columns.push((name.clone(), id));
-                    let expr = self.add_scalar_node(expr);
-                    new_exprs.push(expr);
-                }
-            }
+        for expr in exprs {
+            projection_builder.add_expr(expr)?;
         }
+
+        let ProjectionList {
+            column_ids,
+            output_columns,
+            projection: new_exprs,
+        } = projection_builder.build();
 
         let expr = LogicalExpr::Projection(LogicalProjection {
             input,
@@ -308,7 +275,7 @@ impl OperatorBuilder {
 
         let scope = left_scope.join(right_scope);
 
-        let mut rewriter = RewriteExprs::new(&scope);
+        let mut rewriter = RewriteExprs::new(&scope, ValidateFilterExpr::join_clause());
         let expr = expr.rewrite(&mut rewriter)?;
         let expr = self.add_scalar_node(expr);
         let condition = JoinCondition::On(JoinOn::new(expr));
@@ -372,7 +339,7 @@ impl OperatorBuilder {
                         expr,
                         descending: _descending,
                     } = option;
-                    let mut rewriter = RewriteExprs::new(&scope);
+                    let mut rewriter = RewriteExprs::new(&scope, ValidateProjectionExpr::projection_expr());
                     let expr = expr.rewrite(&mut rewriter)?;
                     let columns = &scope.relation.columns;
                     let column_id = match expr {
@@ -410,32 +377,32 @@ impl OperatorBuilder {
 
     /// Adds a union operator.
     pub fn union(self, right: OperatorBuilder) -> Result<Self, OptimizerError> {
-        self.set_operator(SetOperator::Union, false, right)
+        self.add_set_operator(SetOperator::Union, false, right)
     }
 
     /// Adds a union all operator.
     pub fn union_all(self, right: OperatorBuilder) -> Result<Self, OptimizerError> {
-        self.set_operator(SetOperator::Union, true, right)
+        self.add_set_operator(SetOperator::Union, true, right)
     }
 
     /// Adds an except operator.
     pub fn except(self, right: OperatorBuilder) -> Result<Self, OptimizerError> {
-        self.set_operator(SetOperator::Except, false, right)
+        self.add_set_operator(SetOperator::Except, false, right)
     }
 
     /// Adds an except all operator.
     pub fn except_all(self, right: OperatorBuilder) -> Result<Self, OptimizerError> {
-        self.set_operator(SetOperator::Except, true, right)
+        self.add_set_operator(SetOperator::Except, true, right)
     }
 
     /// Adds an intersect operator.
     pub fn intersect(self, right: OperatorBuilder) -> Result<Self, OptimizerError> {
-        self.set_operator(SetOperator::Intersect, false, right)
+        self.add_set_operator(SetOperator::Intersect, false, right)
     }
 
     /// Adds an intersect all operator.
     pub fn intersect_all(self, right: OperatorBuilder) -> Result<Self, OptimizerError> {
-        self.set_operator(SetOperator::Intersect, true, right)
+        self.add_set_operator(SetOperator::Intersect, true, right)
     }
 
     /// Adds a relation that produces no rows.
@@ -533,7 +500,7 @@ impl OperatorBuilder {
         }
     }
 
-    fn scan_operator(mut self, source: &str, columns: Vec<impl Into<String>>) -> Result<Self, OptimizerError> {
+    fn add_scan_operator(mut self, source: &str, columns: Vec<impl Into<String>>) -> Result<Self, OptimizerError> {
         if self.operator.is_some() {
             return Result::Err(OptimizerError::Internal(
                 "Adding a scan operator on top of another operator is not allowed".to_string(),
@@ -581,7 +548,7 @@ impl OperatorBuilder {
         Ok(self)
     }
 
-    fn set_operator(
+    fn add_set_operator(
         mut self,
         set_op: SetOperator,
         all: bool,
@@ -706,7 +673,7 @@ impl Debug for OperatorBuilder {
     }
 }
 
-/// Stores columns available to the current node of an operator tree.
+/// Stores columns and relations available to the current node of an operator tree.
 #[derive(Debug, Clone)]
 struct OperatorScope {
     relation: RelationInScope,
@@ -917,33 +884,41 @@ impl OperatorScope {
     }
 }
 
-// Remove alias is post_rewrite
-//TODO: RewriteExpr should produce generated expr name
-// (or an alias if present) for items in projection list.
-// This will allow to reduce code duplication in aggregate builder.
-// TODO: validation:
-//  - do not allow nesting of aggregate functions
-//  - do not allow nested aliases
-//  - ...
-struct RewriteExprs<'a> {
+// TODO: Remove alias is post_rewrite
+struct RewriteExprs<'a, T> {
     scope: &'a OperatorScope,
+    validator: ExprValidator<T>,
 }
 
-impl<'a> RewriteExprs<'a> {
-    fn new(scope: &'a OperatorScope) -> Self {
-        RewriteExprs { scope }
+impl<'a, T> RewriteExprs<'a, T>
+where
+    T: ValidateExpr,
+{
+    fn new(scope: &'a OperatorScope, validator: T) -> Self {
+        RewriteExprs {
+            scope,
+            validator: ExprValidator {
+                aggregate_depth: 0,
+                alias_depth: 0,
+                validator,
+            },
+        }
     }
 }
 
-impl ExprRewriter<RelNode> for RewriteExprs<'_> {
+impl<T> ExprRewriter<RelNode> for RewriteExprs<'_, T>
+where
+    T: ValidateExpr,
+{
     type Error = OptimizerError;
 
-    fn pre_rewrite(&mut self, _expr: &Expr<RelNode>) -> Result<bool, Self::Error> {
+    fn pre_rewrite(&mut self, expr: &ScalarExpr) -> Result<bool, Self::Error> {
+        self.validator.before_expr(expr)?;
         Ok(true)
     }
 
     fn rewrite(&mut self, expr: ScalarExpr) -> Result<ScalarExpr, Self::Error> {
-        match expr {
+        let expr = match expr {
             ScalarExpr::Column(column_id) => {
                 let exists = self.scope.find_column_by_id(column_id).is_some();
                 if !exists {
@@ -981,7 +956,113 @@ impl ExprRewriter<RelNode> for RewriteExprs<'_> {
                 }
             }
             _ => Ok(expr),
+        }?;
+        self.validator.validate(&expr)?;
+        Ok(expr)
+    }
+
+    fn post_rewrite(&mut self, expr: ScalarExpr) -> Result<ScalarExpr, Self::Error> {
+        self.validator.after_expr(&expr);
+        Ok(expr)
+    }
+}
+
+struct ExprValidator<T> {
+    aggregate_depth: usize,
+    alias_depth: usize,
+    validator: T,
+}
+
+impl<T> ExprValidator<T>
+where
+    T: ValidateExpr,
+{
+    fn before_expr(&mut self, expr: &ScalarExpr) -> Result<(), OptimizerError> {
+        match expr {
+            ScalarExpr::Alias(_, _) => self.alias_depth += 1,
+            ScalarExpr::Aggregate { .. } => self.aggregate_depth += 1,
+            _ => {}
         }
+        if self.aggregate_depth > 1 {
+            // query error
+            return Err(OptimizerError::Internal(format!("Nested aggregate functions are not allowed")));
+        }
+        if self.alias_depth > 1 {
+            // query error
+            return Err(OptimizerError::Internal(format!("Nested alias expressions are not allowed")));
+        }
+        self.validator.pre_validate(expr)?;
+        Ok(())
+    }
+
+    fn validate(&mut self, expr: &ScalarExpr) -> Result<(), OptimizerError> {
+        self.validator.validate(expr)?;
+        Ok(())
+    }
+
+    fn after_expr(&mut self, expr: &ScalarExpr) {
+        match expr {
+            ScalarExpr::Alias(_, _) => self.alias_depth -= 1,
+            ScalarExpr::Aggregate { .. } => self.aggregate_depth -= 1,
+            _ => {}
+        }
+    }
+}
+
+trait ValidateExpr {
+    fn pre_validate(&mut self, _expr: &ScalarExpr) -> Result<(), OptimizerError> {
+        Ok(())
+    }
+
+    fn validate(&mut self, expr: &ScalarExpr) -> Result<(), OptimizerError>;
+}
+
+struct ValidateFilterExpr {
+    allow_aggregates: bool,
+}
+
+impl ValidateFilterExpr {
+    fn where_clause() -> Self {
+        ValidateFilterExpr {
+            allow_aggregates: false,
+        }
+    }
+
+    fn join_clause() -> Self {
+        ValidateFilterExpr {
+            allow_aggregates: false,
+        }
+    }
+}
+
+impl ValidateExpr for ValidateFilterExpr {
+    fn validate(&mut self, expr: &ScalarExpr) -> Result<(), OptimizerError> {
+        match expr {
+            ScalarExpr::Alias(_, _) => {
+                // query error
+                Err(OptimizerError::Internal(format!("aliases are not allowed in filter expressions")))
+            }
+            ScalarExpr::Aggregate { .. } if !self.allow_aggregates => {
+                // query error
+                //TODO: Include clause (WHERE, JOIN etc)
+                Err(OptimizerError::Internal(format!("aggregates are not allowed")))
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
+struct ValidateProjectionExpr {}
+
+impl ValidateProjectionExpr {
+    fn projection_expr() -> Self {
+        ValidateProjectionExpr {}
+    }
+}
+
+impl ValidateExpr for ValidateProjectionExpr {
+    fn validate(&mut self, _expr: &ScalarExpr) -> Result<(), OptimizerError> {
+        Ok(())
     }
 }
 
@@ -994,8 +1075,8 @@ pub struct AggregateBuilder<'a> {
 
 enum AggrExpr {
     Function { func: AggregateFunction, column: String },
-    Expr(ScalarExpr),
     Column(String),
+    Expr(ScalarExpr),
 }
 
 impl AggregateBuilder<'_> {
@@ -1040,125 +1121,110 @@ impl AggregateBuilder<'_> {
         let (input, scope) = self.builder.rel_node()?;
 
         let aggr_exprs = std::mem::take(&mut self.aggr_exprs);
-        #[allow(clippy::type_complexity)]
-        let aggr_exprs: Result<Vec<(ScalarNode, (String, ColumnId))>, OptimizerError> = aggr_exprs
-            .into_iter()
-            .map(|expr| match expr {
+        let mut projection_builder = ProjectionListBuilder::new(self.builder, &scope);
+        let mut non_aggregate_columns = HashSet::new();
+
+        for expr in aggr_exprs {
+            match expr {
                 AggrExpr::Function { func, column } => {
-                    let mut rewriter = RewriteExprs::new(&scope);
+                    let mut rewriter = RewriteExprs::new(&scope, ValidateProjectionExpr::projection_expr());
                     let expr = ScalarExpr::ColumnName(column);
                     let expr = expr.rewrite(&mut rewriter)?;
-
-                    let name = format!("{}", func);
-                    let expr = ScalarExpr::Aggregate {
+                    let aggr_expr = ScalarExpr::Aggregate {
                         func,
                         args: vec![expr],
                         filter: None,
                     };
-                    let metadata = &self.builder.metadata;
-                    let data_type = resolve_expr_type(&expr, metadata)?;
-
-                    let column_meta = ColumnMetadata::new_synthetic_column(name.clone(), data_type, Some(expr.clone()));
-                    let id = metadata.add_column(column_meta);
-                    let expr = self.builder.add_scalar_node(expr);
-
-                    Ok((expr, (name, id)))
-                }
-                AggrExpr::Expr(expr) => {
-                    let mut rewriter = RewriteExprs::new(&scope);
-                    let expr = expr.rewrite(&mut rewriter)?;
-                    let expr_name_id = match expr {
-                        ScalarExpr::Column(id) => {
-                            let metadata = &self.builder.metadata;
-                            let column = metadata.get_column(&id);
-
-                            let expr = self.builder.add_scalar_node(expr);
-                            (expr, (column.name().clone(), id))
-                        }
-                        ScalarExpr::Aggregate { ref func, .. } => {
-                            let name = format!("{}", func);
-                            let metadata = &self.builder.metadata;
-                            let data_type = resolve_expr_type(&expr, metadata)?;
-
-                            let column_meta =
-                                ColumnMetadata::new_synthetic_column(name.clone(), data_type, Some(expr.clone()));
-                            let id = metadata.add_column(column_meta);
-                            let expr = self.builder.add_scalar_node(expr);
-
-                            (expr, (name, id))
-                        }
-                        ScalarExpr::Alias(expr, alias) if matches!(*expr, ScalarExpr::Aggregate { .. }) => {
-                            if let ScalarExpr::Aggregate { .. } = *expr {
-                                let metadata = &self.builder.metadata;
-                                let data_type = resolve_expr_type(&expr, metadata)?;
-
-                                let column_meta =
-                                    ColumnMetadata::new_synthetic_column(alias.clone(), data_type, Some(*expr.clone()));
-                                let id = metadata.add_column(column_meta);
-                                let expr = self.builder.add_scalar_node(*expr);
-
-                                (expr, (alias, id))
-                            } else {
-                                unreachable!()
-                            }
-                        }
-                        _ => {
-                            return Err(OptimizerError::Argument(format!(
-                                "AGGREGATE: currently unsupported expression: {}",
-                                expr
-                            )))
-                        }
-                    };
-                    Ok(expr_name_id)
+                    projection_builder.add_expr(aggr_expr)?;
                 }
                 AggrExpr::Column(name) => {
-                    let mut rewriter = RewriteExprs::new(&scope);
-                    let expr = ScalarExpr::ColumnName(name.clone());
-                    let expr = expr.rewrite(&mut rewriter)?;
-                    let expr = self.builder.add_scalar_node(expr);
-                    let id = if let ScalarExpr::Column(id) = expr.expr() {
-                        *id
-                    } else {
-                        unreachable!("Column name has not been replaced with metadata id")
+                    let i = projection_builder.projection.projection.len();
+                    let expr = ScalarExpr::ColumnName(name);
+                    projection_builder.add_expr(expr)?;
+                    let column_id = projection_builder.projection.column_ids[i];
+
+                    non_aggregate_columns.insert(column_id);
+                }
+                AggrExpr::Expr(expr) => {
+                    let i = projection_builder.projection.projection.len();
+                    projection_builder.add_expr(expr)?;
+                    let expr = projection_builder.projection.projection[i].expr();
+
+                    let used_columns = match &expr {
+                        ScalarExpr::Aggregate { .. } => vec![],
+                        ScalarExpr::Alias(expr, _) if matches!(expr.as_ref(), ScalarExpr::Aggregate { .. }) => {
+                            vec![]
+                        }
+                        _ => collect_columns(&expr),
                     };
-                    if self
-                        .group_exprs
-                        .iter()
-                        .filter_map(|e| match e {
-                            ScalarExpr::ColumnName(name) => Some(name),
-                            _ => None,
-                        })
-                        .any(|group_column| group_column == &name)
-                    {
-                        Ok((expr, (name, id)))
-                    } else {
-                        Err(OptimizerError::Internal(format!(
-                            "AGGREGATE: Column {} must appear in group by clause",
-                            name
-                        )))
-                    }
+                    non_aggregate_columns.extend(used_columns);
                 }
-            })
-            .collect();
-        let aggr_exprs = aggr_exprs?;
-        let (aggr_exprs, output_columns): (Vec<ScalarNode>, Vec<(String, ColumnId)>) = aggr_exprs.into_iter().unzip();
-        let column_ids: Vec<ColumnId> = output_columns.iter().map(|(_, id)| *id).collect();
+            }
+        }
 
-        let group_exprs = std::mem::take(&mut self.group_exprs);
-        let group_exprs: Result<Vec<ScalarNode>, OptimizerError> = group_exprs
-            .into_iter()
-            .map(|expr| match expr {
+        let ProjectionList {
+            column_ids,
+            output_columns,
+            projection: aggr_exprs,
+        } = projection_builder.build();
+
+        let mut group_exprs = vec![];
+        let mut group_by_columns = HashSet::new();
+
+        for expr in std::mem::take(&mut self.group_exprs) {
+            let expr = if let ScalarExpr::Scalar(ScalarValue::Int32(pos)) = expr {
+                let pos = pos - 1;
+                if pos >= 0 && (pos as usize) < aggr_exprs.len() {
+                    aggr_exprs[pos as usize].expr().clone()
+                } else {
+                    // query error
+                    return Err(OptimizerError::Internal(format!("GROUP BY: position {} is not in select list", pos)));
+                }
+            } else {
+                expr
+            };
+
+            let expr = match expr {
                 ScalarExpr::Column(_) | ScalarExpr::ColumnName(_) => {
-                    let mut rewriter = RewriteExprs::new(&scope);
+                    let mut rewriter = RewriteExprs::new(&scope, ValidateProjectionExpr::projection_expr());
                     let expr = expr.rewrite(&mut rewriter)?;
                     let expr = self.builder.add_scalar_node(expr);
-
-                    Ok(expr)
+                    if let ScalarExpr::Column(id) = expr.expr() {
+                        group_by_columns.insert(*id);
+                    } else {
+                        unreachable!("GROUP BY: positional argument")
+                    }
+                    expr
                 }
-                _ => Err(OptimizerError::Argument(format!("GROUP BY: currently unsupported expression {}", expr))),
-            })
-            .collect();
-        let group_exprs = group_exprs?;
+                ScalarExpr::Scalar(ScalarValue::Int32(_)) => unreachable!("GROUP BY: positional argument"),
+                ScalarExpr::Scalar(_) => {
+                    // query error
+                    return Err(OptimizerError::Internal(format!("GROUP BY: not integer constant argument")));
+                }
+                ScalarExpr::Aggregate { .. } => {
+                    // query error
+                    return Err(OptimizerError::Internal(format!("GROUP BY: Aggregate functions are not allowed")));
+                }
+                _ => {
+                    // query error
+                    return Err(OptimizerError::Internal(format!("GROUP BY: unsupported expression: {}", expr)));
+                }
+            };
+            group_exprs.push(expr);
+        }
+
+        if !group_by_columns.is_empty() {
+            for col_id in non_aggregate_columns {
+                if !group_by_columns.contains(&col_id) {
+                    // query error. Add table/table alias
+                    let column = self.builder.metadata.get_column(&col_id);
+                    return Err(OptimizerError::Internal(format!(
+                        "AGGREGATE column {} must appear in GROUP BY clause",
+                        column.name()
+                    )));
+                }
+            }
+        }
 
         let aggregate = LogicalExpr::Aggregate(LogicalAggregate {
             input,
@@ -1222,6 +1288,105 @@ impl OperatorCallback for MemoizeOperatorCallback {
         let mut memo = self.memo.borrow_mut();
         let expr = memo.insert_group(expr);
         ScalarNode::from_mexpr(expr)
+    }
+}
+
+struct ProjectionListBuilder<'a> {
+    builder: &'a mut OperatorBuilder,
+    scope: &'a OperatorScope,
+    projection: ProjectionList,
+}
+
+#[derive(Default)]
+struct ProjectionList {
+    column_ids: Vec<ColumnId>,
+    output_columns: Vec<(String, ColumnId)>,
+    projection: Vec<ScalarNode>,
+}
+
+impl ProjectionList {
+    fn add_expr(&mut self, id: ColumnId, name: String, expr: ScalarNode) {
+        self.projection.push(expr);
+        self.column_ids.push(id);
+        self.output_columns.push((name, id));
+    }
+
+    fn get_expr(&self, i: usize) -> Option<&ScalarExpr> {
+        self.projection.get(i).map(|s| s.expr())
+    }
+}
+
+impl<'a> ProjectionListBuilder<'a> {
+    fn new(builder: &'a mut OperatorBuilder, scope: &'a OperatorScope) -> Self {
+        ProjectionListBuilder {
+            builder,
+            scope,
+            projection: ProjectionList::default(),
+        }
+    }
+
+    fn add_expr(&mut self, expr: ScalarExpr) -> Result<(), OptimizerError> {
+        match expr {
+            ScalarExpr::Wildcard(qualifier) => {
+                let columns = self.scope.resolve_columns(qualifier.as_deref(), &self.builder.metadata)?;
+
+                for (name, id) in columns {
+                    self.add_column(id, name)?;
+                }
+            }
+            _ => {
+                let mut rewriter = RewriteExprs::new(self.scope, ValidateProjectionExpr::projection_expr());
+                let expr = expr.rewrite(&mut rewriter)?;
+                match expr {
+                    ScalarExpr::Column(id) => {
+                        let name = {
+                            // Should never panic because RewriteExprs set an error when encounters an unknown column id.
+                            let meta = self.builder.metadata.get_column(&id);
+                            meta.name().clone()
+                        };
+                        self.add_column(id, name)?
+                    }
+                    ScalarExpr::Alias(ref inner_expr, ref name) => {
+                        //Stores inner expression in meta column metadata.
+                        self.add_synthetic_column(expr.clone(), name.clone(), *inner_expr.clone())?
+                    }
+                    ScalarExpr::Aggregate { ref func, .. } => {
+                        self.add_synthetic_column(expr.clone(), format!("{}", func), expr)?
+                    }
+                    _ => self.add_synthetic_column(expr.clone(), "?column?".into(), expr)?,
+                };
+            }
+        };
+
+        Ok(())
+    }
+
+    fn add_column(&mut self, id: ColumnId, name: String) -> Result<(), OptimizerError> {
+        let expr = self.builder.add_scalar_node(ScalarExpr::Column(id));
+
+        self.projection.add_expr(id, name, expr);
+
+        Ok(())
+    }
+
+    fn add_synthetic_column(
+        &mut self,
+        expr: ScalarExpr,
+        name: String,
+        column_expr: ScalarExpr,
+    ) -> Result<(), OptimizerError> {
+        let data_type = resolve_expr_type(&expr, &self.builder.metadata)?;
+        let column_meta = ColumnMetadata::new_synthetic_column(name.clone(), data_type, Some(column_expr));
+        let id = self.builder.metadata.add_column(column_meta);
+        let expr = self.builder.add_scalar_node(expr);
+
+        self.projection.add_expr(id, name.clone(), expr);
+
+        Ok(())
+    }
+
+    fn build(self) -> ProjectionList {
+        self.projection
     }
 }
 
@@ -1397,26 +1562,23 @@ Memo:
             let col_a2 = col("A2");
             let val_i100 = scalar(100);
             let alias = col_a2.clone().alias("a2_alias");
-            let use_alias = alias.clone().alias("a2_alias_alias");
-            let projection_list = vec![col_a2, val_i100, alias, use_alias];
+            let projection_list = vec![col_a2, val_i100, alias];
 
             from_a.project(projection_list)?.build()
         });
 
         tester.expect_expr(
             r#"
-LogicalProjection cols=[2, 3, 4, 5] exprs: [col:2, 100, col:2 AS a2_alias, col:2 AS a2_alias AS a2_alias_alias]
+LogicalProjection cols=[2, 3, 4] exprs: [col:2, 100, col:2 AS a2_alias]
   input: LogicalGet A cols=[1, 2]
-  output cols: [2, 3, 4, 5]
+  output cols: [2, 3, 4]
 Metadata:
   col:1 A.a1 Int32
   col:2 A.a2 Int32
   col:3 ?column? Int32, expr: 100
   col:4 a2_alias Int32, expr: col:2
-  col:5 a2_alias_alias Int32, expr: col:2 AS a2_alias
 Memo:
-  05 LogicalProjection input=00 exprs=[01, 02, 03, 04] cols=[2, 3, 4, 5]
-  04 Expr col:2 AS a2_alias AS a2_alias_alias
+  04 LogicalProjection input=00 exprs=[01, 02, 03] cols=[2, 3, 4]
   03 Expr col:2 AS a2_alias
   02 Expr 100
   01 Expr col:2
