@@ -508,6 +508,7 @@ impl OperatorFormatter for SubQueriesFormatter {
                 // CollectSubQueries never returns an error.
                 expr.accept(&mut visitor).unwrap();
             }
+            // Alias(SubQuery(_), _) is not covered ?
             OperatorExpr::Scalar(ScalarExpr::SubQuery(query)) => {
                 buf.push_str(format!("Sub query from scalar operator:\n").as_str());
                 buf.push_str(format_operator_tree(query.mexpr()).as_str());
@@ -636,6 +637,7 @@ LogicalProjection cols=[1] exprs: [col:1]
             input: Operator::from(OperatorExpr::from(from_a)).into(),
             aggr_exprs: vec![ScalarNode::from(ScalarExpr::Scalar(ScalarValue::Int32(10)))],
             group_exprs: vec![ScalarNode::from(ScalarExpr::Column(1))],
+            having: None,
             columns: vec![3, 4],
         });
 

@@ -303,6 +303,7 @@ mod test {
                 filter: None,
             })],
             group_exprs: groups.into_iter().map(ScalarNode::from).collect(),
+            having: None,
             columns: vec![],
         })
     }
