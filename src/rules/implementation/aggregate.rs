@@ -28,13 +28,15 @@ impl Rule for HashAggregateRule {
             input,
             aggr_exprs,
             group_exprs,
-            ..
+            having,
+            columns: _columns,
         }) = expr
         {
             let expr = PhysicalExpr::HashAggregate(HashAggregate {
                 input: input.clone(),
                 aggr_exprs: aggr_exprs.clone(),
                 group_exprs: group_exprs.clone(),
+                having: having.clone(),
             });
             Ok(Some(RuleResult::Implementation(expr)))
         } else {

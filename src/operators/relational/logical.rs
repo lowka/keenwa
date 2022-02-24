@@ -313,6 +313,7 @@ pub struct LogicalAggregate {
     pub input: RelNode,
     pub aggr_exprs: Vec<ScalarNode>,
     pub group_exprs: Vec<ScalarNode>,
+    pub having: Option<ScalarNode>,
     /// Output columns produced by an aggregate operator.
     pub columns: Vec<ColumnId>,
 }
@@ -326,26 +327,29 @@ impl LogicalAggregate {
         for expr in self.group_exprs.iter() {
             visitor.visit_scalar(expr_ctx, expr);
         }
+        visitor.visit_opt_scalar(expr_ctx, self.having.as_ref());
     }
 
     fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(1 + self.aggr_exprs.len() + self.group_exprs.len(), "LogicalAggregate");
+        inputs.expect_len(self.num_children(), "LogicalAggregate");
 
         LogicalAggregate {
             input: inputs.rel_node(),
             aggr_exprs: inputs.scalar_nodes(self.aggr_exprs.len()),
             group_exprs: inputs.scalar_nodes(self.group_exprs.len()),
+            having: self.having.as_ref().map(|_| inputs.scalar_node()),
             columns: self.columns.clone(),
         }
     }
 
     fn num_children(&self) -> usize {
-        1 + self.aggr_exprs.len() + self.group_exprs.len()
+        1 + self.aggr_exprs.len() + self.group_exprs.len() + self.having.as_ref().map(|_| 1).unwrap_or_default()
     }
 
     fn get_child(&self, i: usize) -> Option<&Operator> {
         let num_aggr_exprs = self.aggr_exprs.len();
         let num_group_exprs = self.group_exprs.len();
+
         match i {
             0 => Some(self.input.mexpr()),
             _ if i >= 1 && i < num_aggr_exprs + 1 => {
@@ -356,6 +360,7 @@ impl LogicalAggregate {
                 let expr = &self.group_exprs[i - 1 - num_aggr_exprs];
                 Some(expr.mexpr())
             }
+            _ if i > num_aggr_exprs + num_group_exprs => self.having.as_ref().map(|e| e.mexpr()),
             _ => None,
         }
     }
@@ -368,6 +373,7 @@ impl LogicalAggregate {
         f.write_expr("input", &self.input);
         f.write_exprs("aggr_exprs", self.aggr_exprs.iter());
         f.write_exprs("group_exprs", self.group_exprs.iter());
+        f.write_expr_if_present("having", self.having.as_ref());
     }
 }
 

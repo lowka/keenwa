@@ -18,7 +18,7 @@ use crate::operators::relational::logical::{
     LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
 };
 use crate::operators::relational::RelNode;
-use crate::operators::scalar::expr::{AggregateFunction, ExprRewriter};
+use crate::operators::scalar::expr::{AggregateFunction, ExprRewriter, ExprVisitor};
 use crate::operators::scalar::exprs::collect_columns;
 use crate::operators::scalar::types::resolve_expr_type;
 use crate::operators::scalar::value::ScalarValue;
@@ -428,6 +428,7 @@ impl OperatorBuilder {
             builder: self,
             aggr_exprs: vec![],
             group_exprs: vec![],
+            having: None,
         }
     }
 
@@ -1071,6 +1072,7 @@ pub struct AggregateBuilder<'a> {
     builder: &'a mut OperatorBuilder,
     aggr_exprs: Vec<AggrExpr>,
     group_exprs: Vec<ScalarExpr>,
+    having: Option<ScalarExpr>,
 }
 
 enum AggrExpr {
@@ -1116,6 +1118,12 @@ impl AggregateBuilder<'_> {
         Ok(self)
     }
 
+    /// Adds HAVING clause.
+    pub fn having(mut self, expr: ScalarExpr) -> Result<Self, OptimizerError> {
+        self.having = Some(expr);
+        Ok(self)
+    }
+
     /// Builds an aggregate operator and adds in to an operator tree.
     pub fn build(mut self) -> Result<OperatorBuilder, OptimizerError> {
         let (input, scope) = self.builder.rel_node()?;
@@ -1149,6 +1157,8 @@ impl AggregateBuilder<'_> {
                     let i = projection_builder.projection.projection.len();
                     projection_builder.add_expr(expr)?;
                     let expr = projection_builder.projection.projection[i].expr();
+
+                    AggregateBuilder::disallow_nested_subqueries(expr, "AGGREGATE", "aggregate function/expression")?;
 
                     let used_columns = match &expr {
                         ScalarExpr::Aggregate { .. } => vec![],
@@ -1184,6 +1194,8 @@ impl AggregateBuilder<'_> {
                 expr
             };
 
+            AggregateBuilder::disallow_nested_subqueries(&expr, "GROUP BY", "expressions")?;
+
             let expr = match expr {
                 ScalarExpr::Column(_) | ScalarExpr::ColumnName(_) => {
                     let mut rewriter = RewriteExprs::new(&scope, ValidateProjectionExpr::projection_expr());
@@ -1214,10 +1226,10 @@ impl AggregateBuilder<'_> {
         }
 
         if !group_by_columns.is_empty() {
-            for col_id in non_aggregate_columns {
-                if !group_by_columns.contains(&col_id) {
+            for col_id in non_aggregate_columns.iter() {
+                if !group_by_columns.contains(col_id) {
                     // query error. Add table/table alias
-                    let column = self.builder.metadata.get_column(&col_id);
+                    let column = self.builder.metadata.get_column(col_id);
                     return Err(OptimizerError::Internal(format!(
                         "AGGREGATE column {} must appear in GROUP BY clause",
                         column.name()
@@ -1226,15 +1238,102 @@ impl AggregateBuilder<'_> {
             }
         }
 
+        let having_expr = if let Some(expr) = self.having.take() {
+            AggregateBuilder::disallow_nested_subqueries(&expr, "AGGREGATE", "HAVING clause")?;
+
+            let mut rewriter = RewriteExprs::new(&scope, ValidateFilterExpr::where_clause());
+            let expr = expr.rewrite(&mut rewriter)?;
+            let mut validate = ValidateHavingClause {
+                projection_columns: &non_aggregate_columns,
+                group_by_columns: &group_by_columns,
+            };
+
+            expr.accept(&mut validate)?;
+
+            struct ValidateHavingClause<'a> {
+                projection_columns: &'a HashSet<ColumnId>,
+                group_by_columns: &'a HashSet<ColumnId>,
+            }
+
+            impl<'a> ExprVisitor<RelNode> for ValidateHavingClause<'a> {
+                type Error = OptimizerError;
+
+                fn pre_visit(&mut self, expr: &ScalarExpr) -> Result<bool, Self::Error> {
+                    match expr {
+                        ScalarExpr::Aggregate { .. } => Ok(false),
+                        ScalarExpr::Column(id) => {
+                            if self.projection_columns.contains(id) || self.group_by_columns.contains(id) {
+                                Ok(false)
+                            } else {
+                                Err(OptimizerError::Internal(format!(
+                                    "AGGREGATE: Column {} must appear in GROUP BY clause or an aggregate function",
+                                    id
+                                )))
+                            }
+                        }
+                        _ => Ok(true),
+                    }
+                }
+
+                fn post_visit(&mut self, _expr: &ScalarExpr) -> Result<(), Self::Error> {
+                    Ok(())
+                }
+            }
+
+            Some(self.builder.add_scalar_node(expr))
+        } else {
+            None
+        };
+
         let aggregate = LogicalExpr::Aggregate(LogicalAggregate {
             input,
             aggr_exprs,
             group_exprs,
             columns: column_ids,
+            having: having_expr,
         });
         let operator = Operator::from(OperatorExpr::from(aggregate));
 
         Ok(OperatorBuilder::from_builder(self.builder, operator, output_columns))
+    }
+
+    fn disallow_nested_subqueries(expr: &ScalarExpr, clause: &str, location: &str) -> Result<(), OptimizerError> {
+        struct DisallowNestedSubqueries<'a> {
+            clause: &'a str,
+            location: &'a str,
+        }
+        impl<'a> ExprVisitor<RelNode> for DisallowNestedSubqueries<'a> {
+            type Error = OptimizerError;
+
+            fn post_visit(&mut self, expr: &ScalarExpr) -> Result<(), Self::Error> {
+                match expr {
+                    ScalarExpr::Column(_) => {}
+                    ScalarExpr::ColumnName(_) => {}
+                    ScalarExpr::Scalar(_) => {}
+                    ScalarExpr::BinaryExpr { .. } => {}
+                    ScalarExpr::Cast { .. } => {}
+                    ScalarExpr::Not(_) => {}
+                    ScalarExpr::Negation(_) => {}
+                    ScalarExpr::Alias(_, _) => {}
+                    ScalarExpr::Aggregate { .. } => {}
+                    ScalarExpr::SubQuery(_) => {
+                        return Err(OptimizerError::NotImplemented(format!(
+                            "{}: Subqueries in {} are not implemented",
+                            self.clause, self.location
+                        )))
+                    }
+                    ScalarExpr::Wildcard(_) => {
+                        return Err(OptimizerError::Internal(format!(
+                            "{}: Wildcard expressions are not allowed",
+                            self.clause
+                        )))
+                    }
+                }
+                Ok(())
+            }
+        }
+        let mut visitor = DisallowNestedSubqueries { clause, location };
+        expr.accept(&mut visitor)
     }
 }
 
@@ -2032,6 +2131,7 @@ Memo:
                 .add_column("a1")?
                 .add_func("sum", "a1")?
                 .group_by("a1")?
+                .having(col("a1").gt(scalar(100)))?
                 .build()?;
 
             sum.build()
@@ -2042,6 +2142,7 @@ LogicalAggregate
   aggr_exprs: [col:1, sum(col:1)]
   group_exprs: [col:1]
   input: LogicalGet A cols=[1, 2, 3]
+  having: Expr col:1 > 100
   output cols: [1, 4]
 Metadata:
   col:1 A.a1 Int32
@@ -2049,7 +2150,8 @@ Metadata:
   col:3 A.a3 Int32
   col:4 sum Int32, expr: sum(col:1)
 Memo:
-  03 LogicalAggregate input=00 aggr_exprs=[01, 02] group_exprs=[01]
+  04 LogicalAggregate input=00 aggr_exprs=[01, 02] group_exprs=[01] having=03
+  03 Expr col:1 > 100
   02 Expr sum(col:1)
   01 Expr col:1
   00 LogicalGet A cols=[1, 2, 3]
