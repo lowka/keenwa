@@ -129,7 +129,7 @@ impl LogicalExpr {
 
             fn post_visit(&mut self, expr: &ScalarExpr) -> Result<(), Self::Error> {
                 if let ScalarExpr::SubQuery(rel_node) = expr {
-                    if self.visitor.pre_visit_subquery(&self.parent_expr, rel_node)? {
+                    if self.visitor.pre_visit_subquery(self.parent_expr, rel_node)? {
                         rel_node.expr().logical().accept(self.visitor)?;
                     }
                 }

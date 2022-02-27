@@ -82,11 +82,11 @@ impl OperatorScope {
     pub fn set_alias(&mut self, alias: String) -> Result<(), OptimizerError> {
         fn set_alias(relation: &mut RelationInScope, alias: String) -> Result<(), OptimizerError> {
             if relation.relation_id.is_some() {
-                relation.alias = Some(alias.clone());
+                relation.alias = Some(alias);
                 Ok(())
             } else if relation.name.is_empty() {
                 relation.name = alias.clone();
-                relation.alias = Some(alias.clone());
+                relation.alias = Some(alias);
                 Ok(())
             } else {
                 let message = format!("BUG: a relation has no relation_id but has a name. Relation: {:?}", relation);
@@ -99,8 +99,8 @@ impl OperatorScope {
             set_alias(relation, alias.clone())?;
             set_alias(output_relation, alias)
         } else {
-            let message = format!("OperatorScope is empty!");
-            return Err(OptimizerError::Internal(message));
+            let message = "OperatorScope is empty!".to_string();
+            Err(OptimizerError::Internal(message))
         }
     }
 
@@ -132,7 +132,7 @@ impl OperatorScope {
                 None => Err(OptimizerError::Internal(format!("Unknown relation {}", qualifier))),
             }
         } else {
-            Ok(self.relation.columns.iter().cloned().collect())
+            Ok(self.relation.columns.to_vec())
         }
     }
 
@@ -210,10 +210,12 @@ impl RelationsInScope {
 
     fn add_all(&mut self, relations: RelationsInScope) {
         let existing: Vec<RelationId> = self.relations.iter().filter_map(|r| r.relation_id).collect();
-        self.relations.extend(relations.relations.into_iter().filter(|r| match &r.relation_id {
-            Some(id) if existing.contains(id) => false,
-            _ => true,
-        }))
+        let new_relations = relations
+            .relations
+            .into_iter()
+            .filter(|r| !matches!(&r.relation_id, Some(id) if existing.contains(id)));
+
+        self.relations.extend(new_relations);
     }
 
     fn find_relation(&self, name_or_alias: &str) -> Option<&RelationInScope> {

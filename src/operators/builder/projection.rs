@@ -54,7 +54,7 @@ impl<'a> ProjectionListBuilder<'a> {
             }
         };
 
-        let column_id = self.projection.column_ids[i].clone();
+        let column_id = self.projection.column_ids[i];
         let expr = self.projection.projection[i].expr();
         Ok((column_id, expr))
     }
@@ -78,7 +78,7 @@ impl<'a> ProjectionListBuilder<'a> {
         let id = self.builder.metadata.add_column(column_meta);
         let expr = self.builder.add_scalar_node(expr);
 
-        self.projection.add_expr(id, name.clone(), expr);
+        self.projection.add_expr(id, name, expr);
 
         Ok(())
     }

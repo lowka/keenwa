@@ -218,7 +218,7 @@ impl OperatorBuilder {
         let (right, right_scope) = right.rel_node()?;
 
         if join_type == JoinType::Cross {
-            return Err(OptimizerError::Argument(format!("CROSS JOIN: USING (columns) condition is not supported")));
+            return Err(OptimizerError::Argument("CROSS JOIN: USING (columns) condition is not supported".to_string()));
         }
 
         let mut columns_ids = Vec::new();
@@ -300,7 +300,7 @@ impl OperatorBuilder {
         let (right, right_scope) = right.rel_node()?;
 
         if join_type == JoinType::Cross {
-            return Err(OptimizerError::Argument(format!("CROSS JOIN: Natural join condition is not allowed")));
+            return Err(OptimizerError::Argument("CROSS JOIN: Natural join condition is not allowed".to_string()));
         }
 
         let left_name_id: HashMap<String, ColumnId, RandomState> = HashMap::from_iter(left_scope.columns().to_vec());
@@ -499,7 +499,7 @@ impl OperatorBuilder {
             scope.set_alias(alias.to_owned())?;
             Ok(self)
         } else {
-            Err(OptimizerError::Argument(format!("ALIAS: no operator")))
+            Err(OptimizerError::Argument("ALIAS: no operator".to_string()))
         }
     }
 
@@ -734,7 +734,7 @@ where
                             "Unexpected column: {}. Input columns: {:?}, Outer columns: {:?}",
                             column_name,
                             self.scope.columns(),
-                            self.scope.parent().map(|s| s.columns().to_vec()).unwrap_or(vec![]),
+                            self.scope.parent().map(|s| s.columns().to_vec()).unwrap_or_default(),
                         )));
                     }
                 }
@@ -786,11 +786,11 @@ where
         }
         if self.aggregate_depth > 1 {
             // query error
-            return Err(OptimizerError::Internal(format!("Nested aggregate functions are not allowed")));
+            return Err(OptimizerError::Internal("Nested aggregate functions are not allowed".to_string()));
         }
         if self.alias_depth > 1 {
             // query error
-            return Err(OptimizerError::Internal(format!("Nested alias expressions are not allowed")));
+            return Err(OptimizerError::Internal("Nested alias expressions are not allowed".to_string()));
         }
         self.validator.pre_validate(expr)?;
         Ok(())
@@ -841,12 +841,12 @@ impl ValidateExpr for ValidateFilterExpr {
         match expr {
             ScalarExpr::Alias(_, _) => {
                 // query error
-                Err(OptimizerError::Internal(format!("aliases are not allowed in filter expressions")))
+                Err(OptimizerError::Internal("aliases are not allowed in filter expressions".to_string()))
             }
             ScalarExpr::Aggregate { .. } if !self.allow_aggregates => {
                 // query error
                 //TODO: Include clause (WHERE, JOIN etc)
-                Err(OptimizerError::Internal(format!("aggregates are not allowed")))
+                Err(OptimizerError::Internal("aggregates are not allowed".to_string()))
             }
             _ => Ok(()),
         }
@@ -1522,7 +1522,7 @@ Memo:
         tester.build_operator(|builder| {
             let from_b = builder.new_query_builder().get("B", vec!["b1", "b2"])?.build()?;
             let subquery = ScalarExpr::SubQuery(RelNode::from(from_b));
-            let projection = builder.empty(true)?.project(vec![subquery])?;
+            let _projection = builder.empty(true)?.project(vec![subquery])?;
 
             unreachable!()
         });
@@ -1688,7 +1688,7 @@ Memo:
 
     struct OperatorBuilderTester {
         operator: Box<dyn Fn(OperatorBuilder) -> Result<Operator, OptimizerError>>,
-        update_catalog: Box<dyn Fn(&MutableCatalog) -> ()>,
+        update_catalog: Box<dyn Fn(&MutableCatalog)>,
         metadata: Rc<MutableMetadata>,
         memoization: Rc<MemoizeOperatorCallback>,
     }
@@ -1719,7 +1719,7 @@ Memo:
 
         fn update_catalog<F>(&mut self, f: F)
         where
-            F: Fn(&MutableCatalog) -> () + 'static,
+            F: Fn(&MutableCatalog) + 'static,
         {
             self.update_catalog = Box::new(f)
         }
