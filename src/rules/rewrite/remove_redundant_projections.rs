@@ -116,7 +116,7 @@ mod test {
     use crate::error::OptimizerError;
     use crate::operators::builder::OperatorBuilder;
     use crate::operators::relational::join::JoinType;
-    use crate::operators::scalar::{col, scalar};
+    use crate::operators::scalar::{col, scalar, ScalarExpr};
     use crate::rules::rewrite::testing::build_and_rewrite_expr;
 
     use super::*;
@@ -287,7 +287,8 @@ LogicalProjection cols=[1, 2, 5] exprs: [col:1, col:2, col:4 AS c3]
                 let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
 
                 let mut from_b = builder.sub_query_builder().get("B", vec!["b1"])?;
-                let count = from_b.aggregate_builder().add_func("count", "b1")?.build()?.to_sub_query()?;
+                let count = from_b.aggregate_builder().add_func("count", "b1")?.build()?.build()?;
+                let count = ScalarExpr::SubQuery(RelNode::from(count));
 
                 let project = from_a.project(vec![col("a1"), col("a2"), count.clone()])?;
                 let project = project.project(vec![col("a1"), col("a2"), count])?;

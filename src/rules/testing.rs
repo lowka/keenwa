@@ -550,6 +550,8 @@ impl OperatorFormatter for SubQueriesFormatter {
                         }
                     }
                     LogicalExpr::Aggregate(LogicalAggregate { aggr_exprs, .. }) => {
+                        //TODO: Exclude aggregate exprs and print only group by and having.
+                        // Because aggregate exprs has already been written from the metadata.
                         self.add_new_line();
                         let aggr_str: String = aggr_exprs.iter().map(|s| s.expr()).join(", ");
                         self.write_subquery(format!("aggregate {}", aggr_str).as_str(), subquery);
