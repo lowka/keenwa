@@ -1,31 +1,37 @@
 use std::cell::RefCell;
 use std::collections::hash_map::RandomState;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fmt::{Debug, Formatter};
 use std::iter::FromIterator;
 use std::rc::Rc;
 
+use aggregate::AggregateBuilder;
 use itertools::Itertools;
+use projection::{ProjectionList, ProjectionListBuilder};
+use scope::{OperatorScope, RelationInScope};
 
 use crate::catalog::CatalogRef;
 use crate::error::OptimizerError;
 use crate::memo::MemoExprState;
-use crate::meta::{ColumnId, ColumnMetadata, MutableMetadata, RelationId};
+use crate::meta::{ColumnId, ColumnMetadata, MutableMetadata};
 use crate::operators::relational::join::{JoinCondition, JoinOn, JoinType, JoinUsing};
 use crate::operators::relational::logical::{
-    LogicalAggregate, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin,
-    LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
+    LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin, LogicalProjection,
+    LogicalSelect, LogicalUnion, SetOperator,
 };
 use crate::operators::relational::RelNode;
-use crate::operators::scalar::expr::{AggregateFunction, ExprRewriter, ExprVisitor};
-use crate::operators::scalar::exprs::collect_columns;
+use crate::operators::scalar::expr::ExprRewriter;
 use crate::operators::scalar::types::resolve_expr_type;
 use crate::operators::scalar::value::ScalarValue;
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
 use crate::operators::{ExprMemo, Operator, OperatorExpr};
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::OrderingChoice;
+
+mod aggregate;
+mod projection;
+mod scope;
 
 /// Ordering options.
 #[derive(Debug, Clone)]
@@ -222,15 +228,13 @@ impl OperatorBuilder {
             let r: String = r.into();
 
             let left_id = left_scope
-                .relation
-                .columns
+                .columns()
                 .iter()
                 .find(|(name, _)| name == &l)
                 .map(|(_, id)| *id)
                 .ok_or_else(|| OptimizerError::Argument("Join left side".into()))?;
             let right_id = right_scope
-                .relation
-                .columns
+                .columns()
                 .iter()
                 .find(|(name, _)| name == &r)
                 .map(|(_, id)| *id)
@@ -299,10 +303,9 @@ impl OperatorBuilder {
             return Err(OptimizerError::Argument(format!("CROSS JOIN: Natural join condition is not allowed")));
         }
 
-        let left_name_id: HashMap<String, ColumnId, RandomState> =
-            HashMap::from_iter(left_scope.relation.columns.clone().into_iter());
+        let left_name_id: HashMap<String, ColumnId, RandomState> = HashMap::from_iter(left_scope.columns().to_vec());
         let mut column_ids = vec![];
-        for (right_name, right_id) in right_scope.relation.columns.iter() {
+        for (right_name, right_id) in right_scope.columns().iter() {
             if let Some(left_id) = left_name_id.get(right_name) {
                 column_ids.push((*left_id, *right_id));
             }
@@ -341,7 +344,7 @@ impl OperatorBuilder {
                     } = option;
                     let mut rewriter = RewriteExprs::new(&scope, ValidateProjectionExpr::projection_expr());
                     let expr = expr.rewrite(&mut rewriter)?;
-                    let columns = &scope.relation.columns;
+                    let columns = scope.columns();
                     let column_id = match expr {
                         ScalarExpr::Scalar(ScalarValue::Int32(pos)) => match usize::try_from(pos - 1).ok() {
                             Some(pos) if pos < columns.len() => {
@@ -557,13 +560,15 @@ impl OperatorBuilder {
         let (left, left_scope) = self.rel_node()?;
         let (right, right_scope) = right.rel_node()?;
 
-        if left_scope.relation.columns.len() != right_scope.relation.columns.len() {
+        if left_scope.columns().len() != right_scope.columns().len() {
             return Err(OptimizerError::Argument("Union: Number of columns does not match".to_string()));
         }
 
         let mut columns = Vec::new();
         let mut column_ids = Vec::new();
-        for (i, (l, r)) in left_scope.relation.columns.iter().zip(right_scope.relation.columns.iter()).enumerate() {
+        let left_columns = left_scope.into_columns();
+        let right_columns = right_scope.into_columns();
+        for (i, (l, r)) in left_columns.iter().zip(right_columns.iter()).enumerate() {
             let data_type = {
                 let l = self.metadata.get_column(&l.1);
                 let r = self.metadata.get_column(&r.1);
@@ -621,7 +626,7 @@ impl OperatorBuilder {
 
         let mut scope = OperatorScope::from_columns(columns);
         if !input_is_projection {
-            scope.relations.add_all(input.relations);
+            scope.add_relations(input);
         }
         self.scope = Some(scope);
     }
@@ -631,7 +636,7 @@ impl OperatorBuilder {
         self.operator = Some(operator);
 
         if let Some(mut scope) = self.scope.take() {
-            scope.relation = relation;
+            scope.set_relation(relation);
             self.scope = Some(scope);
         } else {
             self.scope = Some(OperatorScope::new_source(relation));
@@ -670,298 +675,6 @@ impl Debug for OperatorBuilder {
             .field("operator", &self.operator)
             .field("scope", &self.scope)
             .finish()
-    }
-}
-
-/// Stores columns and relations available to the current node of an operator tree.
-#[derive(Debug, Clone)]
-pub struct OperatorScope {
-    //FIXME: It is not necessary to store output relation in both `relation` and `relations` fields.
-    relation: RelationInScope,
-    relations: RelationsInScope,
-    parent: Option<Rc<OperatorScope>>,
-}
-
-impl OperatorScope {
-    fn new_source(relation: RelationInScope) -> Self {
-        let relations = RelationsInScope::from_relation(relation.clone());
-
-        OperatorScope {
-            relation,
-            parent: None,
-            relations,
-        }
-    }
-
-    fn from_columns(columns: Vec<(String, ColumnId)>) -> Self {
-        let relation = RelationInScope::from_columns(columns);
-        let relations = RelationsInScope::from_relation(relation.clone());
-
-        OperatorScope {
-            relation,
-            parent: None,
-            relations,
-        }
-    }
-
-    fn new_child_scope(&self) -> Self {
-        let mut relations = RelationsInScope::from_relation(self.relation.clone());
-        relations.add_all(self.relations.clone());
-
-        OperatorScope {
-            relation: RelationInScope::from_columns(vec![]),
-            parent: Some(Rc::new(self.clone())),
-            relations,
-        }
-    }
-
-    fn with_new_columns(&self, columns: Vec<(String, ColumnId)>) -> Self {
-        let relation = RelationInScope::from_columns(columns);
-        let relations = RelationsInScope::from_relation(relation.clone());
-
-        OperatorScope {
-            relation,
-            parent: self.parent.clone(),
-            relations,
-        }
-    }
-
-    fn join(self, right: OperatorScope) -> Self {
-        let mut columns = self.relation.columns;
-        columns.extend_from_slice(&right.relation.columns);
-
-        let mut relations = self.relations;
-        relations.add(right.relation);
-        relations.add_all(right.relations);
-
-        OperatorScope {
-            relation: RelationInScope::from_columns(columns),
-            relations,
-            parent: self.parent,
-        }
-    }
-
-    fn set_alias(&mut self, alias: String) -> Result<(), OptimizerError> {
-        fn set_alias(relation: &mut RelationInScope, alias: String) -> Result<(), OptimizerError> {
-            if relation.relation_id.is_some() {
-                relation.alias = Some(alias.clone());
-                Ok(())
-            } else if relation.name.is_empty() {
-                relation.name = alias.clone();
-                relation.alias = Some(alias.clone());
-                Ok(())
-            } else {
-                let message = format!("BUG: a relation has no relation_id but has a name. Relation: {:?}", relation);
-                Err(OptimizerError::Internal(message))
-            }
-        }
-
-        if let Some(relation) = self.relations.relations.first_mut() {
-            let output_relation = &mut self.relation;
-            set_alias(relation, alias.clone())?;
-            set_alias(output_relation, alias)
-        } else {
-            let message = format!("OperatorScope is empty!");
-            return Err(OptimizerError::Internal(message));
-        }
-    }
-
-    fn resolve_columns(
-        &self,
-        qualifier: Option<&str>,
-        metadata: &MutableMetadata,
-    ) -> Result<Vec<(String, ColumnId)>, OptimizerError> {
-        if let Some(qualifier) = qualifier {
-            let relation = self.relations.find_relation(qualifier);
-
-            match relation {
-                Some(relation) => {
-                    let columns = relation
-                        .columns
-                        .iter()
-                        .map(|(_, id)| {
-                            // Should never panic because relation contains only valid ids.
-                            let meta = metadata.get_column(id);
-                            let column_name = meta.name().clone();
-                            (column_name, *id)
-                        })
-                        .collect();
-                    Ok(columns)
-                }
-                None if self.relations.find_relation_by_name(qualifier).is_some() => {
-                    Err(OptimizerError::Internal(format!("Invalid reference to relation {}", qualifier)))
-                }
-                None => Err(OptimizerError::Internal(format!("Unknown relation {}", qualifier))),
-            }
-        } else {
-            Ok(self.relation.columns.iter().cloned().collect())
-        }
-    }
-
-    fn find_column_by_name(&self, name: &str) -> Option<ColumnId> {
-        let f = |r: &RelationInScope, rs: &RelationsInScope| {
-            r.find_column_by_name(name).or_else(|| rs.find_column_by_name(name))
-        };
-        self.find_in_scope(&f)
-    }
-
-    fn find_column_by_id(&self, id: ColumnId) -> Option<ColumnId> {
-        let f =
-            |r: &RelationInScope, rs: &RelationsInScope| r.find_column_by_id(&id).or_else(|| rs.find_column_by_id(&id));
-        self.find_in_scope(&f)
-    }
-
-    fn find_in_scope<F>(&self, f: &F) -> Option<ColumnId>
-    where
-        F: Fn(&RelationInScope, &RelationsInScope) -> Option<ColumnId>,
-    {
-        let mut scope = self;
-        loop {
-            let relations = &scope.relations;
-            if let Some(id) = (f)(&self.relation, relations) {
-                return Some(id);
-            } else if let Some(parent) = &scope.parent {
-                scope = parent.as_ref();
-            } else {
-                return None;
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct RelationsInScope {
-    relations: Vec<RelationInScope>,
-}
-
-impl RelationsInScope {
-    fn new() -> Self {
-        RelationsInScope { relations: Vec::new() }
-    }
-
-    fn from_relation(relation: RelationInScope) -> Self {
-        if !relation.columns.is_empty() {
-            RelationsInScope {
-                relations: vec![relation],
-            }
-        } else {
-            RelationsInScope::new()
-        }
-    }
-
-    fn add(&mut self, relation: RelationInScope) {
-        for r in self.relations.iter() {
-            if r.relation_id == relation.relation_id {
-                return;
-            }
-        }
-        self.relations.push(relation);
-    }
-
-    fn add_all(&mut self, relations: RelationsInScope) {
-        let existing: Vec<RelationId> = self.relations.iter().filter_map(|r| r.relation_id).collect();
-        self.relations.extend(relations.relations.into_iter().filter(|r| match &r.relation_id {
-            Some(id) if existing.contains(id) => false,
-            _ => true,
-        }))
-    }
-
-    fn find_relation(&self, name_or_alias: &str) -> Option<&RelationInScope> {
-        self.relations.iter().find(|r| r.has_name_or_alias(name_or_alias))
-    }
-
-    fn find_relation_by_name(&self, name: &str) -> Option<&RelationInScope> {
-        self.relations.iter().find(|r| r.has_name(name))
-    }
-
-    fn find_column_by_id(&self, id: &ColumnId) -> Option<ColumnId> {
-        self.relations
-            .iter()
-            .find_map(|r| r.columns.iter().find(|(_, col_id)| col_id == id).map(|(_, id)| *id))
-    }
-
-    fn find_column_by_name(&self, name: &str) -> Option<ColumnId> {
-        // FIXME: use object names instead of str.
-        if let Some(pos) = name.find('.') {
-            let (relation_name, col_name) = name.split_at(pos);
-            let relation = self.relations.iter().find(|r| r.has_name_or_alias(relation_name));
-            if let Some(relation) = relation {
-                relation
-                    .columns
-                    .iter()
-                    .find(|(name, _id)| name.eq_ignore_ascii_case(&col_name[1..]))
-                    .map(|(_, id)| *id)
-            } else {
-                None
-            }
-        } else {
-            self.relations.iter().find_map(|r| {
-                r.columns
-                    .iter()
-                    .find(|(col_name, id)| col_name.eq_ignore_ascii_case(name))
-                    .map(|(_, id)| *id)
-            })
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct RelationInScope {
-    name: String,
-    alias: Option<String>,
-    relation_id: Option<RelationId>,
-    // (name/alias, column_id)
-    columns: Vec<(String, ColumnId)>,
-}
-
-impl RelationInScope {
-    fn new(relation_id: RelationId, name: String, columns: Vec<(String, ColumnId)>) -> Self {
-        RelationInScope {
-            name,
-            alias: None,
-            relation_id: Some(relation_id),
-            columns,
-        }
-    }
-
-    fn from_columns(columns: Vec<(String, ColumnId)>) -> Self {
-        RelationInScope {
-            name: String::from(""),
-            alias: None,
-            relation_id: None,
-            columns,
-        }
-    }
-
-    fn has_name_or_alias(&self, name_or_alias: &str) -> bool {
-        if let Some(alias) = &self.alias {
-            alias.eq_ignore_ascii_case(name_or_alias)
-        } else {
-            self.has_name(name_or_alias)
-        }
-    }
-
-    fn has_name(&self, name: &str) -> bool {
-        self.name.eq_ignore_ascii_case(name)
-    }
-
-    fn find_column_by_name(&self, name: &str) -> Option<ColumnId> {
-        let f = |(col_name, _): &(String, ColumnId)| col_name == name;
-        self.find_column(&f)
-    }
-
-    fn find_column_by_id(&self, id: &ColumnId) -> Option<ColumnId> {
-        let f = |(_, col_id): &(String, ColumnId)| col_id == id;
-        self.find_column(&f)
-    }
-
-    fn find_column<F>(&self, predicate: &F) -> Option<ColumnId>
-    where
-        F: Fn(&(String, ColumnId)) -> bool,
-    {
-        self.columns
-            .iter()
-            .find_map(|column| if (predicate)(column) { Some(column.1) } else { None })
     }
 }
 
@@ -1005,7 +718,8 @@ where
                 if !exists {
                     return Err(OptimizerError::Internal(format!(
                         "Unexpected column id: {}. Input columns: {:?}",
-                        column_id, self.scope.relation.columns
+                        column_id,
+                        self.scope.columns()
                     )));
                 }
                 Ok(expr)
@@ -1019,8 +733,8 @@ where
                         return Err(OptimizerError::Internal(format!(
                             "Unexpected column: {}. Input columns: {:?}, Outer columns: {:?}",
                             column_name,
-                            self.scope.relation.columns,
-                            self.scope.parent.as_ref().map(|s| &s.relation.columns).unwrap_or(&vec![]),
+                            self.scope.columns(),
+                            self.scope.parent().map(|s| s.columns().to_vec()).unwrap_or(vec![]),
                         )));
                     }
                 }
@@ -1153,277 +867,6 @@ impl ValidateExpr for ValidateProjectionExpr {
     }
 }
 
-/// A builder for aggregate operators.  
-pub struct AggregateBuilder<'a> {
-    builder: &'a mut OperatorBuilder,
-    aggr_exprs: Vec<AggrExpr>,
-    group_exprs: Vec<ScalarExpr>,
-    having: Option<ScalarExpr>,
-}
-
-enum AggrExpr {
-    Function { func: AggregateFunction, column: String },
-    Column(String),
-    Expr(ScalarExpr),
-}
-
-impl AggregateBuilder<'_> {
-    /// Adds aggregate function `func` with the given column as an argument.
-    pub fn add_func(mut self, func: &str, column_name: &str) -> Result<Self, OptimizerError> {
-        let func = AggregateFunction::try_from(func)
-            .map_err(|_| OptimizerError::Argument(format!("Unknown aggregate function {}", func)))?;
-        let aggr_expr = AggrExpr::Function {
-            func,
-            column: column_name.into(),
-        };
-        self.aggr_exprs.push(aggr_expr);
-        Ok(self)
-    }
-
-    /// Adds column to the aggregate operator. The given column must appear in group_by clause.
-    pub fn add_column(mut self, column_name: &str) -> Result<Self, OptimizerError> {
-        self.aggr_exprs.push(AggrExpr::Column(column_name.into()));
-        Ok(self)
-    }
-
-    /// Adds an expression to the aggregate operator.
-    pub fn add_expr(mut self, expr: ScalarExpr) -> Result<Self, OptimizerError> {
-        self.aggr_exprs.push(AggrExpr::Expr(expr));
-        Ok(self)
-    }
-
-    /// Adds grouping by the given column.
-    pub fn group_by(mut self, column_name: &str) -> Result<Self, OptimizerError> {
-        self.group_exprs.push(ScalarExpr::ColumnName(column_name.into()));
-        Ok(self)
-    }
-
-    /// Adds grouping by the given expression.
-    pub fn group_by_expr(mut self, expr: ScalarExpr) -> Result<Self, OptimizerError> {
-        self.group_exprs.push(expr);
-        Ok(self)
-    }
-
-    /// Adds HAVING clause.
-    pub fn having(mut self, expr: ScalarExpr) -> Result<Self, OptimizerError> {
-        self.having = Some(expr);
-        Ok(self)
-    }
-
-    /// Builds an aggregate operator and adds in to an operator tree.
-    pub fn build(mut self) -> Result<OperatorBuilder, OptimizerError> {
-        let (input, scope) = self.builder.rel_node()?;
-
-        let aggr_exprs = std::mem::take(&mut self.aggr_exprs);
-        let mut projection_builder = ProjectionListBuilder::new(self.builder, &scope);
-        let mut non_aggregate_columns = HashSet::new();
-
-        for expr in aggr_exprs {
-            match expr {
-                AggrExpr::Function { func, column } => {
-                    let mut rewriter = RewriteExprs::new(&scope, ValidateProjectionExpr::projection_expr());
-                    let expr = ScalarExpr::ColumnName(column);
-                    let expr = expr.rewrite(&mut rewriter)?;
-                    let aggr_expr = ScalarExpr::Aggregate {
-                        func,
-                        args: vec![expr],
-                        filter: None,
-                    };
-                    projection_builder.add_expr(aggr_expr)?;
-                }
-                AggrExpr::Column(name) => {
-                    let i = projection_builder.projection.projection.len();
-                    let expr = ScalarExpr::ColumnName(name);
-                    projection_builder.add_expr(expr)?;
-                    let column_id = projection_builder.projection.column_ids[i];
-
-                    non_aggregate_columns.insert(column_id);
-                }
-                AggrExpr::Expr(expr) => {
-                    let i = projection_builder.projection.projection.len();
-                    projection_builder.add_expr(expr)?;
-                    let expr = projection_builder.projection.projection[i].expr();
-
-                    // AggregateBuilder::disallow_nested_subqueries(expr, "AGGREGATE", "aggregate function/expression")?;
-
-                    let used_columns = match &expr {
-                        ScalarExpr::Aggregate { .. } => vec![],
-                        ScalarExpr::Alias(expr, _) if matches!(expr.as_ref(), ScalarExpr::Aggregate { .. }) => {
-                            vec![]
-                        }
-                        _ => collect_columns(&expr),
-                    };
-                    non_aggregate_columns.extend(used_columns);
-                }
-            }
-        }
-
-        let ProjectionList {
-            column_ids,
-            output_columns,
-            projection: aggr_exprs,
-        } = projection_builder.build();
-
-        let mut group_exprs = vec![];
-        let mut group_by_columns = HashSet::new();
-
-        for expr in std::mem::take(&mut self.group_exprs) {
-            let expr = if let ScalarExpr::Scalar(ScalarValue::Int32(pos)) = expr {
-                let pos = pos - 1;
-                if pos >= 0 && (pos as usize) < aggr_exprs.len() {
-                    aggr_exprs[pos as usize].expr().clone()
-                } else {
-                    // query error
-                    return Err(OptimizerError::Internal(format!("GROUP BY: position {} is not in select list", pos)));
-                }
-            } else {
-                expr
-            };
-
-            // AggregateBuilder::disallow_nested_subqueries(&expr, "GROUP BY", "expressions")?;
-
-            let expr = match expr {
-                ScalarExpr::Column(_) | ScalarExpr::ColumnName(_) => {
-                    let mut rewriter = RewriteExprs::new(&scope, ValidateProjectionExpr::projection_expr());
-                    let expr = expr.rewrite(&mut rewriter)?;
-                    let expr = self.builder.add_scalar_node(expr);
-                    if let ScalarExpr::Column(id) = expr.expr() {
-                        group_by_columns.insert(*id);
-                    } else {
-                        unreachable!("GROUP BY: positional argument")
-                    }
-                    expr
-                }
-                ScalarExpr::SubQuery(_) => ScalarNode::from(expr),
-                ScalarExpr::Scalar(ScalarValue::Int32(_)) => unreachable!("GROUP BY: positional argument"),
-                ScalarExpr::Scalar(_) => {
-                    // query error
-                    return Err(OptimizerError::Internal(format!("GROUP BY: not integer constant argument")));
-                }
-                ScalarExpr::Aggregate { .. } => {
-                    // query error
-                    return Err(OptimizerError::Internal(format!("GROUP BY: Aggregate functions are not allowed")));
-                }
-                _ => {
-                    // query error
-                    return Err(OptimizerError::Internal(format!("GROUP BY: unsupported expression: {}", expr)));
-                }
-            };
-            group_exprs.push(expr);
-        }
-
-        if !group_by_columns.is_empty() {
-            for col_id in non_aggregate_columns.iter() {
-                if !group_by_columns.contains(col_id) {
-                    // query error. Add table/table alias
-                    let column = self.builder.metadata.get_column(col_id);
-                    return Err(OptimizerError::Internal(format!(
-                        "AGGREGATE column {} must appear in GROUP BY clause",
-                        column.name()
-                    )));
-                }
-            }
-        }
-
-        let having_expr = if let Some(expr) = self.having.take() {
-            AggregateBuilder::disallow_nested_subqueries(&expr, "AGGREGATE", "HAVING clause")?;
-
-            let mut rewriter = RewriteExprs::new(&scope, ValidateFilterExpr::where_clause());
-            let expr = expr.rewrite(&mut rewriter)?;
-            let mut validate = ValidateHavingClause {
-                projection_columns: &non_aggregate_columns,
-                group_by_columns: &group_by_columns,
-            };
-
-            expr.accept(&mut validate)?;
-
-            struct ValidateHavingClause<'a> {
-                projection_columns: &'a HashSet<ColumnId>,
-                group_by_columns: &'a HashSet<ColumnId>,
-            }
-
-            impl<'a> ExprVisitor<RelNode> for ValidateHavingClause<'a> {
-                type Error = OptimizerError;
-
-                fn pre_visit(&mut self, expr: &ScalarExpr) -> Result<bool, Self::Error> {
-                    match expr {
-                        ScalarExpr::Aggregate { .. } => Ok(false),
-                        ScalarExpr::Column(id) => {
-                            if self.projection_columns.contains(id) || self.group_by_columns.contains(id) {
-                                Ok(false)
-                            } else {
-                                Err(OptimizerError::Internal(format!(
-                                    "AGGREGATE: Column {} must appear in GROUP BY clause or an aggregate function",
-                                    id
-                                )))
-                            }
-                        }
-                        _ => Ok(true),
-                    }
-                }
-
-                fn post_visit(&mut self, _expr: &ScalarExpr) -> Result<(), Self::Error> {
-                    Ok(())
-                }
-            }
-
-            Some(self.builder.add_scalar_node(expr))
-        } else {
-            None
-        };
-
-        let aggregate = LogicalExpr::Aggregate(LogicalAggregate {
-            input,
-            aggr_exprs,
-            group_exprs,
-            columns: column_ids,
-            having: having_expr,
-        });
-        let operator = Operator::from(OperatorExpr::from(aggregate));
-
-        Ok(OperatorBuilder::from_builder(self.builder, operator, output_columns))
-    }
-
-    fn disallow_nested_subqueries(expr: &ScalarExpr, clause: &str, location: &str) -> Result<(), OptimizerError> {
-        struct DisallowNestedSubqueries<'a> {
-            clause: &'a str,
-            location: &'a str,
-        }
-        impl<'a> ExprVisitor<RelNode> for DisallowNestedSubqueries<'a> {
-            type Error = OptimizerError;
-
-            fn post_visit(&mut self, expr: &ScalarExpr) -> Result<(), Self::Error> {
-                match expr {
-                    ScalarExpr::Column(_) => {}
-                    ScalarExpr::ColumnName(_) => {}
-                    ScalarExpr::Scalar(_) => {}
-                    ScalarExpr::BinaryExpr { .. } => {}
-                    ScalarExpr::Cast { .. } => {}
-                    ScalarExpr::Not(_) => {}
-                    ScalarExpr::Negation(_) => {}
-                    ScalarExpr::Alias(_, _) => {}
-                    ScalarExpr::Aggregate { .. } => {}
-                    ScalarExpr::SubQuery(_) => {
-                        return Err(OptimizerError::NotImplemented(format!(
-                            "{}: Subqueries in {} are not implemented",
-                            self.clause, self.location
-                        )))
-                    }
-                    ScalarExpr::Wildcard(_) => {
-                        return Err(OptimizerError::Internal(format!(
-                            "{}: Wildcard expressions are not allowed",
-                            self.clause
-                        )))
-                    }
-                }
-                Ok(())
-            }
-        }
-        let mut visitor = DisallowNestedSubqueries { clause, location };
-        expr.accept(&mut visitor)
-    }
-}
-
 /// [OperatorCallback] that does nothing.
 #[derive(Debug)]
 pub struct NoOpOperatorCallback;
@@ -1474,105 +917,6 @@ impl OperatorCallback for MemoizeOperatorCallback {
         let mut memo = self.memo.borrow_mut();
         let expr = memo.insert_group(expr);
         ScalarNode::from_mexpr(expr)
-    }
-}
-
-struct ProjectionListBuilder<'a> {
-    builder: &'a mut OperatorBuilder,
-    scope: &'a OperatorScope,
-    projection: ProjectionList,
-}
-
-#[derive(Default)]
-struct ProjectionList {
-    column_ids: Vec<ColumnId>,
-    output_columns: Vec<(String, ColumnId)>,
-    projection: Vec<ScalarNode>,
-}
-
-impl ProjectionList {
-    fn add_expr(&mut self, id: ColumnId, name: String, expr: ScalarNode) {
-        self.projection.push(expr);
-        self.column_ids.push(id);
-        self.output_columns.push((name, id));
-    }
-
-    fn get_expr(&self, i: usize) -> Option<&ScalarExpr> {
-        self.projection.get(i).map(|s| s.expr())
-    }
-}
-
-impl<'a> ProjectionListBuilder<'a> {
-    fn new(builder: &'a mut OperatorBuilder, scope: &'a OperatorScope) -> Self {
-        ProjectionListBuilder {
-            builder,
-            scope,
-            projection: ProjectionList::default(),
-        }
-    }
-
-    fn add_expr(&mut self, expr: ScalarExpr) -> Result<(), OptimizerError> {
-        match expr {
-            ScalarExpr::Wildcard(qualifier) => {
-                let columns = self.scope.resolve_columns(qualifier.as_deref(), &self.builder.metadata)?;
-
-                for (name, id) in columns {
-                    self.add_column(id, name)?;
-                }
-            }
-            _ => {
-                let mut rewriter = RewriteExprs::new(self.scope, ValidateProjectionExpr::projection_expr());
-                let expr = expr.rewrite(&mut rewriter)?;
-                match expr {
-                    ScalarExpr::Column(id) => {
-                        let name = {
-                            // Should never panic because RewriteExprs set an error when encounters an unknown column id.
-                            let meta = self.builder.metadata.get_column(&id);
-                            meta.name().clone()
-                        };
-                        self.add_column(id, name)?
-                    }
-                    ScalarExpr::Alias(ref inner_expr, ref name) => {
-                        //Stores inner expression in meta column metadata.
-                        self.add_synthetic_column(expr.clone(), name.clone(), *inner_expr.clone())?
-                    }
-                    ScalarExpr::Aggregate { ref func, .. } => {
-                        self.add_synthetic_column(expr.clone(), format!("{}", func), expr)?
-                    }
-                    _ => self.add_synthetic_column(expr.clone(), "?column?".into(), expr)?,
-                };
-            }
-        };
-
-        Ok(())
-    }
-
-    fn add_column(&mut self, id: ColumnId, name: String) -> Result<(), OptimizerError> {
-        let expr = self.builder.add_scalar_node(ScalarExpr::Column(id));
-
-        self.projection.add_expr(id, name, expr);
-
-        Ok(())
-    }
-
-    fn add_synthetic_column(
-        &mut self,
-        expr: ScalarExpr,
-        name: String,
-        column_expr: ScalarExpr,
-    ) -> Result<(), OptimizerError> {
-        let data_type = resolve_expr_type(&expr, &self.builder.metadata)?;
-        let column_meta = ColumnMetadata::new_synthetic_column(name.clone(), data_type, Some(column_expr));
-        let id = self.builder.metadata.add_column(column_meta);
-        let expr = self.builder.add_scalar_node(expr);
-
-        self.projection.add_expr(id, name.clone(), expr);
-
-        Ok(())
-    }
-
-    fn build(self) -> ProjectionList {
-        self.projection
     }
 }
 
