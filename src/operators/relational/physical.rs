@@ -254,6 +254,7 @@ pub struct HashAggregate {
     pub aggr_exprs: Vec<ScalarNode>,
     pub group_exprs: Vec<ScalarNode>,
     pub having: Option<ScalarNode>,
+    pub columns: Vec<ColumnId>,
 }
 
 impl HashAggregate {
@@ -276,6 +277,7 @@ impl HashAggregate {
             aggr_exprs: inputs.scalar_nodes(self.aggr_exprs.len()),
             group_exprs: inputs.scalar_nodes(self.group_exprs.len()),
             having: self.having.as_ref().map(|_| inputs.scalar_node()),
+            columns: self.columns.clone(),
         }
     }
 
@@ -314,6 +316,7 @@ impl HashAggregate {
         f.write_exprs("aggr_exprs", self.aggr_exprs.iter());
         f.write_exprs("group_exprs", self.group_exprs.iter());
         f.write_expr_if_present("having", self.having.as_ref());
+        f.write_values("cols", &self.columns);
     }
 }
 

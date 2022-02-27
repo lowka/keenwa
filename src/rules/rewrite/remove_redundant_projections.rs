@@ -319,7 +319,7 @@ LogicalProjection cols=[1, 2, 6] exprs: [col:1, col:2, SubQuery 02]
                 Ok(project)
             },
             r#"
-LogicalAggregate
+LogicalAggregate cols=[1, 3]
   aggr_exprs: [col:1, sum(col:1)]
   group_exprs: [col:1]
   input: LogicalGet A cols=[1, 2]
@@ -346,7 +346,7 @@ LogicalAggregate
                 Ok(project)
             },
             r#"
-LogicalAggregate
+LogicalAggregate cols=[1, 3]
   aggr_exprs: [col:1, sum(col:1)]
   group_exprs: [col:1]
   input: LogicalGet A cols=[1, 2]
@@ -374,7 +374,7 @@ LogicalAggregate
             },
             r#"
 LogicalProjection cols=[4, 5] exprs: [col:3 AS s, col:1 + col:1 AS s2]
-  input: LogicalAggregate
+  input: LogicalAggregate cols=[1, 3]
     aggr_exprs: [col:1, sum(col:1)]
     group_exprs: [col:1]
     input: LogicalGet A cols=[1, 2]
@@ -398,7 +398,7 @@ LogicalProjection cols=[4, 5] exprs: [col:3 AS s, col:1 + col:1 AS s2]
             },
             r#"
 LogicalProjection cols=[4, 5] exprs: [col:3 AS s, col:1 + col:1 AS s2]
-  input: LogicalAggregate
+  input: LogicalAggregate cols=[1, 3]
     aggr_exprs: [col:1, sum(col:1)]
     group_exprs: [col:1]
     input: LogicalGet A cols=[1, 2]

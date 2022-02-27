@@ -751,7 +751,7 @@ LogicalSelect
                 Ok(filter_a1)
             },
             r#"
-LogicalAggregate
+LogicalAggregate cols=[1, 2]
   aggr_exprs: [col:1, sum(col:1)]
   group_exprs: [col:1]
   input: LogicalSelect
@@ -780,7 +780,7 @@ LogicalAggregate
             },
             r#"
 LogicalSelect
-  input: LogicalAggregate
+  input: LogicalAggregate cols=[1, 2]
     aggr_exprs: [col:1, sum(col:1)]
     group_exprs: [col:1]
     input: LogicalGet A cols=[1]
@@ -808,7 +808,7 @@ LogicalSelect
                 Ok(filter_a1)
             },
             r#"
-LogicalAggregate
+LogicalAggregate cols=[1, 2]
   aggr_exprs: [col:1, sum(col:1)]
   group_exprs: [col:1]
   input: LogicalProjection cols=[1] exprs: [col:1]

@@ -29,7 +29,7 @@ impl Rule for HashAggregateRule {
             aggr_exprs,
             group_exprs,
             having,
-            columns: _columns,
+            columns,
         }) = expr
         {
             let expr = PhysicalExpr::HashAggregate(HashAggregate {
@@ -37,6 +37,7 @@ impl Rule for HashAggregateRule {
                 aggr_exprs: aggr_exprs.clone(),
                 group_exprs: group_exprs.clone(),
                 having: having.clone(),
+                columns: columns.clone(),
             });
             Ok(Some(RuleResult::Implementation(expr)))
         } else {
