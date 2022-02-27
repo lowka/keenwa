@@ -432,7 +432,9 @@ impl OperatorBuilder {
         }
     }
 
-    /// Creates a builder that can be used to construct a nested sub-query.
+    /// Creates a builder that can be used to construct subqueries that
+    /// can reference tables, columns and other objects  
+    /// accessible to the current topmost operator in the operator tree.
     pub fn sub_query_builder(&self) -> Self {
         OperatorBuilder {
             callback: self.callback.clone(),
@@ -446,7 +448,7 @@ impl OperatorBuilder {
 
     /// Creates a builder that shares the metadata with this one.
     /// Unlike [sub_query_builder](Self::sub_query_builder) this method should be used
-    /// to build independent operator trees (eg. for tables used in joins operators).
+    /// to build independent operator trees.
     pub fn new_query_builder(&self) -> Self {
         OperatorBuilder {
             callback: self.callback.clone(),
@@ -461,21 +463,18 @@ impl OperatorBuilder {
     /// Creates an operator tree and returns its metadata.
     /// If this builder has been created via call to [Self::sub_query_builder()] this method returns an error.
     pub fn build(self) -> Result<Operator, OptimizerError> {
-        if self.sub_query_builder {
-            Err(OptimizerError::Internal("Use to_sub_query() to create sub queries".to_string()))
-        } else {
-            match self.operator {
-                Some(operator) => {
-                    let rel_node = self.callback.new_rel_expr(operator);
-                    Ok(rel_node.into_inner())
-                }
-                None => Err(OptimizerError::Internal("Build: No operator".to_string())),
+        match self.operator {
+            Some(operator) => {
+                let rel_node = self.callback.new_rel_expr(operator);
+                Ok(rel_node.into_inner())
             }
+            None => Err(OptimizerError::Internal("Build: No operator".to_string())),
         }
     }
 
     /// Creates a nested sub query expression from this nested operator builder.
     /// If this builder has not been created via call to [Self::sub_query_builder()] this method returns an error.
+    #[deprecated]
     pub fn to_sub_query(mut self) -> Result<ScalarExpr, OptimizerError> {
         if self.sub_query_builder {
             let (operator, _) = self.rel_node()?;
@@ -494,7 +493,7 @@ impl OperatorBuilder {
     /// Sets an alias to the current operator. If there is no operator returns an error.
     pub fn with_alias(mut self, alias: &str) -> Result<Self, OptimizerError> {
         if let Some(scope) = self.scope.as_mut() {
-            scope.set_alias(alias.to_owned());
+            scope.set_alias(alias.to_owned())?;
             Ok(self)
         } else {
             Err(OptimizerError::Argument(format!("ALIAS: no operator")))
@@ -622,7 +621,7 @@ impl OperatorBuilder {
 
         let mut scope = OperatorScope::from_columns(columns);
         if !input_is_projection {
-            scope.relations.extend(input.relations);
+            scope.relations.add_all(input.relations);
         }
         self.scope = Some(scope);
     }
@@ -676,10 +675,234 @@ impl Debug for OperatorBuilder {
 
 /// Stores columns and relations available to the current node of an operator tree.
 #[derive(Debug, Clone)]
-struct OperatorScope {
+pub struct OperatorScope {
+    //FIXME: It is not necessary to store output relation in both `relation` and `relations` fields.
     relation: RelationInScope,
-    relations: Vec<RelationInScope>,
+    relations: RelationsInScope,
     parent: Option<Rc<OperatorScope>>,
+}
+
+impl OperatorScope {
+    fn new_source(relation: RelationInScope) -> Self {
+        let relations = RelationsInScope::from_relation(relation.clone());
+
+        OperatorScope {
+            relation,
+            parent: None,
+            relations,
+        }
+    }
+
+    fn from_columns(columns: Vec<(String, ColumnId)>) -> Self {
+        let relation = RelationInScope::from_columns(columns);
+        let relations = RelationsInScope::from_relation(relation.clone());
+
+        OperatorScope {
+            relation,
+            parent: None,
+            relations,
+        }
+    }
+
+    fn new_child_scope(&self) -> Self {
+        let mut relations = RelationsInScope::from_relation(self.relation.clone());
+        relations.add_all(self.relations.clone());
+
+        OperatorScope {
+            relation: RelationInScope::from_columns(vec![]),
+            parent: Some(Rc::new(self.clone())),
+            relations,
+        }
+    }
+
+    fn with_new_columns(&self, columns: Vec<(String, ColumnId)>) -> Self {
+        let relation = RelationInScope::from_columns(columns);
+        let relations = RelationsInScope::from_relation(relation.clone());
+
+        OperatorScope {
+            relation,
+            parent: self.parent.clone(),
+            relations,
+        }
+    }
+
+    fn join(self, right: OperatorScope) -> Self {
+        let mut columns = self.relation.columns;
+        columns.extend_from_slice(&right.relation.columns);
+
+        let mut relations = self.relations;
+        relations.add(right.relation);
+        relations.add_all(right.relations);
+
+        OperatorScope {
+            relation: RelationInScope::from_columns(columns),
+            relations,
+            parent: self.parent,
+        }
+    }
+
+    fn set_alias(&mut self, alias: String) -> Result<(), OptimizerError> {
+        fn set_alias(relation: &mut RelationInScope, alias: String) -> Result<(), OptimizerError> {
+            if relation.relation_id.is_some() {
+                relation.alias = Some(alias.clone());
+                Ok(())
+            } else if relation.name.is_empty() {
+                relation.name = alias.clone();
+                relation.alias = Some(alias.clone());
+                Ok(())
+            } else {
+                let message = format!("BUG: a relation has no relation_id but has a name. Relation: {:?}", relation);
+                Err(OptimizerError::Internal(message))
+            }
+        }
+
+        if let Some(relation) = self.relations.relations.first_mut() {
+            let output_relation = &mut self.relation;
+            set_alias(relation, alias.clone())?;
+            set_alias(output_relation, alias)
+        } else {
+            let message = format!("OperatorScope is empty!");
+            return Err(OptimizerError::Internal(message));
+        }
+    }
+
+    fn resolve_columns(
+        &self,
+        qualifier: Option<&str>,
+        metadata: &MutableMetadata,
+    ) -> Result<Vec<(String, ColumnId)>, OptimizerError> {
+        if let Some(qualifier) = qualifier {
+            let relation = self.relations.find_relation(qualifier);
+
+            match relation {
+                Some(relation) => {
+                    let columns = relation
+                        .columns
+                        .iter()
+                        .map(|(_, id)| {
+                            // Should never panic because relation contains only valid ids.
+                            let meta = metadata.get_column(id);
+                            let column_name = meta.name().clone();
+                            (column_name, *id)
+                        })
+                        .collect();
+                    Ok(columns)
+                }
+                None if self.relations.find_relation_by_name(qualifier).is_some() => {
+                    Err(OptimizerError::Internal(format!("Invalid reference to relation {}", qualifier)))
+                }
+                None => Err(OptimizerError::Internal(format!("Unknown relation {}", qualifier))),
+            }
+        } else {
+            Ok(self.relation.columns.iter().cloned().collect())
+        }
+    }
+
+    fn find_column_by_name(&self, name: &str) -> Option<ColumnId> {
+        let f = |r: &RelationInScope, rs: &RelationsInScope| {
+            r.find_column_by_name(name).or_else(|| rs.find_column_by_name(name))
+        };
+        self.find_in_scope(&f)
+    }
+
+    fn find_column_by_id(&self, id: ColumnId) -> Option<ColumnId> {
+        let f =
+            |r: &RelationInScope, rs: &RelationsInScope| r.find_column_by_id(&id).or_else(|| rs.find_column_by_id(&id));
+        self.find_in_scope(&f)
+    }
+
+    fn find_in_scope<F>(&self, f: &F) -> Option<ColumnId>
+    where
+        F: Fn(&RelationInScope, &RelationsInScope) -> Option<ColumnId>,
+    {
+        let mut scope = self;
+        loop {
+            let relations = &scope.relations;
+            if let Some(id) = (f)(&self.relation, relations) {
+                return Some(id);
+            } else if let Some(parent) = &scope.parent {
+                scope = parent.as_ref();
+            } else {
+                return None;
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct RelationsInScope {
+    relations: Vec<RelationInScope>,
+}
+
+impl RelationsInScope {
+    fn new() -> Self {
+        RelationsInScope { relations: Vec::new() }
+    }
+
+    fn from_relation(relation: RelationInScope) -> Self {
+        if !relation.columns.is_empty() {
+            RelationsInScope {
+                relations: vec![relation],
+            }
+        } else {
+            RelationsInScope::new()
+        }
+    }
+
+    fn add(&mut self, relation: RelationInScope) {
+        for r in self.relations.iter() {
+            if r.relation_id == relation.relation_id {
+                return;
+            }
+        }
+        self.relations.push(relation);
+    }
+
+    fn add_all(&mut self, relations: RelationsInScope) {
+        let existing: Vec<RelationId> = self.relations.iter().filter_map(|r| r.relation_id).collect();
+        self.relations.extend(relations.relations.into_iter().filter(|r| match &r.relation_id {
+            Some(id) if existing.contains(id) => false,
+            _ => true,
+        }))
+    }
+
+    fn find_relation(&self, name_or_alias: &str) -> Option<&RelationInScope> {
+        self.relations.iter().find(|r| r.has_name_or_alias(name_or_alias))
+    }
+
+    fn find_relation_by_name(&self, name: &str) -> Option<&RelationInScope> {
+        self.relations.iter().find(|r| r.has_name(name))
+    }
+
+    fn find_column_by_id(&self, id: &ColumnId) -> Option<ColumnId> {
+        self.relations
+            .iter()
+            .find_map(|r| r.columns.iter().find(|(_, col_id)| col_id == id).map(|(_, id)| *id))
+    }
+
+    fn find_column_by_name(&self, name: &str) -> Option<ColumnId> {
+        // FIXME: use object names instead of str.
+        if let Some(pos) = name.find('.') {
+            let (relation_name, col_name) = name.split_at(pos);
+            let relation = self.relations.iter().find(|r| r.has_name_or_alias(relation_name));
+            if let Some(relation) = relation {
+                relation
+                    .columns
+                    .iter()
+                    .find(|(name, _id)| name.eq_ignore_ascii_case(&col_name[1..]))
+                    .map(|(_, id)| *id)
+            } else {
+                None
+            }
+        } else {
+            self.relations.iter().find_map(|r| {
+                r.columns
+                    .iter()
+                    .find(|(col_name, id)| col_name.eq_ignore_ascii_case(name))
+                    .map(|(_, id)| *id)
+            })
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -710,12 +933,26 @@ impl RelationInScope {
         }
     }
 
-    fn has_name(&self, other: &str) -> bool {
+    fn has_name_or_alias(&self, name_or_alias: &str) -> bool {
         if let Some(alias) = &self.alias {
-            alias.eq_ignore_ascii_case(other)
+            alias.eq_ignore_ascii_case(name_or_alias)
         } else {
-            self.name.eq_ignore_ascii_case(other)
+            self.has_name(name_or_alias)
         }
+    }
+
+    fn has_name(&self, name: &str) -> bool {
+        self.name.eq_ignore_ascii_case(name)
+    }
+
+    fn find_column_by_name(&self, name: &str) -> Option<ColumnId> {
+        let f = |(col_name, _): &(String, ColumnId)| col_name == name;
+        self.find_column(&f)
+    }
+
+    fn find_column_by_id(&self, id: &ColumnId) -> Option<ColumnId> {
+        let f = |(_, col_id): &(String, ColumnId)| col_id == id;
+        self.find_column(&f)
     }
 
     fn find_column<F>(&self, predicate: &F) -> Option<ColumnId>
@@ -725,163 +962,6 @@ impl RelationInScope {
         self.columns
             .iter()
             .find_map(|column| if (predicate)(column) { Some(column.1) } else { None })
-    }
-}
-
-impl OperatorScope {
-    fn new_source(relation: RelationInScope) -> Self {
-        OperatorScope {
-            relation: relation.clone(),
-            parent: None,
-            relations: vec![relation],
-        }
-    }
-
-    fn from_columns(columns: Vec<(String, ColumnId)>) -> Self {
-        let relation = RelationInScope::from_columns(columns);
-        OperatorScope {
-            relation: relation.clone(),
-            parent: None,
-            relations: vec![relation],
-        }
-    }
-
-    fn new_child_scope(&self) -> Self {
-        OperatorScope {
-            relation: RelationInScope::from_columns(vec![]),
-            parent: Some(Rc::new(self.clone())),
-            relations: self.relations.clone(),
-        }
-    }
-
-    fn with_new_columns(&self, columns: Vec<(String, ColumnId)>) -> Self {
-        let relation = RelationInScope::from_columns(columns);
-        OperatorScope {
-            relation: relation.clone(),
-            parent: self.parent.clone(),
-            relations: vec![relation],
-        }
-    }
-
-    fn join(self, right: OperatorScope) -> Self {
-        let mut columns = self.relation.columns;
-        columns.extend_from_slice(&right.relation.columns);
-
-        let mut relations = self.relations;
-        relations.extend(right.relations);
-
-        OperatorScope {
-            relation: RelationInScope::from_columns(columns),
-            relations,
-            parent: self.parent,
-        }
-    }
-
-    fn set_alias(&mut self, alias: String) {
-        for relation in self.relations.iter_mut() {
-            if let Some(relation_id) = self.relation.relation_id {
-                if relation.relation_id == Some(relation_id) {
-                    relation.alias = Some(alias.clone());
-                }
-            } else {
-                if relation.name == self.relation.name {
-                    relation.name = alias.clone();
-                    relation.alias = Some(alias.clone());
-                }
-            }
-        }
-    }
-
-    fn resolve_columns(
-        &self,
-        qualifier: Option<&str>,
-        metadata: &MutableMetadata,
-    ) -> Result<Vec<(String, ColumnId)>, OptimizerError> {
-        if let Some(qualifier) = qualifier {
-            let relation = self.relations.iter().find(|r| r.has_name(qualifier));
-
-            match relation {
-                Some(relation) => {
-                    let columns = relation
-                        .columns
-                        .iter()
-                        .map(|(_, id)| {
-                            // Should never panic because relation contains only valid ids.
-                            let meta = metadata.get_column(id);
-                            let column_name = meta.name().clone();
-                            (column_name, *id)
-                        })
-                        .collect();
-                    Ok(columns)
-                }
-                None if self
-                    .relations
-                    .iter()
-                    .find(|r| r.name.eq_ignore_ascii_case(qualifier) && r.alias.is_some())
-                    .is_some() =>
-                {
-                    Err(OptimizerError::Internal(format!("Invalid reference to relation {}", qualifier)))
-                }
-                None => Err(OptimizerError::Internal(format!("Unknown relation {}", qualifier))),
-            }
-        } else {
-            Ok(self.relation.columns.iter().cloned().collect())
-        }
-    }
-
-    fn find_column_by_name(&self, name: &str) -> Option<ColumnId> {
-        // FIXME: use object names instead of str.
-        if let Some(pos) = name.find('.') {
-            let (relation_name, col_name) = name.split_at(pos);
-            let relation = self.relations.iter().find(|r| r.has_name(relation_name));
-            if let Some(relation) = relation {
-                relation
-                    .columns
-                    .iter()
-                    .find(|(name, _id)| name.eq_ignore_ascii_case(&col_name[1..]))
-                    .map(|(_, id)| *id)
-            } else {
-                None
-            }
-        } else {
-            let by_name = |a: &(String, ColumnId)| a.0.eq_ignore_ascii_case(name);
-            self.find_by(&by_name)
-        }
-    }
-
-    fn find_column_by_id(&self, id: ColumnId) -> Option<ColumnId> {
-        let by_id = |a: &(String, ColumnId)| a.1 == id;
-        self.find_by(&by_id)
-    }
-
-    fn find_by<F>(&self, predicate: &F) -> Option<ColumnId>
-    where
-        F: Fn(&(String, ColumnId)) -> bool,
-    {
-        let r = self.find_in_scope(predicate);
-        r.or_else(|| {
-            let mut parent_scope = &self.parent;
-            while let Some(p) = parent_scope {
-                let r = p.find_in_scope(predicate);
-                if r.is_some() {
-                    return r;
-                } else {
-                    parent_scope = &p.parent;
-                }
-            }
-            None
-        })
-    }
-
-    fn find_in_scope<F>(&self, predicate: &F) -> Option<ColumnId>
-    where
-        F: Fn(&(String, ColumnId)) -> bool,
-    {
-        if let Some(id) = self.relation.find_column(predicate) {
-            Some(id)
-        } else {
-            self.relations.iter().filter_map(|r| r.find_column(predicate)).find(|_| true)
-        }
     }
 }
 
@@ -946,6 +1026,12 @@ where
                 }
             }
             ScalarExpr::SubQuery(ref rel_node) => {
+                let output_columns = rel_node.props().logical().output_columns();
+                if output_columns.len() != 1 {
+                    let message = "Subquery must return exactly one column";
+                    return Err(OptimizerError::Internal(message.into()));
+                }
+
                 match rel_node.state() {
                     MemoExprState::Owned(_) => {
                         //FIXME: Add method to handle nested relational expressions to OperatorCallback?
@@ -1158,7 +1244,7 @@ impl AggregateBuilder<'_> {
                     projection_builder.add_expr(expr)?;
                     let expr = projection_builder.projection.projection[i].expr();
 
-                    AggregateBuilder::disallow_nested_subqueries(expr, "AGGREGATE", "aggregate function/expression")?;
+                    // AggregateBuilder::disallow_nested_subqueries(expr, "AGGREGATE", "aggregate function/expression")?;
 
                     let used_columns = match &expr {
                         ScalarExpr::Aggregate { .. } => vec![],
@@ -1194,7 +1280,7 @@ impl AggregateBuilder<'_> {
                 expr
             };
 
-            AggregateBuilder::disallow_nested_subqueries(&expr, "GROUP BY", "expressions")?;
+            // AggregateBuilder::disallow_nested_subqueries(&expr, "GROUP BY", "expressions")?;
 
             let expr = match expr {
                 ScalarExpr::Column(_) | ScalarExpr::ColumnName(_) => {
@@ -1208,6 +1294,7 @@ impl AggregateBuilder<'_> {
                     }
                     expr
                 }
+                ScalarExpr::SubQuery(_) => ScalarNode::from(expr),
                 ScalarExpr::Scalar(ScalarValue::Int32(_)) => unreachable!("GROUP BY: positional argument"),
                 ScalarExpr::Scalar(_) => {
                     // query error
@@ -1499,7 +1586,9 @@ mod test {
     use crate::memo::{format_memo, MemoBuilder};
     use crate::operators::properties::LogicalPropertiesBuilder;
     use crate::operators::scalar::{col, qualified_wildcard, scalar, wildcard};
+    use crate::operators::{Properties, RelationalProperties};
     use crate::optimizer::SetPropertiesCallback;
+    use crate::properties::logical::LogicalProperties;
     use crate::rules::testing::{OperatorFormatter, OperatorTreeFormatter, SubQueriesFormatter};
     use crate::statistics::NoStatisticsBuilder;
 
@@ -2020,12 +2109,8 @@ Memo:
         tester.build_operator(|builder| {
             let from_a = builder.get("A", vec!["a1", "a2"])?;
 
-            let sub_query = from_a
-                .new_query_builder()
-                .sub_query_builder()
-                .empty(true)?
-                .project(vec![scalar(true)])?
-                .to_sub_query()?;
+            let sub_query = from_a.new_query_builder().empty(true)?.project(vec![scalar(true)])?.build()?;
+            let sub_query = ScalarExpr::SubQuery(RelNode::from(sub_query));
 
             let filter = sub_query.eq(scalar(true));
             let select = from_a.select(Some(filter))?;
@@ -2059,20 +2144,6 @@ Memo:
     }
 
     #[test]
-    fn test_prohibit_nested_sub_queries_not_created_via_sub_query_builder() {
-        let mut tester = OperatorBuilderTester::new();
-
-        tester.build_operator(|builder| {
-            let from_b = builder.get("B", vec!["b1"])?;
-            let _sub_query = from_b.to_sub_query()?;
-
-            unreachable!()
-        });
-
-        tester.expect_error("call to OperatorBuilder::sub_query_builder()")
-    }
-
-    #[test]
     //FIXME: This restriction is unnecessary.
     fn test_prohibit_non_memoized_expressions_in_nested_sub_queries() {
         let mut tester = OperatorBuilderTester::new();
@@ -2080,8 +2151,15 @@ Memo:
         tester.build_operator(|builder| {
             let from_a = builder.get("A", vec!["a1", "a2"])?;
 
-            let sub_query = from_a.new_query_builder().empty(false)?.project(vec![scalar(true)])?.operator.unwrap();
-            let expr = ScalarExpr::SubQuery(RelNode::from(sub_query));
+            let Operator { state } =
+                from_a.new_query_builder().empty(false)?.project(vec![scalar(true)])?.operator.unwrap();
+
+            let subquery_props = Properties::Relational(RelationalProperties {
+                logical: LogicalProperties::new(vec![1], None),
+                required: PhysicalProperties::none(),
+            });
+            let subquery = Operator::new(state.expr().clone(), subquery_props);
+            let expr = ScalarExpr::SubQuery(RelNode::from(subquery));
 
             let filter = expr.eq(scalar(true));
 
@@ -2098,27 +2176,14 @@ Memo:
         let mut tester = OperatorBuilderTester::new();
 
         tester.build_operator(|builder| {
-            let from_b = builder.sub_query_builder().get("B", vec!["b1", "b2"])?;
-            let _sub_query = from_b.to_sub_query()?;
+            let from_b = builder.new_query_builder().get("B", vec!["b1", "b2"])?.build()?;
+            let subquery = ScalarExpr::SubQuery(RelNode::from(from_b));
+            let projection = builder.empty(true)?.project(vec![subquery])?;
 
             unreachable!()
         });
 
-        tester.expect_error("Sub query must return only one column")
-    }
-
-    #[test]
-    fn test_prohibit_sub_queries_with_zero_columns() {
-        let mut tester = OperatorBuilderTester::new();
-
-        tester.build_operator(|builder| {
-            let from_b = builder.sub_query_builder().empty(true)?.project(vec![])?;
-            let _sub_query = from_b.to_sub_query()?;
-
-            unreachable!()
-        });
-
-        tester.expect_error("Sub query must return only one column")
+        tester.expect_error("Subquery must return exactly one column")
     }
 
     #[test]
@@ -2167,7 +2232,8 @@ Memo:
 
             // SELECT a1, (SELECT b1 WHERE B b1=a1) FROM A
             let from_a = builder.get("A", vec!["a1", "a2", "a3"])?;
-            let b1 = from_a.sub_query_builder().get("B", vec!["b1"])?.select(Some(filter))?.to_sub_query()?;
+            let b1 = from_a.sub_query_builder().get("B", vec!["b1"])?.select(Some(filter))?.build()?;
+            let b1 = ScalarExpr::SubQuery(RelNode::from(b1));
             let project = from_a.project(vec![col("a1"), b1])?;
 
             project.build()
@@ -2319,12 +2385,15 @@ Memo:
             let err = result.expect_err("Expected an error");
             let actual_err_str = format!("{}", err);
 
-            assert!(actual_err_str.contains(msg), "Unexpected error message. Expected {}. Error: {}", msg, err);
+            assert!(actual_err_str.contains(msg), "Unexpected error message. Expected: {}.\nActual: {}", msg, err);
         }
 
         fn expect_expr(mut self, expected: &str) {
             let result = self.do_build_operator();
-            let expr = result.expect("Failed to build an operator");
+            let expr = match result {
+                Ok(expr) => expr,
+                Err(err) => panic!("Unexpected error: {}", err),
+            };
 
             let mut buf = String::new();
             buf.push('\n');
