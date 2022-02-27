@@ -2203,7 +2203,7 @@ Memo:
         });
         tester.expect_expr(
             r#"
-LogicalAggregate
+LogicalAggregate cols=[1, 4]
   aggr_exprs: [col:1, sum(col:1)]
   group_exprs: [col:1]
   input: LogicalGet A cols=[1, 2, 3]
@@ -2215,7 +2215,7 @@ Metadata:
   col:3 A.a3 Int32
   col:4 sum Int32, expr: sum(col:1)
 Memo:
-  04 LogicalAggregate input=00 aggr_exprs=[01, 02] group_exprs=[01] having=03
+  04 LogicalAggregate input=00 aggr_exprs=[01, 02] group_exprs=[01] having=03 cols=[1, 4]
   03 Expr col:1 > 100
   02 Expr sum(col:1)
   01 Expr col:1

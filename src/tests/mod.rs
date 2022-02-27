@@ -654,7 +654,7 @@ fn test_enforce_grouping() {
 
     tester.optimize(
         r#"
-03 HashAggregate [00 01 02]
+03 HashAggregate [00 01 02] cols=[3]
 02 Expr col:2
 01 Expr count(col:1)
 00 Scan A cols=[1, 2]

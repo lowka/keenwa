@@ -646,7 +646,7 @@ LogicalProjection cols=[1] exprs: [col:1]
         expect_formatted(
             &aggr,
             r#"
-LogicalAggregate
+LogicalAggregate cols=[3, 4]
   aggr_exprs: [10]
   group_exprs: [col:1]
   input: LogicalGet A cols=[1, 2]
