@@ -302,7 +302,7 @@ impl OperatorTreeFormatter {
             write_properties(&mut buf, operator.props(), "");
         }
 
-        buf.push_str(format_operator_tree(&operator).as_str());
+        buf.push_str(format_operator_tree(operator).as_str());
         buf.push('\n');
 
         // properties last
@@ -510,7 +510,7 @@ impl OperatorFormatter for SubQueriesFormatter {
             }
             // Alias(SubQuery(_), _) is not covered ?
             OperatorExpr::Scalar(ScalarExpr::SubQuery(query)) => {
-                buf.push_str(format!("Sub query from scalar operator:\n").as_str());
+                buf.push_str("Sub query from scalar operator:\n".to_string().as_str());
                 buf.push_str(format_operator_tree(query.mexpr()).as_str());
                 buf.push('\n');
             }

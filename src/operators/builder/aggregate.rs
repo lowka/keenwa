@@ -106,7 +106,7 @@ impl AggregateBuilder<'_> {
                         ScalarExpr::Alias(expr, _) if matches!(expr.as_ref(), ScalarExpr::Aggregate { .. }) => {
                             vec![]
                         }
-                        _ => collect_columns(&expr),
+                        _ => collect_columns(expr),
                     };
                     non_aggregate_columns.extend(used_columns);
                 }
@@ -153,11 +153,11 @@ impl AggregateBuilder<'_> {
                 ScalarExpr::Scalar(ScalarValue::Int32(_)) => unreachable!("GROUP BY: positional argument"),
                 ScalarExpr::Scalar(_) => {
                     // query error
-                    return Err(OptimizerError::Internal(format!("GROUP BY: not integer constant argument")));
+                    return Err(OptimizerError::Internal("GROUP BY: not integer constant argument".to_string()));
                 }
                 ScalarExpr::Aggregate { .. } => {
                     // query error
-                    return Err(OptimizerError::Internal(format!("GROUP BY: Aggregate functions are not allowed")));
+                    return Err(OptimizerError::Internal("GROUP BY: Aggregate functions are not allowed".to_string()));
                 }
                 _ => {
                     // query error
