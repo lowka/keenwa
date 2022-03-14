@@ -46,22 +46,23 @@
 /// ```
 #[macro_export]
 macro_rules! not_supported {
-        //unconditional error
-        ($message:tt) => {{
+    //unconditional error
+    ($message:tt) => {{
+        return core::result::Result::Err($crate::error::OptimizerError::Unsupported(format!("{}", $message)));
+    }};
+    ($condition:expr, $message:tt) => {{
+        if $condition {
             return core::result::Result::Err($crate::error::OptimizerError::Unsupported(format!("{}", $message)));
-        }};
-        ($condition:expr, $message:tt) => {{
-            if $condition {
-                return core::result::Result::Err($crate::error::OptimizerError::Unsupported(format!("{}", $message)));
-            }
-        }};
-        ($condition:expr, $message:tt, $($arg:expr),* $(,)?) => {{
-            if $condition {
-                let message = std::fmt::format(format_args!($message, $($arg),*));
-                return core::result::Result::Err($crate::error::OptimizerError::Unsupported(message));
-            }
-        }};
-    }
+        }
+    }};
+    ($condition:expr, $message:tt, $($arg:expr),* $(,)?) => {{
+        if $condition {
+            let message = std::fmt::format(format_args!($message, $($arg),*));
+            return core::result::Result::Err($crate::error::OptimizerError::Unsupported(message));
+        }
+    }};
+}
+
 /// This macro indicates that feature is not implemented.
 /// - Unconditional error:
 /// ```
@@ -106,23 +107,27 @@ macro_rules! not_supported {
 /// ```
 #[macro_export]
 macro_rules! not_implemented {
-        //unconditional error
-        ($message:tt) => {{
+    //unconditional error
+    ($message:tt) => {{
+        return core::result::Result::Err($crate::error::OptimizerError::NotImplemented(format!("{}", $message)));
+    }};
+    // condition -> message
+    ($cond:expr, $message:tt) => {{
+        if $cond {
             return core::result::Result::Err($crate::error::OptimizerError::NotImplemented(format!("{}", $message)));
-        }};
-        // condition -> message
-        ($cond:expr, $message:tt) => {{
-            if $cond {
-                return core::result::Result::Err($crate::error::OptimizerError::NotImplemented(format!("{}", $message)));
-            }
-        }};
-        ($condition:expr, $message:tt, $($arg:expr),+ $(,)?) => {{
-            if $condition {
-                let message = std::fmt::format(format_args!($message, $($arg),+));
-                return core::result::Result::Err($crate::error::OptimizerError::NotImplemented(message));
-            }
-        }};
-    }
+        }
+    }};
+    ($condition:expr, $message:tt, $($arg:expr),+ $(,)?) => {{
+        if $condition {
+            let message = std::fmt::format(format_args!($message, $($arg),+));
+            return core::result::Result::Err($crate::error::OptimizerError::NotImplemented(message));
+        }
+    }};
+}
+
+pub(crate) use not_implemented;
+pub(crate) use not_supported;
+
 #[allow(unused_braces)]
 #[allow(unreachable_code)]
 #[allow(unused)]
@@ -156,6 +161,3 @@ mod tests {
     error_macro_tests!(not_supported, not_supported_test_cases);
     error_macro_tests!(not_implemented, not_implemented_test_cases);
 }
-
-pub(crate) use not_implemented;
-pub(crate) use not_supported;
