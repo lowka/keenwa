@@ -125,8 +125,8 @@ macro_rules! not_implemented {
     }};
 }
 
-pub(crate) use not_implemented;
-pub(crate) use not_supported;
+pub use not_implemented;
+pub use not_supported;
 
 #[allow(unused_braces)]
 #[allow(unreachable_code)]
