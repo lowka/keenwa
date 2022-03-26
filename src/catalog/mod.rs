@@ -31,7 +31,7 @@ pub trait Catalog: Debug {
     fn get_index(&self, name: &str) -> Option<IndexRef>;
 
     /// Returns all indexes of of the given table in default schema.
-    fn get_indexes<'a>(&'a self, table: &str) -> Box<dyn Iterator<Item = IndexRef> + 'a>;
+    fn get_indexes(&self, table: &str) -> Vec<IndexRef>;
 }
 
 /// The name of default schema.
@@ -50,7 +50,7 @@ pub trait Schema: Debug {
     fn get_table_by_name(&self, name: &str) -> Option<TableRef>;
 
     /// Returns an iterator over indexes stored in this catalog.
-    fn get_indexes<'a>(&'a self, table: &str) -> Box<dyn Iterator<Item = IndexRef> + 'a>;
+    fn get_indexes(&self, table: &str) -> Vec<IndexRef>;
 
     /// Returns an index with the given name.
     fn get_index_by_name(&self, name: &str) -> Option<IndexRef>;

@@ -100,15 +100,12 @@ impl Catalog for MutableCatalog {
         schemas.get(&ObjectId::from(DEFAULT_SCHEMA)).map(|s| s.get_index_by_name(name)).flatten()
     }
 
-    fn get_indexes<'a>(&'a self, table: &str) -> Box<dyn Iterator<Item = IndexRef> + 'a> {
+    fn get_indexes(&self, table: &str) -> Vec<IndexRef> {
         let schemas = self.schemas.read().unwrap();
         let schema = schemas.get(&ObjectId::from(DEFAULT_SCHEMA));
         match schema {
-            Some(schema) => {
-                let indexes = schema.get_indexes(table).collect::<Vec<IndexRef>>();
-                Box::new(indexes.into_iter())
-            }
-            None => Box::new(std::iter::empty()),
+            Some(schema) => schema.get_indexes(table),
+            None => Vec::new(),
         }
     }
 }
@@ -211,28 +208,27 @@ impl Schema for MutableSchema {
     }
 
     fn get_tables<'a>(&'a self) -> Box<dyn Iterator<Item = TableRef> + 'a> {
-        let inner = self.inner.write().unwrap();
+        let inner = self.inner.read().unwrap();
         let tables = inner.tables.values().cloned().collect::<Vec<TableRef>>();
         Box::new(tables.into_iter())
     }
 
     fn get_table_by_name(&self, name: &str) -> Option<TableRef> {
-        let inner = self.inner.write().unwrap();
+        let inner = self.inner.read().unwrap();
         inner.tables.get(&ObjectId::from(name)).cloned()
     }
 
-    fn get_indexes<'a>(&'a self, table: &str) -> Box<dyn Iterator<Item = IndexRef> + 'a> {
-        let inner = self.inner.write().unwrap();
-        let indexes = inner
+    fn get_indexes(&self, table: &str) -> Vec<IndexRef> {
+        let inner = self.inner.read().unwrap();
+        inner
             .table_indexes
             .get(&ObjectId::from(table))
             .cloned()
-            .unwrap_or_else(|| Vec::with_capacity(0));
-        Box::new(indexes.into_iter())
+            .unwrap_or_else(|| Vec::with_capacity(0))
     }
 
     fn get_index_by_name(&self, name: &str) -> Option<IndexRef> {
-        let inner = self.inner.write().unwrap();
+        let inner = self.inner.read().unwrap();
         inner.indexes.get(&ObjectId::from(name)).cloned()
     }
 }
@@ -323,10 +319,14 @@ mod test {
         let schema: &MutableSchema = schema.as_any().downcast_ref::<MutableSchema>().unwrap();
         schema.remove_index("A_idx");
 
-        assert_eq!(schema.get_indexes("A").count(), 0, "index has not been removed");
-        assert_eq!(schema.get_indexes("B").count(), 1, "indexes from another table have been removed as well");
+        assert_eq!(schema.get_indexes("A").iter().count(), 0, "index has not been removed");
+        assert_eq!(schema.get_indexes("B").iter().count(), 1, "indexes from another table have been removed as well");
 
         schema.remove_table("B");
-        assert_eq!(schema.get_indexes("B").count(), 0, "Table B has been removed but indexes are still available");
+        assert_eq!(
+            schema.get_indexes("B").iter().count(),
+            0,
+            "Table B has been removed but indexes are still available"
+        );
     }
 }

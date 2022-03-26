@@ -16,7 +16,7 @@ impl IndexOnlyScanRule {
     }
 
     fn find_index(&self, ctx: &RuleContext, source: &str, columns: &[ColumnId]) -> Option<IndexRef> {
-        for index in self.catalog.get_indexes(source).filter(|i| i.table() == source) {
+        for index in self.catalog.get_indexes(source).iter().filter(|i| i.table() == source) {
             if index.columns().len() > columns.len() {
                 continue;
             }
@@ -28,7 +28,7 @@ impl IndexOnlyScanRule {
                     continue;
                 }
             }
-            return Some(index);
+            return Some(index.clone());
         }
         None
     }
