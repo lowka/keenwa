@@ -42,7 +42,7 @@ where
     }
 
     /// Optimizes the given operator tree.
-    pub fn optimize(&self, expr: Operator, memo: &mut ExprMemo) -> Result<Operator, String> {
+    pub fn optimize(&self, expr: Operator, memo: &mut ExprMemo) -> Result<Operator, OptimizerError> {
         let mut runtime_state = RuntimeState::new();
 
         log::debug!("Optimizing expression: {:?}", expr);
@@ -121,7 +121,7 @@ where
         runtime_state: RuntimeState,
         memo: &ExprMemo,
         ctx: &OptimizationContext,
-    ) -> Result<Operator, String> {
+    ) -> Result<Operator, OptimizerError> {
         let mut stats = runtime_state.stats;
         let state = runtime_state.state;
 
@@ -1096,7 +1096,7 @@ fn copy_out_best_expr<'o, T>(
     state: &'o State,
     memo: &'o ExprMemo,
     ctx: &'o OptimizationContext,
-) -> Result<Operator, String>
+) -> Result<Operator, OptimizerError>
 where
     T: ResultCallback,
 {
@@ -1106,7 +1106,9 @@ where
             let best_expr_ref = match best_expr.expr.expr() {
                 OperatorExpr::Relational(rel_expr) => match rel_expr {
                     RelExpr::Logical(expr) => {
-                        Err(format!("Invalid best expression. Expected a physical operator but got: {:?}", expr))
+                        let message =
+                            format!("Invalid best expression. Expected a physical operator but got: {:?}", expr);
+                        Err(OptimizerError::Internal(message))
                     }
                     RelExpr::Physical(expr) => Ok(BestExprRef::Relational(expr)),
                 },
@@ -1139,6 +1141,9 @@ where
             let result = Operator::from(new_expr);
             Ok(result)
         }
-        None => Err(format!("No best expression for ctx: {}", ctx)),
+        None => {
+            let message = format!("No best expression for ctx: {}", ctx);
+            Err(OptimizerError::Internal(message))
+        }
     }
 }
