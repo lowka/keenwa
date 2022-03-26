@@ -18,7 +18,7 @@ use crate::operators::scalar::ScalarExpr;
 use crate::operators::{ExprMemo, Operator, OperatorExpr, OperatorMetadata, Properties, RelationalProperties};
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
-use crate::rules::{Rule, RuleContext, RuleId, RuleIterator, RuleResult, RuleSet};
+use crate::rules::{EvaluationResponse, Rule, RuleContext, RuleId, RuleIterator, RuleResult, RuleSet};
 
 /// Expects that given expression does not match the given rule.
 ///
@@ -183,7 +183,7 @@ where
         &self,
         expr: &PhysicalExpr,
         required_properties: &PhysicalProperties,
-    ) -> Result<(bool, bool), OptimizerError> {
+    ) -> Result<EvaluationResponse, OptimizerError> {
         self.rule_set.evaluate_properties(expr, required_properties)
     }
 
