@@ -77,12 +77,9 @@ impl Catalog for MutableCatalog {
         self
     }
 
-    fn get_schemas<'a>(&'a self) -> Box<dyn Iterator<Item = SchemaRef> + 'a> {
-        let schemas = {
-            let schemas = self.schemas.read().unwrap();
-            schemas.values().cloned().collect::<Vec<SchemaRef>>()
-        };
-        Box::new(schemas.into_iter())
+    fn get_schemas(&self) -> Vec<SchemaRef> {
+        let schemas = self.schemas.read().unwrap();
+        schemas.values().cloned().collect::<Vec<SchemaRef>>()
     }
 
     fn get_schema_by_name(&self, name: &str) -> Option<SchemaRef> {
@@ -207,10 +204,9 @@ impl Schema for MutableSchema {
         self
     }
 
-    fn get_tables<'a>(&'a self) -> Box<dyn Iterator<Item = TableRef> + 'a> {
+    fn get_tables(&self) -> Vec<TableRef> {
         let inner = self.inner.read().unwrap();
-        let tables = inner.tables.values().cloned().collect::<Vec<TableRef>>();
-        Box::new(tables.into_iter())
+        inner.tables.values().cloned().collect::<Vec<TableRef>>()
     }
 
     fn get_table_by_name(&self, name: &str) -> Option<TableRef> {
@@ -293,7 +289,7 @@ mod test {
 
         let schema: &MutableSchema = schema.as_any().downcast_ref::<MutableSchema>().unwrap();
         schema.remove_table("A");
-        assert_eq!(schema.get_tables().count(), 0, "table has not been removed")
+        assert_eq!(schema.get_tables().iter().count(), 0, "table has not been removed")
     }
 
     #[test]
