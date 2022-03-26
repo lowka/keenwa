@@ -16,7 +16,7 @@ use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::expr_with_new_inputs;
 use crate::operators::{ExprMemo, ExprRef, Operator, OperatorExpr, OperatorMetadata, Properties};
 use crate::properties::physical::PhysicalProperties;
-use crate::rules::{RuleContext, RuleId, RuleMatch, RuleResult, RuleSet, RuleType};
+use crate::rules::{EvaluationResponse, RuleContext, RuleId, RuleMatch, RuleResult, RuleSet, RuleType};
 use crate::util::{BestExprContext, BestExprRef, ResultCallback};
 
 /// Cost-based optimizer.
@@ -617,7 +617,10 @@ where
 {
     let physical_expr = expr.expr().relational().physical();
     let required_properties = physical_expr.build_required_properties();
-    let (provides_property, retains_property) = rule_set
+    let EvaluationResponse {
+        provides_property,
+        retains_property,
+    } = rule_set
         .evaluate_properties(physical_expr, &ctx.required_properties)
         .expect("Invalid expr or required physical properties");
 

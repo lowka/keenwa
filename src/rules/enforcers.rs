@@ -5,16 +5,20 @@ use crate::operators::relational::physical::{IndexScan, MergeSortJoin, PhysicalE
 use crate::operators::relational::RelNode;
 use crate::properties::physical::PhysicalProperties;
 use crate::properties::OrderingChoice;
+use crate::rules::EvaluationResponse;
 
+/// Enforcer-related methods of the [RuleSet](super::RuleSet) trait.
 pub trait EnforcerRules {
+    /// See [RuleSet::evaluate_properties](super::RuleSet::evaluate_properties).
     fn evaluate_properties(
         &self,
         expr: &PhysicalExpr,
         properties: &PhysicalProperties,
-    ) -> Result<(bool, bool), OptimizerError> {
+    ) -> Result<EvaluationResponse, OptimizerError> {
         evaluate_properties(expr, properties)
     }
 
+    /// See [RuleSet::can_explore_with_enforcer](super::RuleSet::can_explore_with_enforcer).
     fn can_explore_with_enforcer(&self, expr: &LogicalExpr, properties: &PhysicalProperties) -> bool {
         if !properties.is_empty() {
             matches!(expr, LogicalExpr::Select { .. } | LogicalExpr::Projection { .. })
@@ -23,6 +27,7 @@ pub trait EnforcerRules {
         }
     }
 
+    /// See [RuleSet::create_enforcer](super::RuleSet::create_enforcer).
     fn create_enforcer(
         &self,
         properties: &PhysicalProperties,
@@ -30,6 +35,8 @@ pub trait EnforcerRules {
     ) -> Result<(PhysicalExpr, PhysicalProperties), OptimizerError>;
 }
 
+/// Default implementation of [EnforcerRules].
+/// Provides an enforcer of a sorted physical property.
 #[derive(Debug)]
 pub struct DefaultEnforcers;
 
@@ -62,14 +69,17 @@ fn create_enforcer(
 fn evaluate_properties(
     expr: &PhysicalExpr,
     required_properties: &PhysicalProperties,
-) -> Result<(bool, bool), OptimizerError> {
+) -> Result<EvaluationResponse, OptimizerError> {
     let provides_property = expr_provides_property(expr, required_properties)?;
     let retains_property = if !provides_property {
         expr_retains_property(expr, required_properties)?
     } else {
         false
     };
-    Ok((provides_property, retains_property))
+    Ok(EvaluationResponse {
+        provides_property,
+        retains_property,
+    })
 }
 
 pub fn expr_retains_property(expr: &PhysicalExpr, required: &PhysicalProperties) -> Result<bool, OptimizerError> {

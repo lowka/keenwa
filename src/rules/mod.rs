@@ -125,12 +125,11 @@ pub trait RuleSet {
     ) -> Result<Option<RuleResult>, OptimizerError>;
 
     /// Checks whether the given physical expression satisfies the required physical properties.
-    //FIXME: return a struct - rename method.
     fn evaluate_properties(
         &self,
         expr: &PhysicalExpr,
         required_properties: &PhysicalProperties,
-    ) -> Result<(bool, bool), OptimizerError>;
+    ) -> Result<EvaluationResponse, OptimizerError>;
 
     /// Creates an enforcer operator for the specified physical properties.
     /// If enforcer can not be created this method must return an error.
@@ -205,6 +204,16 @@ impl<'a> Debug for RuleIterator<'a> {
     }
 }
 
+/// Result of a call to [RuleSet::evaluate_properties].
+#[derive(Debug)]
+//TODO: Find a better name.
+pub struct EvaluationResponse {
+    /// If `true` a physical expression provides physical properties.
+    pub provides_property: bool,
+    /// If `true` a physical expression retains physical properties.
+    pub retains_property: bool,
+}
+
 fn rule_debug_format(rule: &dyn Rule, f: &mut Formatter<'_>) -> std::fmt::Result {
     f.debug_struct("Rule")
         .field("name", &rule.name())
@@ -255,10 +264,13 @@ impl RuleSet for StaticRuleSet {
         &self,
         expr: &PhysicalExpr,
         required_properties: &PhysicalProperties,
-    ) -> Result<(bool, bool), OptimizerError> {
+    ) -> Result<EvaluationResponse, OptimizerError> {
         if required_properties.is_empty() {
-            // provides_property, retains_property
-            Ok((true, false))
+            let response = EvaluationResponse {
+                provides_property: true,
+                retains_property: false,
+            };
+            Ok(response)
         } else {
             self.enforcers.evaluate_properties(expr, required_properties)
         }
