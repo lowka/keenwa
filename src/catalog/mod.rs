@@ -19,7 +19,7 @@ pub trait Catalog: Debug {
     fn as_any(&self) -> &dyn Any;
 
     /// Returns an iterator over schemas available in the catalog.
-    fn get_schemas<'a>(&'a self) -> Box<dyn Iterator<Item = SchemaRef> + 'a>;
+    fn get_schemas(&self) -> Vec<SchemaRef>;
 
     /// Returns a schema with the given name.
     fn get_schema_by_name(&self, name: &str) -> Option<SchemaRef>;
@@ -44,7 +44,7 @@ pub trait Schema: Debug {
     fn as_any(&self) -> &dyn Any;
 
     /// Returns an iterator over tables registered in this schema.
-    fn get_tables<'a>(&'a self) -> Box<dyn Iterator<Item = TableRef> + 'a>;
+    fn get_tables(&self) -> Vec<TableRef>;
 
     /// Returns a table with the given name.
     fn get_table_by_name(&self, name: &str) -> Option<TableRef>;
