@@ -5,8 +5,7 @@ use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 
-use triomphe::Arc;
-
+use crate::memo::arc::MemoArc;
 use crate::memo::unsafe_impl::arena::{Arena, ElementIndex, ElementRef, ElementsIter};
 use crate::memo::{
     create_group_properties, make_digest, CopyInExprs, Expr, ExprContext, MemoExpr, MemoGroupCallbackRef,
@@ -158,7 +157,7 @@ where
         let state = MemoExprState::Memo(MemoizedExpr {
             // We can store ExprPtr in the owned state and ExprGroupPtr in the memo state
             // because there is no direct way to retrieve this expression.
-            expr: ExprPtr::Owned(Arc::new(expr)),
+            expr: ExprPtr::Owned(MemoArc::new(expr)),
             group: ExprGroupPtr::new(group_id, props_ref),
         });
         let expr = E::from_state(state);
@@ -370,8 +369,8 @@ where
     /// Creates an owned state with the given expression and properties.
     pub fn new(expr: E::Expr, props: E::Props) -> Self {
         MemoExprState::Owned(OwnedExpr {
-            expr: Arc::new(expr),
-            props: Arc::new(props),
+            expr: MemoArc::new(expr),
+            props: MemoArc::new(props),
         })
     }
 
@@ -699,7 +698,7 @@ where
 {
     // Used for new expressions and for expressions is stored in a memo (see Memo::add_expr).
     // In later case such ExprPtr should not be accessible to via public API.
-    Owned(Arc<E::Expr>),
+    Owned(MemoArc<E::Expr>),
     Memo(MemoExprRef<E>),
 }
 

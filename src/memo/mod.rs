@@ -4,8 +4,8 @@ use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use itertools::Itertools;
-use triomphe::Arc;
 
+use crate::memo::arc::MemoArc;
 pub use memo_impl::*;
 
 // DEFAULT MEMO
@@ -82,6 +82,7 @@ mod memo_impl {
 // DOCS ONLY ENDS
 
 // testing
+pub mod arc;
 #[cfg(test)]
 pub mod testing;
 #[cfg(test)]
@@ -495,8 +496,8 @@ pub struct OwnedExpr<E>
 where
     E: MemoExpr,
 {
-    pub(crate) expr: Arc<E::Expr>,
-    pub(crate) props: Arc<E::Props>,
+    pub(crate) expr: MemoArc<E::Expr>,
+    pub(crate) props: MemoArc<E::Props>,
 }
 
 impl<E> OwnedExpr<E>
@@ -507,7 +508,7 @@ where
     pub fn with_props(&self, props: E::Props) -> Self {
         OwnedExpr {
             expr: self.expr.clone(),
-            props: Arc::new(props),
+            props: MemoArc::new(props),
         }
     }
 }

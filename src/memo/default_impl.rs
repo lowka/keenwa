@@ -5,8 +5,7 @@ use std::collections::HashMap;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 
-use triomphe::Arc;
-
+use crate::memo::arc::MemoArc;
 use crate::memo::{
     create_group_properties, make_digest, CopyInExprs, Expr, ExprContext, MemoExpr, MemoGroupCallbackRef,
     NewChildExprs, OwnedExpr, Props, StringMemoFormatter,
@@ -18,7 +17,7 @@ pub struct MemoImpl<E, T>
 where
     E: MemoExpr,
 {
-    groups: Vec<(Vec<ExprId>, Arc<MemoGroupData<E>>)>,
+    groups: Vec<(Vec<ExprId>, MemoArc<MemoGroupData<E>>)>,
     exprs: Vec<E>,
     expr_cache: HashMap<String, ExprId>,
     expr_to_group: HashMap<ExprId, GroupId>,
@@ -86,18 +85,18 @@ where
         &self.expr_to_group
     }
 
-    fn add_group(&mut self, expr_id: ExprId, props: E::Props) -> Arc<MemoGroupData<E>> {
+    fn add_group(&mut self, expr_id: ExprId, props: E::Props) -> MemoArc<MemoGroupData<E>> {
         let group_id = GroupId(self.groups.len());
         let group_data = MemoGroupData { group_id, props };
-        let group_data = Arc::new(group_data);
+        let group_data = MemoArc::new(group_data);
         self.groups.push((vec![expr_id], group_data.clone()));
         group_data
     }
 
-    fn add_expr(&mut self, expr_id: ExprId, expr: E::Expr, group_data: Arc<MemoGroupData<E>>) -> E {
+    fn add_expr(&mut self, expr_id: ExprId, expr: E::Expr, group_data: MemoArc<MemoGroupData<E>>) -> E {
         let group_id = group_data.group_id;
         let expr_data = MemoExprData { expr_id, expr };
-        let expr_data = Arc::new(expr_data);
+        let expr_data = MemoArc::new(expr_data);
         let memo_state = MemoizedExpr {
             expr: expr_data,
             group: group_data,
@@ -168,7 +167,7 @@ where
 {
     group_id: GroupId,
     memo: &'a MemoImpl<E, T>,
-    data: &'a Arc<MemoGroupData<E>>,
+    data: &'a MemoArc<MemoGroupData<E>>,
     exprs: &'a [ExprId],
     // the first expression in this group
     expr: MemoExprRef<E>,
@@ -251,7 +250,7 @@ where
 {
     group_id: GroupId,
     memo: &'a MemoImpl<E, T>,
-    data: &'a Arc<MemoGroupData<E>>,
+    data: &'a MemoArc<MemoGroupData<E>>,
     exprs: &'a [ExprId],
     position: usize,
 }
@@ -460,8 +459,8 @@ where
     /// Creates an owned state with the given expression and properties.
     pub fn new(expr: E::Expr, props: E::Props) -> Self {
         MemoExprState::Owned(OwnedExpr {
-            expr: Arc::new(expr),
-            props: Arc::new(props),
+            expr: MemoArc::new(expr),
+            props: MemoArc::new(props),
         })
     }
 
@@ -586,8 +585,8 @@ pub struct MemoizedExpr<E>
 where
     E: MemoExpr,
 {
-    expr: Arc<MemoExprData<E>>,
-    group: Arc<MemoGroupData<E>>,
+    expr: MemoArc<MemoExprData<E>>,
+    group: MemoArc<MemoGroupData<E>>,
 }
 
 impl<E> MemoizedExpr<E>
