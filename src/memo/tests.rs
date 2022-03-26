@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod test {
+    use crate::error::OptimizerError;
     use std::cell::RefCell;
     use std::collections::HashMap;
     use std::fmt::{Display, Formatter};
@@ -884,13 +885,18 @@ mod test {
             type Props = TestProps;
             type Metadata = ();
 
-            fn new_group(&self, expr: &Self::Expr, props: &Self::Props, _metadata: &Self::Metadata) -> Self::Props {
+            fn new_group(
+                &self,
+                expr: &Self::Expr,
+                props: &Self::Props,
+                _metadata: &Self::Metadata,
+            ) -> Result<Self::Props, OptimizerError> {
                 let mut added = self.added.borrow_mut();
                 let mut buf = String::new();
                 let mut fmt = StringMemoFormatter::new(&mut buf);
                 TestOperator::format_expr(expr, props, &mut fmt);
                 added.push(buf);
-                props.clone()
+                Ok(props.clone())
             }
         }
 

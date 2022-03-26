@@ -68,8 +68,8 @@ impl RuleTester {
                 _expr: &Self::Expr,
                 provided_props: &Self::Props,
                 _metadata: &Self::Metadata,
-            ) -> Self::Props {
-                provided_props.clone()
+            ) -> Result<Self::Props, OptimizerError> {
+                Ok(provided_props.clone())
             }
         }
 
