@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use itertools::Itertools;
 
+use crate::error::OptimizerError;
 use crate::memo::arc::MemoArc;
 pub use memo_impl::*;
 
@@ -352,7 +353,17 @@ pub trait MemoGroupCallback {
 
     /// Called when a new memo group is added to a memo and returns properties to be shared among all expressions in this group.
     /// Where `expr` is the expression that created the memo group and `props` are properties associated with that expression.
-    fn new_group(&self, expr: &Self::Expr, props: &Self::Props, metadata: &Self::Metadata) -> Self::Props;
+    ///
+    /// #Note:
+    ///
+    /// If a call returns an error than a caller (a memo) unwraps it because the optimization process
+    /// can not continue when a memo group has no logical properties.
+    fn new_group(
+        &self,
+        expr: &Self::Expr,
+        props: &Self::Props,
+        metadata: &Self::Metadata,
+    ) -> Result<Self::Props, OptimizerError>;
 }
 
 // It should be possible to use the same MemoExprState for both safe_memo and unsafe_memo in the future

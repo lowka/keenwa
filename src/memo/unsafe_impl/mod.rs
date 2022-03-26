@@ -828,7 +828,9 @@ where
         } else {
             let group_id = GroupId(copy_in_exprs.memo.groups.next_id());
             let props = if let Some(callback) = copy_in_exprs.memo.callback.as_ref() {
-                callback.new_group(&expr, &props, &copy_in_exprs.memo.metadata)
+                callback
+                    .new_group(&expr, &props, &copy_in_exprs.memo.metadata)
+                    .expect("new group callback has returned an error")
             } else {
                 props
             };

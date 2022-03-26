@@ -663,7 +663,9 @@ where
             copy_in_exprs.memo.add_expr(expr_id, expr, expr_group_data)
         } else {
             let props = if let Some(callback) = &copy_in_exprs.memo.callback {
-                callback.new_group(&expr, &props, &copy_in_exprs.memo.metadata)
+                callback
+                    .new_group(&expr, &props, &copy_in_exprs.memo.metadata)
+                    .expect("new group callback has returned an error")
             } else {
                 props
             };
