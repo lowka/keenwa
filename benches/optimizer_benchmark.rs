@@ -11,7 +11,7 @@ use keenwa::datatypes::DataType;
 use keenwa::error::OptimizerError;
 use keenwa::memo::MemoBuilder;
 use keenwa::meta::MutableMetadata;
-use keenwa::operators::builder::{MemoizeOperatorCallback, OperatorBuilder, OrderingOption};
+use keenwa::operators::builder::{MemoizeOperators, OperatorBuilder, OrderingOption};
 use keenwa::operators::properties::LogicalPropertiesBuilder;
 use keenwa::operators::relational::join::JoinType;
 use keenwa::operators::scalar::{col, scalar};
@@ -74,15 +74,12 @@ fn memo_bench(c: &mut Criterion) {
                     let memo = MemoBuilder::new(metadata.clone())
                         .set_callback(Rc::new(SetPropertiesCallback::new(properties_builder.clone())))
                         .build();
-                    let memoization = Rc::new(MemoizeOperatorCallback::new(memo));
-                    let operator_builder = OperatorBuilder::new(memoization.clone(), catalog.clone(), metadata);
+                    let mut memoization = MemoizeOperators::new(memo);
+                    let operator_builder = OperatorBuilder::new(memoization.take_callback(), catalog.clone(), metadata);
 
                     let query = f(operator_builder, selectivity_provider.as_ref()).expect("Failed to build a query");
 
-                    // We can retrieve the underlying memoization handler because
-                    // the only user of Rc (an operator_builder) has been consumed.
-                    let memoization = Rc::try_unwrap(memoization).unwrap();
-                    let mut memo = memoization.into_inner();
+                    let mut memo = memoization.into_memo();
                     // benchmark should not include time spend in memoization.
                     let query = memo.insert_group(query);
 

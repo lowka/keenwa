@@ -11,7 +11,7 @@ use crate::datatypes::DataType;
 use crate::error::OptimizerError;
 use crate::memo::{MemoBuilder, MemoExpr, MemoExprFormatter, StringMemoFormatter};
 use crate::meta::MutableMetadata;
-use crate::operators::builder::{MemoizeOperatorCallback, OperatorBuilder};
+use crate::operators::builder::{MemoizeOperators, OperatorBuilder};
 use crate::operators::properties::LogicalPropertiesBuilder;
 use crate::operators::Operator;
 use crate::optimizer::{Optimizer, SetPropertiesCallback};
@@ -155,14 +155,14 @@ impl OptimizerTester {
         let metadata = Rc::new(MutableMetadata::new());
         let memo = MemoBuilder::new(metadata.clone()).set_callback(memo_callback).build();
 
-        let memoization = Rc::new(MemoizeOperatorCallback::new(memo));
+        let mut memoization = MemoizeOperators::new(memo);
         let mutable_catalog = self.catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();
         tables.register_statistics(mutable_catalog, self.row_count_per_table.clone());
 
         (self.update_catalog)(mutable_catalog);
         (self.update_selectivity)(self.selectivity_provider.as_ref());
 
-        let builder = OperatorBuilder::new(memoization.clone(), self.catalog.clone(), metadata);
+        let builder = OperatorBuilder::new(memoization.take_callback(), self.catalog.clone(), metadata);
         let rs = (self.operator)(builder);
         let operator = rs.unwrap();
 
@@ -184,8 +184,7 @@ impl OptimizerTester {
 
         let optimizer = Optimizer::new(Rc::new(rules), Rc::new(cost_estimator), Rc::new(result_callback));
 
-        let memoization = Rc::try_unwrap(memoization).expect("More than one reference exists");
-        let mut memo = memoization.into_inner();
+        let mut memo = memoization.into_memo();
 
         let _opt_expr = optimizer.optimize(operator, &mut memo).expect("Failed to optimize an operator tree");
         let expected_lines: Vec<String> = expected_plan.split('\n').map(|l| l.to_string()).collect();

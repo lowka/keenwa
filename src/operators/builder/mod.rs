@@ -883,28 +883,79 @@ impl OperatorCallback for NoOpOperatorCallback {
     }
 }
 
-/// A callback that copies operators into a memo.
+/// A helper that to populate a memo data structure.
+///
+/// Usage:
+/// ```text
+///   let memo = ...;
+///   let memoization = MemoizeOperators::new(memo);
+///   let operator_callback = memoization.get_callback();
+///
+///   let operator_builder = OperatorBuilder::new(operator_callback,
+///     // provide other dependencies
+///     ...
+///   );
+///
+///   // .. add some nodes to the operator tree.
+///   
+///   // operator_builder consumes its reference the `operator_callback`.
+///   let operator = operator_builder.build()?;
+///
+///   // consume the helper and return the underlying memo.
+///   let memo = memoization.into_memo();
+///
+///   // We can now use both the operator and the memo.
+/// ```
 #[derive(Debug)]
-pub struct MemoizeOperatorCallback {
+pub struct MemoizeOperators {
+    inner: Rc<OperatorCallbackImpl>,
+    returned_callback: bool,
+}
+
+#[derive(Debug)]
+struct OperatorCallbackImpl {
     // RefCell is necessary because the memo is shared by multiple operator builders.
     memo: RefCell<ExprMemo>,
 }
 
-impl MemoizeOperatorCallback {
-    /// Creates a callback that uses the given memo.
+impl MemoizeOperators {
+    /// Creates a helper that uses the given memo.
     pub fn new(memo: ExprMemo) -> Self {
-        MemoizeOperatorCallback {
+        let callback = OperatorCallbackImpl {
             memo: RefCell::new(memo),
+        };
+        MemoizeOperators {
+            inner: Rc::new(callback),
+            returned_callback: false,
         }
     }
 
-    /// Consumes this callback and returns the underlying memo.
-    pub fn into_inner(self) -> ExprMemo {
-        self.memo.into_inner()
+    /// Returns a callback that will be called when a new operator is added to an operator tree.
+    /// All operators are copied to a [memo](crate::memo::Memo).
+    ///
+    /// # Panics
+    ///
+    /// Only a single callback can exist at a time. This method panics if it is called more than once.
+    pub fn take_callback(&mut self) -> Rc<dyn OperatorCallback> {
+        assert!(!self.returned_callback, "callback has already been taken");
+
+        self.returned_callback = true;
+        self.inner.clone()
+    }
+
+    /// Consumes this helper and returns the underlying memo.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if other references to a callback returned by [take_callback](Self::take_callback) still exists.
+    pub fn into_memo(self) -> ExprMemo {
+        let inner =
+            Rc::try_unwrap(self.inner).expect("References to the callback still exist outside of MemoizeOperators");
+        inner.memo.into_inner()
     }
 }
 
-impl OperatorCallback for MemoizeOperatorCallback {
+impl OperatorCallback for OperatorCallbackImpl {
     fn new_rel_expr(&self, expr: Operator) -> RelNode {
         assert!(expr.expr().is_relational(), "Expected a relational expression but got {:?}", expr);
         let mut memo = self.memo.borrow_mut();
@@ -1690,7 +1741,7 @@ Memo:
         operator: Box<dyn Fn(OperatorBuilder) -> Result<Operator, OptimizerError>>,
         update_catalog: Box<dyn Fn(&MutableCatalog)>,
         metadata: Rc<MutableMetadata>,
-        memoization: Rc<MemoizeOperatorCallback>,
+        memoization: MemoizeOperators,
     }
 
     impl OperatorBuilderTester {
@@ -1700,7 +1751,7 @@ Memo:
             let memo = MemoBuilder::new(metadata.clone())
                 .set_callback(Rc::new(SetPropertiesCallback::new(properties_builder)))
                 .build();
-            let memoization = Rc::new(MemoizeOperatorCallback::new(memo));
+            let memoization = MemoizeOperators::new(memo);
 
             OperatorBuilderTester {
                 operator: Box::new(|_| panic!("Operator has not been specified")),
@@ -1742,9 +1793,7 @@ Memo:
             let mut buf = String::new();
             buf.push('\n');
 
-            let memoization = Rc::try_unwrap(self.memoization).unwrap();
-            let memo = memoization.into_inner();
-
+            let memo = self.memoization.into_memo();
             let metadata_formatter = AppendMetadata {
                 metadata: self.metadata.clone(),
             };
@@ -1839,7 +1888,7 @@ Memo:
 
             (self.update_catalog)(catalog.as_ref());
 
-            let builder = OperatorBuilder::new(self.memoization.clone(), catalog, self.metadata.clone());
+            let builder = OperatorBuilder::new(self.memoization.take_callback(), catalog, self.metadata.clone());
             (self.operator)(builder)
         }
     }
