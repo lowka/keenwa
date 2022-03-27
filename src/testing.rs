@@ -14,13 +14,12 @@ use crate::meta::MutableMetadata;
 use crate::operators::builder::{MemoizeOperators, OperatorBuilder};
 use crate::operators::properties::LogicalPropertiesBuilder;
 use crate::operators::{Operator, OperatorMemoBuilder};
-use crate::optimizer::Optimizer;
+use crate::optimizer::{BestExprContext, BestExprRef, Optimizer, ResultCallback};
 use crate::rules::implementation::{EmptyRule, GetToScanRule, ProjectionRule, SelectRule};
 use crate::rules::testing::TestRuleSet;
 use crate::rules::Rule;
 use crate::rules::StaticRuleSet;
 use crate::statistics::simple::{PrecomputedSelectivityStatistics, SimpleCatalogStatisticsBuilder};
-use crate::util::{BestExprContext, BestExprRef, ResultCallback};
 
 static INIT_LOG: Once = Once::new();
 
@@ -29,9 +28,6 @@ static INIT_LOG: Once = Once::new();
 /// [optimizer]: crate::optimizer::Optimizer
 pub struct OptimizerTester {
     catalog: CatalogRef,
-    // selectivity_provider: Rc<PrecomputedSelectivityStatistics>,
-    // properties_builder:
-    //     Rc<LogicalPropertiesBuilder<SimpleCatalogStatisticsBuilder<Rc<PrecomputedSelectivityStatistics>>>>,
     rules: Box<dyn Fn(CatalogRef) -> Vec<Box<dyn Rule>>>,
     rules_filter: Box<dyn Fn(&Box<dyn Rule>) -> bool>,
     shuffle_rules: bool,
@@ -50,8 +46,6 @@ impl OptimizerTester {
 
         OptimizerTester {
             catalog,
-            // selectivity_provider,
-            // properties_builder,
             rules: Box::new(|_| Vec::new()),
             rules_filter: Box::new(|_r| true),
             shuffle_rules: true,

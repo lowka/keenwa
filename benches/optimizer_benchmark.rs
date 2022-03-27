@@ -14,13 +14,12 @@ use keenwa::operators::builder::{MemoizeOperators, OperatorBuilder, OrderingOpti
 use keenwa::operators::relational::join::JoinType;
 use keenwa::operators::scalar::{col, scalar};
 use keenwa::operators::*;
-use keenwa::optimizer::Optimizer;
+use keenwa::optimizer::{NoOpResultCallback, Optimizer};
 use keenwa::rules::implementation::*;
 use keenwa::rules::transformation::*;
 use keenwa::rules::StaticRuleSet;
 use keenwa::rules::*;
 use keenwa::statistics::simple::{PrecomputedSelectivityStatistics, SimpleCatalogStatisticsBuilder};
-use keenwa::util::NoOpResultCallback;
 
 fn memo_bench(c: &mut Criterion) {
     fn add_benchmark(

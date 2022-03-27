@@ -13,6 +13,5 @@ pub mod statistics;
 pub mod testing;
 #[cfg(test)]
 mod tests;
-pub mod util;
 
 // TODO: Document panics

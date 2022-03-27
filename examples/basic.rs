@@ -8,11 +8,10 @@ use keenwa::operators::builder::{MemoizeOperators, OperatorBuilder};
 use keenwa::operators::format::format_operator_tree;
 use keenwa::operators::scalar::col;
 use keenwa::operators::OperatorMemoBuilder;
-use keenwa::optimizer::Optimizer;
+use keenwa::optimizer::{NoOpResultCallback, Optimizer};
 use keenwa::rules::implementation::{EmptyRule, GetToScanRule, ProjectionRule, SelectRule};
 use keenwa::rules::{Rule, StaticRuleSet};
 use keenwa::statistics::simple::{DefaultSelectivityStatistics, SimpleCatalogStatisticsBuilder};
-use keenwa::util::NoOpResultCallback;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -78,6 +77,7 @@ fn create_catalog() -> CatalogRef {
 }
 
 fn create_optimizer(catalog: CatalogRef) -> Optimizer<StaticRuleSet, SimpleCostEstimator, NoOpResultCallback> {
+    // Setup transformation/implementation rules.
     let rules: Vec<Box<dyn Rule>> = vec![
         Box::new(GetToScanRule::new(catalog)),
         Box::new(SelectRule),

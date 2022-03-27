@@ -114,6 +114,7 @@ impl<'m> RuleContext<'m> {
 pub type RuleId = usize;
 
 /// Provides access to optimization rules used by the optimizer.
+//TODO: Rules with rules for all standard operators.
 pub trait RuleSet {
     /// Returns an iterator over available optimization rules.
     fn get_rules(&self) -> RuleIterator;
@@ -225,8 +226,6 @@ fn rule_debug_format(rule: &dyn Rule, f: &mut Formatter<'_>) -> std::fmt::Result
 }
 
 /// An implementation of [RuleSet] trait that uses a predefined set optimization rules.
-///
-/// [RuleSet]: crate::rules::RuleSet
 #[derive(Debug)]
 pub struct StaticRuleSet {
     rules: HashMap<RuleId, Box<dyn Rule>>,
