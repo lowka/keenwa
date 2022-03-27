@@ -1,4 +1,39 @@
 //! Cost-based optimizer.
+//!
+//! Basic algorithm:
+//!
+//! ```text
+//!  - schedule OptimizeGroup for the top operator of an operator tree.
+//!   
+//!  - [OptimizeGroup]: for every expression in the group:
+//!       - if the expression is a relational expression:
+//!          schedule OptimizeExpr
+//!       - if the expression is a scalar expression w/o subqueries:
+//!          mark group as optimised.
+//!       - if the expression is a scalar expression with subquery:
+//!          schedule OptimizeGroup for that subquery.
+//!
+//!       Also schedule [ExploreGroup] in order to search for alternative plans.
+//!
+//!  - [OptimizeExpr]: select rules available for that expression,
+//!       schedule ApplyRule for each (rule, expression).  
+//!
+//!  - [ApplyRule]:
+//!      - if a rule is a transformation rule schedule OptimizeExpr for
+//!        the logical expression it produced.
+//!      - if a rule is an implementation rule schedule OptimizeInputs for
+//!        the physical expression it produced.
+//!
+//!  - [OptimizeInputs]:
+//!       - Schedule OptimizeInputs*,
+//!       - Schedule OptimizeGroup for every input expression.
+//!       - When all inputs has been optimized - compute the cost of the expression
+//!       and add it the candidate list. If the expression has the lowest cost
+//!       make it the best expression in the group.
+//!
+//!  * - We need [OptimizeInputs] when all inputs have been optimized.
+//! ```
+//!
 
 use std::cell::RefCell;
 use std::collections::hash_map::Entry;
@@ -13,14 +48,14 @@ use crate::cost::{Cost, CostEstimationContext, CostEstimator};
 use crate::error::OptimizerError;
 use crate::memo::{format_memo, ExprId, GroupId, MemoExpr, NewChildExprs, Props};
 use crate::meta::MetadataRef;
+use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::relational::{RelExpr, RelNode};
-use crate::operators::scalar::expr_with_new_inputs;
+use crate::operators::scalar::{expr_with_new_inputs, ScalarExpr};
 use crate::operators::{ExprMemo, ExprRef, Operator, OperatorExpr, Properties};
 use crate::properties::physical::PhysicalProperties;
 use crate::rules::{EvaluationResponse, RuleContext, RuleId, RuleMatch, RuleResult, RuleSet, RuleType};
-use crate::util::{BestExprContext, BestExprRef, ResultCallback};
 
-/// Cost-based optimizer.
+/// Cost-based optimizer. See [module docs](self) for an overview of the algorithm.
 pub struct Optimizer<R, T, C> {
     rule_set: Rc<R>,
     cost_estimator: Rc<T>,
@@ -149,6 +184,44 @@ where
             .field("result_callback", self.result_callback.as_ref())
             .finish()
     }
+}
+
+/// A reference to the best expression in a memo-group.
+#[derive(Debug, Clone)]
+pub enum BestExprRef<'a> {
+    /// A relational expression.
+    Relational(&'a PhysicalExpr),
+    /// A scalar expression.
+    Scalar(&'a ScalarExpr),
+}
+
+/// A callback called by the optimizer when an optimized plan is being built.
+pub trait ResultCallback {
+    /// Called for each expression in the optimized plan.
+    fn on_best_expr<C>(&self, expr: BestExprRef, ctx: &C)
+    where
+        C: BestExprContext;
+}
+
+/// Provides additional information about an expression chosen by the optimizer as the best expression.
+pub trait BestExprContext {
+    /// Returns the cost of the expression.
+    fn cost(&self) -> Cost;
+
+    /// Returns properties of the expression.
+    fn props(&self) -> &Properties;
+
+    /// Returns the identifier of a group the expression belongs to.
+    fn group_id(&self) -> GroupId;
+
+    /// Returns the number of child expressions.
+    fn num_children(&self) -> usize;
+
+    /// Returns the identifier of a group of the i-th child expression.
+    fn child_group_id(&self, i: usize) -> GroupId;
+
+    /// Returns physical properties required by the i-th child expression.
+    fn child_required(&self, i: usize) -> &PhysicalProperties;
 }
 
 // TODO: Add search bounds
@@ -1026,6 +1099,19 @@ impl PhysicalPropertiesCache {
             props.push(none);
         }
         props
+    }
+}
+
+/// A [`ResultCallback`](ResultCallback) that does nothing.
+#[derive(Debug)]
+pub struct NoOpResultCallback;
+
+impl ResultCallback for NoOpResultCallback {
+    fn on_best_expr<C>(&self, _expr: BestExprRef, _ctx: &C)
+    where
+        C: BestExprContext,
+    {
+        //no-op
     }
 }
 

@@ -4,7 +4,7 @@ use rand::rngs::ThreadRng;
 use rand::seq::SliceRandom;
 
 use crate::error::OptimizerError;
-use crate::memo::{MemoBuilder, MemoExpr, MemoGroupCallback};
+use crate::memo::{MemoBuilder, MemoGroupCallback};
 use crate::meta::{ColumnId, MutableMetadata};
 use crate::operators::format::format_operator_tree;
 use crate::operators::relational::logical::{LogicalExpr, LogicalGet};
