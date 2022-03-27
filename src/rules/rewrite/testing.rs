@@ -7,7 +7,7 @@ use crate::datatypes::DataType;
 use crate::error::OptimizerError;
 use crate::memo::MemoBuilder;
 use crate::meta::MutableMetadata;
-use crate::operators::builder::{MemoizeOperatorCallback, OperatorBuilder};
+use crate::operators::builder::{MemoizeOperators, OperatorBuilder};
 use crate::operators::properties::LogicalPropertiesBuilder;
 use crate::operators::relational::RelNode;
 use crate::optimizer::SetPropertiesCallback;
@@ -28,7 +28,7 @@ where
     let memo = MemoBuilder::new(metadata.clone())
         .set_callback(Rc::new(SetPropertiesCallback::new(properties_builder)))
         .build();
-    let memoization = Rc::new(MemoizeOperatorCallback::new(memo));
+    let mut memoization = MemoizeOperators::new(memo);
 
     catalog.add_table(
         DEFAULT_SCHEMA,
@@ -51,7 +51,7 @@ where
             .build(),
     );
 
-    let builder = OperatorBuilder::new(memoization.clone(), catalog, metadata);
+    let builder = OperatorBuilder::new(memoization.take_callback(), catalog, metadata);
 
     let result = (f)(builder).expect("Operator setup function failed");
     let expr = result.build().expect("Failed to build an operator");
@@ -68,5 +68,5 @@ where
     assert_eq!(buf, expected, "expected expr");
 
     // Expressions should not outlive the memo.
-    let _ = Rc::try_unwrap(memoization).unwrap();
+    let _ = memoization.into_memo();
 }
