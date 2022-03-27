@@ -69,7 +69,7 @@ impl AggregateBuilder<'_> {
         Ok(self)
     }
 
-    /// Builds an aggregate operator and adds in to an operator tree.
+    /// Builds an aggregate operator and adds to an operator tree.
     pub fn build(mut self) -> Result<OperatorBuilder, OptimizerError> {
         let (input, scope) = self.builder.rel_node()?;
 
@@ -145,7 +145,7 @@ impl AggregateBuilder<'_> {
                     if let ScalarExpr::Column(id) = expr.expr() {
                         group_by_columns.insert(*id);
                     } else {
-                        unreachable!("GROUP BY: positional argument")
+                        unreachable!("GROUP BY: unexpected column expression: {}", expr.expr())
                     }
                     expr
                 }
@@ -181,7 +181,7 @@ impl AggregateBuilder<'_> {
         }
 
         let having_expr = if let Some(expr) = self.having.take() {
-            AggregateBuilder::disallow_nested_subqueries(&expr, "AGGREGATE", "HAVING clause")?;
+            disallow_nested_subqueries(&expr, "AGGREGATE", "HAVING clause")?;
 
             let mut rewriter = RewriteExprs::new(&scope, ValidateFilterExpr::where_clause());
             let expr = expr.rewrite(&mut rewriter)?;
@@ -238,43 +238,43 @@ impl AggregateBuilder<'_> {
 
         Ok(OperatorBuilder::from_builder(self.builder, operator, output_columns))
     }
+}
 
-    fn disallow_nested_subqueries(expr: &ScalarExpr, clause: &str, location: &str) -> Result<(), OptimizerError> {
-        struct DisallowNestedSubqueries<'a> {
-            clause: &'a str,
-            location: &'a str,
-        }
-        impl<'a> ExprVisitor<RelNode> for DisallowNestedSubqueries<'a> {
-            type Error = OptimizerError;
-
-            fn post_visit(&mut self, expr: &ScalarExpr) -> Result<(), Self::Error> {
-                match expr {
-                    ScalarExpr::Column(_) => {}
-                    ScalarExpr::ColumnName(_) => {}
-                    ScalarExpr::Scalar(_) => {}
-                    ScalarExpr::BinaryExpr { .. } => {}
-                    ScalarExpr::Cast { .. } => {}
-                    ScalarExpr::Not(_) => {}
-                    ScalarExpr::Negation(_) => {}
-                    ScalarExpr::Alias(_, _) => {}
-                    ScalarExpr::Aggregate { .. } => {}
-                    ScalarExpr::SubQuery(_) => {
-                        return Err(OptimizerError::NotImplemented(format!(
-                            "{}: Subqueries in {} are not implemented",
-                            self.clause, self.location
-                        )))
-                    }
-                    ScalarExpr::Wildcard(_) => {
-                        return Err(OptimizerError::Internal(format!(
-                            "{}: Wildcard expressions are not allowed",
-                            self.clause
-                        )))
-                    }
-                }
-                Ok(())
-            }
-        }
-        let mut visitor = DisallowNestedSubqueries { clause, location };
-        expr.accept(&mut visitor)
+fn disallow_nested_subqueries(expr: &ScalarExpr, clause: &str, location: &str) -> Result<(), OptimizerError> {
+    struct DisallowNestedSubqueries<'a> {
+        clause: &'a str,
+        location: &'a str,
     }
+    impl<'a> ExprVisitor<RelNode> for DisallowNestedSubqueries<'a> {
+        type Error = OptimizerError;
+
+        fn post_visit(&mut self, expr: &ScalarExpr) -> Result<(), Self::Error> {
+            match expr {
+                ScalarExpr::Column(_) => {}
+                ScalarExpr::ColumnName(_) => {}
+                ScalarExpr::Scalar(_) => {}
+                ScalarExpr::BinaryExpr { .. } => {}
+                ScalarExpr::Cast { .. } => {}
+                ScalarExpr::Not(_) => {}
+                ScalarExpr::Negation(_) => {}
+                ScalarExpr::Alias(_, _) => {}
+                ScalarExpr::Aggregate { .. } => {}
+                ScalarExpr::SubQuery(_) => {
+                    return Err(OptimizerError::NotImplemented(format!(
+                        "{}: Subqueries in {} are not implemented",
+                        self.clause, self.location
+                    )))
+                }
+                ScalarExpr::Wildcard(_) => {
+                    return Err(OptimizerError::Internal(format!(
+                        "{}: Wildcard expressions are not allowed",
+                        self.clause
+                    )))
+                }
+            }
+            Ok(())
+        }
+    }
+    let mut visitor = DisallowNestedSubqueries { clause, location };
+    expr.accept(&mut visitor)
 }

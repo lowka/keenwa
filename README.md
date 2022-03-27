@@ -24,6 +24,9 @@ Cost-based query optimizer (WIP).
 - [ ] Parameter placeholders/Prepared statements.
 - [ ] multi-stage optimization setup (logical rewrites -> cost-based -> .. etc.).
 - [ ] generate plans that can be changed at runtime (configurable access-path selection, etc.).
+- [ ] Termination: timeout
+- [ ] Detect cycles in Optimizer::optimize.
+- [ ] Fallback mechanism to build the remaining physical operators when the optimizer fails to build a logical plan.
 - ...
 
 ---
@@ -35,6 +38,7 @@ Cost-based query optimizer (WIP).
 - [x] Scan.
 - [x] Join.
 - [x] Union/Except/Intersect (ALL).
+- [ ] Fetch/Limit/Offset
 - [ ] VALUES operator (?).
 - [ ] Distinct option is SELECT
 - TODO

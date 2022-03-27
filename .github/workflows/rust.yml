@@ -22,6 +22,8 @@ jobs:
         run: cargo test --verbose
       - name: Compile benchmarks
         run: cargo bench --no-run
+      - name: Run examples
+        run: cargo run --example basic
 
   lint:
     name: Lint

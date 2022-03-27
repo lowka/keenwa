@@ -177,8 +177,8 @@ impl Metadata {
     }
 
     /// Returns an iterator over available column metadata.
-    pub fn columns(&self) -> impl Iterator<Item = (ColumnId, &ColumnMetadata)> {
-        self.columns.iter().enumerate().map(|(i, c)| (i + 1, c))
+    pub fn get_columns(&self) -> &[ColumnMetadata] {
+        &self.columns
     }
 }
 

@@ -9,14 +9,12 @@ use keenwa::catalog::{CatalogRef, TableBuilder, DEFAULT_SCHEMA};
 use keenwa::cost::simple::SimpleCostEstimator;
 use keenwa::datatypes::DataType;
 use keenwa::error::OptimizerError;
-use keenwa::memo::MemoBuilder;
 use keenwa::meta::MutableMetadata;
 use keenwa::operators::builder::{MemoizeOperators, OperatorBuilder, OrderingOption};
-use keenwa::operators::properties::LogicalPropertiesBuilder;
 use keenwa::operators::relational::join::JoinType;
 use keenwa::operators::scalar::{col, scalar};
 use keenwa::operators::*;
-use keenwa::optimizer::{Optimizer, SetPropertiesCallback};
+use keenwa::optimizer::Optimizer;
 use keenwa::rules::implementation::*;
 use keenwa::rules::transformation::*;
 use keenwa::rules::StaticRuleSet;
@@ -69,18 +67,16 @@ fn memo_bench(c: &mut Criterion) {
 
                     let statistics_builder =
                         SimpleCatalogStatisticsBuilder::new(catalog.clone(), selectivity_provider.clone());
-                    let properties_builder = Rc::new(LogicalPropertiesBuilder::new(statistics_builder));
 
-                    let memo = MemoBuilder::new(metadata.clone())
-                        .set_callback(Rc::new(SetPropertiesCallback::new(properties_builder.clone())))
-                        .build();
+                    let memo = OperatorMemoBuilder::new(metadata.clone()).build_with_statistics(statistics_builder);
+
                     let mut memoization = MemoizeOperators::new(memo);
                     let operator_builder = OperatorBuilder::new(memoization.take_callback(), catalog.clone(), metadata);
 
                     let query = f(operator_builder, selectivity_provider.as_ref()).expect("Failed to build a query");
 
                     let mut memo = memoization.into_memo();
-                    // benchmark should not include time spend in memoization.
+                    // benchmark should not include the time spend in memoization.
                     let query = memo.insert_group(query);
 
                     let optimizer = create_optimizer(catalog.clone());
