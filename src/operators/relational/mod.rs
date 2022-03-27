@@ -1,3 +1,5 @@
+//! Relational expressions supported by the optimizer.
+
 use std::fmt::Formatter;
 
 use crate::memo::MemoExprState;

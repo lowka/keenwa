@@ -45,6 +45,7 @@ where
     /// Negation of an arithmetic expression (eg. - 1).
     Negation(Box<Expr<T>>),
     /// An expression with the given name (eg. 1 + 1 as two).
+    // TODO: Move to projection builder.
     Alias(Box<Expr<T>>, String),
     /// An aggregate expression.
     Aggregate {

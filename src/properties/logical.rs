@@ -1,3 +1,5 @@
+//! Logical properties. See [LogicalProperties].
+
 use crate::meta::ColumnId;
 use crate::statistics::Statistics;
 

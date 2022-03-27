@@ -1,3 +1,5 @@
+//! Utility types.
+
 use std::fmt::Debug;
 
 use crate::cost::Cost;

@@ -1,3 +1,5 @@
+//! Implementation rules. See [rules module](super).
+
 pub mod aggregate;
 pub mod index;
 pub mod join;

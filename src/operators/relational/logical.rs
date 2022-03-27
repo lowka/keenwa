@@ -1,3 +1,5 @@
+//! Logical expressions supported by the optimizer.
+
 use crate::error::OptimizerError;
 use crate::memo::{ExprContext, MemoExprFormatter, NewChildExprs};
 use crate::meta::ColumnId;

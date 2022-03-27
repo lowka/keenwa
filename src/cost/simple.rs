@@ -1,3 +1,5 @@
+//! A basic implementation of the optimizer's cost-model.
+
 use std::fmt::{Debug, Formatter};
 
 use crate::cost::{Cost, CostEstimationContext, CostEstimator};

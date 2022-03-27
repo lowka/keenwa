@@ -1,3 +1,5 @@
+//! Mutable implementation of a database catalog.
+
 use std::any::Any;
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;

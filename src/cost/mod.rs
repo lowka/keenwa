@@ -1,11 +1,13 @@
+//! Cost-model.
+
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::{ExprRef, Properties};
 use crate::statistics::Statistics;
 
 pub mod simple;
 
-//FIXME replace usize f64
-//FIXME Wrap into struct to prevent from overflows.
+//FIXME replace usize with f64
+//FIXME Wrap into struct to prevent overflows.
 pub type Cost = usize;
 
 /// Estimates a cost of a physical expression.

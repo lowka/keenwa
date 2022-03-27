@@ -1,3 +1,5 @@
+//! Data type supported by the optimizer.
+
 use std::fmt::{Display, Formatter};
 
 /// Data types supported in scalar expressions and column definitions.

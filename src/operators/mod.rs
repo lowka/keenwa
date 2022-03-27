@@ -1,3 +1,5 @@
+//! Operators.
+
 use std::convert::Infallible;
 use std::fmt::Debug;
 use std::rc::Rc;

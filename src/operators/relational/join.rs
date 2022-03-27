@@ -1,3 +1,5 @@
+//! Joins-related code.
+
 use std::fmt::{Display, Formatter};
 
 use crate::meta::ColumnId;
