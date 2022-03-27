@@ -1,3 +1,5 @@
+//! Physical expressions supported by the optimizer.
+
 use crate::memo::{ExprContext, MemoExprFormatter, NewChildExprs};
 use crate::meta::ColumnId;
 use crate::operators::relational::join::{get_join_columns_pair, JoinCondition, JoinOn, JoinType};

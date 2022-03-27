@@ -1,3 +1,5 @@
+//! Scalar expressions supported by the optimizer.
+
 use crate::datatypes::DataType;
 use std::convert::Infallible;
 use std::ops::Deref;
@@ -67,6 +69,7 @@ pub fn wildcard() -> ScalarExpr {
 }
 
 /// Creates a qualified wildcard expression (eg. `alias.*` ).
+// TODO: Move to projection builder.
 pub fn qualified_wildcard(qualifier: &str) -> ScalarExpr {
     ScalarExpr::Wildcard(Some(qualifier.into()))
 }

@@ -1,3 +1,5 @@
+//! Physical properties. See [PhysicalProperties].
+
 use std::fmt::{Display, Formatter};
 
 use crate::properties::OrderingChoice;

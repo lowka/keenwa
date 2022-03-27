@@ -1,3 +1,5 @@
+//! Query metadata (columns, relations, etc.)
+
 use std::cell::{Ref, RefCell};
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;

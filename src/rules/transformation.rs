@@ -1,3 +1,5 @@
+//! Transformation rules. See [rules module](super).
+
 use crate::error::OptimizerError;
 use crate::operators::relational::join::{get_non_empty_join_columns_pair, JoinCondition, JoinType};
 use crate::operators::relational::logical::{LogicalExpr, LogicalJoin};

@@ -1,3 +1,5 @@
+//! Memo data structure.
+
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{Debug, Display, Formatter, Write};
@@ -60,7 +62,6 @@ pub type MemoGroupCallbackRef<E, P, T> = Rc<dyn MemoGroupCallback<Expr = E, Prop
 ///  * It provides memoization of identical subexpressions within an expression tree.
 // TODO: Examples
 // TODO: add generic implementation of a copy-out method.
-//  MemoExprRef, MemoGroupRef
 pub struct Memo<E, T>
 where
     E: MemoExpr,

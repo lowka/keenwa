@@ -1,3 +1,9 @@
+//! Properties of an operator.
+//!
+//! Logical properties are shared by all expressions in a memo-group.
+//! Physical properties are describe physical characteristics of the data (such as ordering).
+//! These properties are required by some operators. For example MergeSortJoin requires its inputs to be ordered.
+
 use std::fmt::{Display, Formatter};
 
 use crate::meta::ColumnId;

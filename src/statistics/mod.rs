@@ -1,3 +1,5 @@
+//! Statistics.
+
 use crate::error::OptimizerError;
 use crate::meta::MetadataRef;
 use crate::operators::relational::logical::LogicalExpr;

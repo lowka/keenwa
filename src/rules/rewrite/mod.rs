@@ -1,3 +1,5 @@
+//! Experimental. Logical rewrite rules.
+
 use std::collections::VecDeque;
 
 use crate::memo::{MemoExpr, NewChildExprs};

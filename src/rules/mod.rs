@@ -1,3 +1,5 @@
+//! Rules used by the optimizer.
+
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::iter::FromIterator;
