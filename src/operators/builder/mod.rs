@@ -978,13 +978,12 @@ mod test {
     use crate::catalog::mutable::MutableCatalog;
     use crate::catalog::{TableBuilder, DEFAULT_SCHEMA};
     use crate::datatypes::DataType;
-    use crate::memo::{format_memo, MemoBuilder};
+    use crate::memo::format_memo;
+    use crate::operators::format::{OperatorFormatter, OperatorTreeFormatter, SubQueriesFormatter};
     use crate::operators::properties::LogicalPropertiesBuilder;
     use crate::operators::scalar::{col, qualified_wildcard, scalar, wildcard};
-    use crate::operators::{Properties, RelationalProperties};
-    use crate::optimizer::SetPropertiesCallback;
+    use crate::operators::{OperatorMemoBuilder, Properties, RelationalProperties};
     use crate::properties::logical::LogicalProperties;
-    use crate::rules::testing::{OperatorFormatter, OperatorTreeFormatter, SubQueriesFormatter};
     use crate::statistics::NoStatisticsBuilder;
 
     use super::*;
@@ -1746,11 +1745,9 @@ Memo:
 
     impl OperatorBuilderTester {
         fn new() -> Self {
-            let properties_builder = Rc::new(LogicalPropertiesBuilder::new(NoStatisticsBuilder));
+            let properties_builder = LogicalPropertiesBuilder::new(NoStatisticsBuilder);
             let metadata = Rc::new(MutableMetadata::new());
-            let memo = MemoBuilder::new(metadata.clone())
-                .set_callback(Rc::new(SetPropertiesCallback::new(properties_builder)))
-                .build();
+            let memo = OperatorMemoBuilder::new(metadata.clone()).build_with_properties(properties_builder);
             let memoization = MemoizeOperators::new(memo);
 
             OperatorBuilderTester {

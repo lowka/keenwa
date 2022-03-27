@@ -91,12 +91,12 @@ impl Catalog for MutableCatalog {
 
     fn get_table(&self, name: &str) -> Option<TableRef> {
         let schemas = self.schemas.read().unwrap();
-        schemas.get(&ObjectId::from(DEFAULT_SCHEMA)).map(|s| s.get_table_by_name(name)).flatten()
+        schemas.get(&ObjectId::from(DEFAULT_SCHEMA)).and_then(|s| s.get_table_by_name(name))
     }
 
     fn get_index(&self, name: &str) -> Option<IndexRef> {
         let schemas = self.schemas.read().unwrap();
-        schemas.get(&ObjectId::from(DEFAULT_SCHEMA)).map(|s| s.get_index_by_name(name)).flatten()
+        schemas.get(&ObjectId::from(DEFAULT_SCHEMA)).and_then(|s| s.get_index_by_name(name))
     }
 
     fn get_indexes(&self, table: &str) -> Vec<IndexRef> {
@@ -291,7 +291,7 @@ mod test {
 
         let schema: &MutableSchema = schema.as_any().downcast_ref::<MutableSchema>().unwrap();
         schema.remove_table("A");
-        assert_eq!(schema.get_tables().iter().count(), 0, "table has not been removed")
+        assert_eq!(schema.get_tables().len(), 0, "table has not been removed")
     }
 
     #[test]
@@ -317,14 +317,10 @@ mod test {
         let schema: &MutableSchema = schema.as_any().downcast_ref::<MutableSchema>().unwrap();
         schema.remove_index("A_idx");
 
-        assert_eq!(schema.get_indexes("A").iter().count(), 0, "index has not been removed");
-        assert_eq!(schema.get_indexes("B").iter().count(), 1, "indexes from another table have been removed as well");
+        assert_eq!(schema.get_indexes("A").len(), 0, "index has not been removed");
+        assert_eq!(schema.get_indexes("B").len(), 1, "indexes from another table have been removed as well");
 
         schema.remove_table("B");
-        assert_eq!(
-            schema.get_indexes("B").iter().count(),
-            0,
-            "Table B has been removed but indexes are still available"
-        );
+        assert_eq!(schema.get_indexes("B").len(), 0, "Table B has been removed but indexes are still available");
     }
 }

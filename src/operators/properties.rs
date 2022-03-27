@@ -43,7 +43,7 @@ where
 
     /// Builds logical properties for a get operator.
     pub fn build_get(&self, _source: &str, columns: &[ColumnId]) -> Result<LogicalProperties, OptimizerError> {
-        let output_columns = columns.iter().copied().collect();
+        let output_columns = columns.to_vec();
         Ok(LogicalProperties::new(output_columns, None))
     }
 

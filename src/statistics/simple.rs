@@ -46,7 +46,7 @@ where
             Some(table_ref) => table_ref,
             None => return Err(OptimizerError::Internal(format!("Table '{}' does not exists", source))),
         };
-        let row_count = match table_ref.statistics().map(|s| s.row_count()).flatten() {
+        let row_count = match table_ref.statistics().and_then(|s| s.row_count()) {
             Some(row_count) => row_count,
             None => return Err(OptimizerError::Internal(format!("No row count for table '{}'", source))),
         };

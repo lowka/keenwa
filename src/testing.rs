@@ -9,12 +9,12 @@ use crate::catalog::{Catalog, CatalogRef, TableBuilder, DEFAULT_SCHEMA};
 use crate::cost::simple::SimpleCostEstimator;
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
-use crate::memo::{MemoBuilder, MemoExpr, MemoExprFormatter, StringMemoFormatter};
+use crate::memo::{MemoExpr, MemoExprFormatter, StringMemoFormatter};
 use crate::meta::MutableMetadata;
 use crate::operators::builder::{MemoizeOperators, OperatorBuilder};
 use crate::operators::properties::LogicalPropertiesBuilder;
-use crate::operators::Operator;
-use crate::optimizer::{Optimizer, SetPropertiesCallback};
+use crate::operators::{Operator, OperatorMemoBuilder};
+use crate::optimizer::Optimizer;
 use crate::rules::implementation::{EmptyRule, GetToScanRule, ProjectionRule, SelectRule};
 use crate::rules::testing::TestRuleSet;
 use crate::rules::Rule;
@@ -29,9 +29,9 @@ static INIT_LOG: Once = Once::new();
 /// [optimizer]: crate::optimizer::Optimizer
 pub struct OptimizerTester {
     catalog: CatalogRef,
-    selectivity_provider: Rc<PrecomputedSelectivityStatistics>,
-    properties_builder:
-        Rc<LogicalPropertiesBuilder<SimpleCatalogStatisticsBuilder<Rc<PrecomputedSelectivityStatistics>>>>,
+    // selectivity_provider: Rc<PrecomputedSelectivityStatistics>,
+    // properties_builder:
+    //     Rc<LogicalPropertiesBuilder<SimpleCatalogStatisticsBuilder<Rc<PrecomputedSelectivityStatistics>>>>,
     rules: Box<dyn Fn(CatalogRef) -> Vec<Box<dyn Rule>>>,
     rules_filter: Box<dyn Fn(&Box<dyn Rule>) -> bool>,
     shuffle_rules: bool,
@@ -47,14 +47,11 @@ impl OptimizerTester {
         INIT_LOG.call_once(pretty_env_logger::init);
 
         let catalog = Arc::new(MutableCatalog::new());
-        let selectivity_provider = Rc::new(PrecomputedSelectivityStatistics::new());
-        let statistics_builder = SimpleCatalogStatisticsBuilder::new(catalog.clone(), selectivity_provider.clone());
-        let properties_builder = Rc::new(LogicalPropertiesBuilder::new(statistics_builder));
 
         OptimizerTester {
             catalog,
-            selectivity_provider,
-            properties_builder,
+            // selectivity_provider,
+            // properties_builder,
             rules: Box::new(|_| Vec::new()),
             rules_filter: Box::new(|_r| true),
             shuffle_rules: true,
@@ -150,17 +147,20 @@ impl OptimizerTester {
 
         tables.register(self.catalog.as_ref());
 
-        let propagate_properties = SetPropertiesCallback::new(self.properties_builder.clone());
-        let memo_callback = Rc::new(propagate_properties);
+        let selectivity_provider = Rc::new(PrecomputedSelectivityStatistics::new());
+        let statistics_builder =
+            SimpleCatalogStatisticsBuilder::new(self.catalog.clone(), selectivity_provider.clone());
+        let properties_builder = LogicalPropertiesBuilder::new(statistics_builder);
+
         let metadata = Rc::new(MutableMetadata::new());
-        let memo = MemoBuilder::new(metadata.clone()).set_callback(memo_callback).build();
+        let memo = OperatorMemoBuilder::new(metadata.clone()).build_with_properties(properties_builder);
 
         let mut memoization = MemoizeOperators::new(memo);
         let mutable_catalog = self.catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();
         tables.register_statistics(mutable_catalog, self.row_count_per_table.clone());
 
         (self.update_catalog)(mutable_catalog);
-        (self.update_selectivity)(self.selectivity_provider.as_ref());
+        (self.update_selectivity)(selectivity_provider.as_ref());
 
         let builder = OperatorBuilder::new(memoization.take_callback(), self.catalog.clone(), metadata);
         let rs = (self.operator)(builder);

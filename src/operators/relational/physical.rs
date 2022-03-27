@@ -731,8 +731,8 @@ impl Unique {
     }
 
     fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
-        let left = self.left.props().logical().output_columns().iter().copied().collect();
-        let right = self.right.props().logical().output_columns().iter().copied().collect();
+        let left = self.left.props().logical().output_columns().to_vec();
+        let right = self.right.props().logical().output_columns().to_vec();
         let left_ordering = PhysicalProperties::new(OrderingChoice::new(left));
         let right_ordering = PhysicalProperties::new(OrderingChoice::new(right));
 

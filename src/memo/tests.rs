@@ -54,7 +54,7 @@ where
     let lines: Vec<String> = expected.split('\n').map(String::from).collect();
     let expected = lines.join("\n");
 
-    let buf = format_memo(&memo);
+    let buf = format_memo(memo);
     assert_eq!(buf.trim(), expected.trim());
 }
 
@@ -65,7 +65,7 @@ where
     let lines: Vec<String> = expected.split('\n').map(String::from).collect();
     let expected = lines.join("\n");
 
-    let buf = format_memo(&memo);
+    let buf = format_memo(memo);
     assert_eq!(buf.trim(), expected.trim());
 }
 

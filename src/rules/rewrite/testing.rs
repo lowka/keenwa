@@ -5,13 +5,11 @@ use crate::catalog::mutable::MutableCatalog;
 use crate::catalog::{TableBuilder, DEFAULT_SCHEMA};
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
-use crate::memo::MemoBuilder;
 use crate::meta::MutableMetadata;
 use crate::operators::builder::{MemoizeOperators, OperatorBuilder};
-use crate::operators::properties::LogicalPropertiesBuilder;
+use crate::operators::format::format_operator_tree;
 use crate::operators::relational::RelNode;
-use crate::optimizer::SetPropertiesCallback;
-use crate::rules::testing::format_operator_tree;
+use crate::operators::OperatorMemoBuilder;
 use crate::statistics::simple::{DefaultSelectivityStatistics, SimpleCatalogStatisticsBuilder};
 
 pub fn build_and_rewrite_expr<F, R>(f: F, rule: R, expected: &str)
@@ -23,11 +21,8 @@ where
     let selectivity_provider = Rc::new(DefaultSelectivityStatistics);
     let metadata = Rc::new(MutableMetadata::new());
     let statistics_builder = SimpleCatalogStatisticsBuilder::new(catalog.clone(), selectivity_provider);
-    let properties_builder = Rc::new(LogicalPropertiesBuilder::new(statistics_builder));
 
-    let memo = MemoBuilder::new(metadata.clone())
-        .set_callback(Rc::new(SetPropertiesCallback::new(properties_builder)))
-        .build();
+    let memo = OperatorMemoBuilder::new(metadata.clone()).build_with_statistics(statistics_builder);
     let mut memoization = MemoizeOperators::new(memo);
 
     catalog.add_table(

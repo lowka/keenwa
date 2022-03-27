@@ -11,12 +11,11 @@ use itertools::Itertools;
 
 use crate::cost::{Cost, CostEstimationContext, CostEstimator};
 use crate::error::OptimizerError;
-use crate::memo::{format_memo, ExprId, GroupId, MemoExpr, MemoGroupCallback, NewChildExprs, Props};
+use crate::memo::{format_memo, ExprId, GroupId, MemoExpr, NewChildExprs, Props};
 use crate::meta::MetadataRef;
-use crate::operators::properties::PropertiesProvider;
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::expr_with_new_inputs;
-use crate::operators::{ExprMemo, ExprRef, Operator, OperatorExpr, OperatorMetadata, Properties};
+use crate::operators::{ExprMemo, ExprRef, Operator, OperatorExpr, Properties};
 use crate::properties::physical::PhysicalProperties;
 use crate::rules::{EvaluationResponse, RuleContext, RuleId, RuleMatch, RuleResult, RuleSet, RuleType};
 use crate::util::{BestExprContext, BestExprRef, ResultCallback};
@@ -149,39 +148,6 @@ where
             .field("cost_estimator", self.cost_estimator.as_ref())
             .field("result_callback", self.result_callback.as_ref())
             .finish()
-    }
-}
-
-/// Callback that sets logical properties when expression is added into a [memo](crate::memo::Memo).
-#[derive(Debug)]
-pub struct SetPropertiesCallback<P> {
-    properties_provider: Rc<P>,
-}
-
-impl<P> SetPropertiesCallback<P> {
-    /// Creates a new callback with the given `properties_provider`.
-    pub fn new(properties_provider: Rc<P>) -> Self {
-        SetPropertiesCallback { properties_provider }
-    }
-}
-
-impl<P> MemoGroupCallback for SetPropertiesCallback<P>
-where
-    P: PropertiesProvider,
-{
-    type Expr = OperatorExpr;
-    type Props = Properties;
-    type Metadata = OperatorMetadata;
-
-    fn new_group(
-        &self,
-        expr: &Self::Expr,
-        provided_props: &Self::Props,
-        metadata: &Self::Metadata,
-    ) -> Result<Self::Props, OptimizerError> {
-        // Every time a new expression is added into a memo we need to compute logical properties of that expression.
-        self.properties_provider
-            .build_properties(expr, provided_props.clone(), metadata.get_ref())
     }
 }
 

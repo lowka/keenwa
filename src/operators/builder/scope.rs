@@ -2,7 +2,7 @@ use crate::error::OptimizerError;
 use crate::meta::{ColumnId, MutableMetadata, RelationId};
 use std::rc::Rc;
 
-/// Stores columns and relations available to the current node of an operator tree.
+/// Stores columns and relations visible to/accessible from the current node of an operator tree.
 #[derive(Debug, Clone)]
 pub struct OperatorScope {
     //FIXME: It is not necessary to store output relation in both `relation` and `relations` fields.

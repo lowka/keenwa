@@ -4,6 +4,7 @@ use std::convert::Infallible;
 use std::fmt::Debug;
 use std::rc::Rc;
 
+use crate::error::OptimizerError;
 use relational::join::JoinCondition;
 use relational::logical::LogicalExpr;
 use relational::physical::PhysicalExpr;
@@ -12,15 +13,18 @@ use scalar::expr::ExprVisitor;
 use scalar::{ScalarExpr, ScalarNode};
 
 use crate::memo::{
-    CopyInExprs, CopyInNestedExprs, ExprContext, Memo, MemoExpr, MemoExprFormatter, MemoExprRef, MemoExprState,
-    MemoGroupCallbackRef, NewChildExprs, Props,
+    CopyInExprs, CopyInNestedExprs, ExprContext, Memo, MemoBuilder, MemoExpr, MemoExprFormatter, MemoExprRef,
+    MemoExprState, MemoGroupCallback, MemoGroupCallbackRef, NewChildExprs, Props,
 };
 use crate::meta::MutableMetadata;
+use crate::operators::properties::{LogicalPropertiesBuilder, PropertiesProvider};
 use crate::operators::scalar::expr_with_new_inputs;
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
+use crate::statistics::StatisticsBuilder;
 
 pub mod builder;
+pub mod format;
 pub mod properties;
 pub mod relational;
 pub mod scalar;
@@ -459,6 +463,73 @@ impl From<ScalarExpr> for ScalarNode {
 impl From<ScalarExpr> for OperatorExpr {
     fn from(expr: ScalarExpr) -> Self {
         OperatorExpr::Scalar(expr)
+    }
+}
+
+/// Callback that sets logical properties when expression is added into a [memo](crate::memo::Memo).
+#[derive(Debug)]
+pub struct SetPropertiesCallback<P> {
+    properties_provider: Rc<P>,
+}
+
+impl<P> SetPropertiesCallback<P> {
+    /// Creates a new callback with the given `properties_provider`.
+    pub fn new(properties_provider: Rc<P>) -> Self {
+        SetPropertiesCallback { properties_provider }
+    }
+}
+
+impl<P> MemoGroupCallback for SetPropertiesCallback<P>
+where
+    P: PropertiesProvider,
+{
+    type Expr = OperatorExpr;
+    type Props = Properties;
+    type Metadata = OperatorMetadata;
+
+    fn new_group(
+        &self,
+        expr: &Self::Expr,
+        provided_props: &Self::Props,
+        metadata: &Self::Metadata,
+    ) -> Result<Self::Props, OptimizerError> {
+        // Every time a new expression is added into a memo we need to compute logical properties of that expression.
+        self.properties_provider
+            .build_properties(expr, provided_props.clone(), metadata.get_ref())
+    }
+}
+
+/// Builder to create a [memo](Memo).
+pub struct OperatorMemoBuilder {
+    metadata: OperatorMetadata,
+}
+
+impl OperatorMemoBuilder {
+    pub fn new(metadata: OperatorMetadata) -> Self {
+        OperatorMemoBuilder { metadata }
+    }
+
+    /// Creates a memo with the given [LogicalPropertiesBuilder].
+    pub fn build_with_properties<T>(self, properties: LogicalPropertiesBuilder<T>) -> ExprMemo
+    where
+        T: StatisticsBuilder + 'static,
+    {
+        let propagate_properties = SetPropertiesCallback::new(Rc::new(properties));
+        let memo_callback = Rc::new(propagate_properties);
+
+        MemoBuilder::new(self.metadata).set_callback(memo_callback).build()
+    }
+
+    /// Creates a memo with the given [StatisticsBuilder].
+    pub fn build_with_statistics<T>(self, statistics_builder: T) -> ExprMemo
+    where
+        T: StatisticsBuilder + 'static,
+    {
+        let properties_builder = LogicalPropertiesBuilder::new(statistics_builder);
+        let propagate_properties = SetPropertiesCallback::new(Rc::new(properties_builder));
+        let memo_callback = Rc::new(propagate_properties);
+
+        MemoBuilder::new(self.metadata).set_callback(memo_callback).build()
     }
 }
 
