@@ -3,7 +3,7 @@ mod testing;
 
 use crate::error::macros::{not_implemented, not_supported};
 use crate::error::OptimizerError;
-use crate::operators::builder::{OperatorBuilder, OrderingOption, OrderingOptions};
+use crate::operators::builder::{OperatorBuilder, OrderingOption, OrderingOptions, TableAlias};
 use crate::operators::relational::join::JoinType;
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::{AggregateFunction, BinaryOp, ExprVisitor};
@@ -13,8 +13,8 @@ use crate::operators::Operator;
 use itertools::Itertools;
 use sqlparser::ast::{
     BinaryOperator, Expr, Function, FunctionArg, FunctionArgExpr, Ident, Join, JoinConstraint, JoinOperator,
-    ObjectName, OrderByExpr, Query, Select, SelectItem, SetExpr, SetOperator, Statement, TableAlias, TableFactor,
-    TableWithJoins, UnaryOperator, Value,
+    ObjectName, OrderByExpr, Query, Select, SelectItem, SetExpr, SetOperator, Statement, TableAlias as SqlTableAlias,
+    TableFactor, TableWithJoins, UnaryOperator, Value,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::{Parser, ParserError};
@@ -289,7 +289,7 @@ fn build_relation(builder: OperatorBuilder, relation: TableFactor) -> Result<Ope
             let builder = builder.from(name.to_string().as_str())?;
 
             if let Some(alias) = alias {
-                builder.with_alias(alias.as_str())?
+                builder.with_alias(alias)?
             } else {
                 builder
             }
@@ -305,7 +305,7 @@ fn build_relation(builder: OperatorBuilder, relation: TableFactor) -> Result<Ope
             let builder = build_query(builder, *subquery)?;
 
             if let Some(alias) = alias {
-                builder.with_alias(alias.as_str())?
+                builder.with_alias(alias)?
             } else {
                 builder
             }
@@ -319,10 +319,13 @@ fn build_relation(builder: OperatorBuilder, relation: TableFactor) -> Result<Ope
     Ok(builder)
 }
 
-fn build_table_alias(table_alias: Option<TableAlias>) -> Result<Option<String>, OptimizerError> {
+fn build_table_alias(table_alias: Option<SqlTableAlias>) -> Result<Option<TableAlias>, OptimizerError> {
     let alias = if let Some(alias) = table_alias {
-        not_implemented!(!alias.columns.is_empty(), "FROM table ALIAS(columns)");
-        Some(alias.name.to_string())
+        let columns: Vec<Ident> = alias.columns;
+        let name = alias.name.to_string();
+        let columns = columns.into_iter().map(|c| c.to_string()).collect();
+
+        Some(TableAlias { name, columns })
     } else {
         None
     };

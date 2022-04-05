@@ -110,3 +110,10 @@ query: |
   SELECT 1 as a, a + 1
 error: ~
 
+---
+
+queries:
+  - SELECT y, x FROM A as a1(x, y)
+ok: |
+  LogicalProjection cols=[2, 1] exprs: [col:2, col:1]
+    input: LogicalGet A cols=[1, 2, 3, 4]

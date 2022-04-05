@@ -33,6 +33,15 @@ mod aggregate;
 mod projection;
 mod scope;
 
+/// Table alias.
+#[derive(Debug, Clone)]
+pub struct TableAlias {
+    /// New name.
+    pub name: String,
+    /// columns to rename.
+    pub columns: Vec<String>,
+}
+
 /// Ordering options.
 #[derive(Debug, Clone)]
 pub struct OrderingOptions {
@@ -494,9 +503,9 @@ impl OperatorBuilder {
     }
 
     /// Sets an alias to the current operator. If there is no operator returns an error.
-    pub fn with_alias(mut self, alias: &str) -> Result<Self, OptimizerError> {
+    pub fn with_alias(mut self, alias: TableAlias) -> Result<Self, OptimizerError> {
         if let Some(scope) = self.scope.as_mut() {
-            scope.set_alias(alias.to_owned())?;
+            scope.set_alias(alias)?;
             Ok(self)
         } else {
             Err(OptimizerError::Argument("ALIAS: no operator".to_string()))
