@@ -13,7 +13,7 @@ use scope::{OperatorScope, RelationInScope};
 
 use crate::catalog::CatalogRef;
 use crate::error::OptimizerError;
-use crate::memo::MemoExprState;
+use crate::memo::{MemoExprState, Props};
 use crate::meta::{ColumnId, ColumnMetadata, MutableMetadata};
 use crate::operators::relational::join::{JoinCondition, JoinOn, JoinType, JoinUsing};
 use crate::operators::relational::logical::{
@@ -32,6 +32,15 @@ use crate::properties::OrderingChoice;
 mod aggregate;
 mod projection;
 mod scope;
+
+/// Table alias.
+#[derive(Debug, Clone)]
+pub struct TableAlias {
+    /// New name.
+    pub name: String,
+    /// columns to rename.
+    pub columns: Vec<String>,
+}
 
 /// Ordering options.
 #[derive(Debug, Clone)]
@@ -494,9 +503,17 @@ impl OperatorBuilder {
     }
 
     /// Sets an alias to the current operator. If there is no operator returns an error.
-    pub fn with_alias(mut self, alias: &str) -> Result<Self, OptimizerError> {
+    pub fn with_alias(mut self, alias: TableAlias) -> Result<Self, OptimizerError> {
         if let Some(scope) = self.scope.as_mut() {
-            scope.set_alias(alias.to_owned())?;
+            let output_relation = scope.output_relation();
+            let output_columns = output_relation.columns();
+
+            for (i, column) in alias.columns.iter().enumerate() {
+                let id = output_columns[i].1;
+                self.metadata.rename_column(id, column.clone());
+            }
+
+            scope.set_alias(alias)?;
             Ok(self)
         } else {
             Err(OptimizerError::Argument("ALIAS: no operator".to_string()))
@@ -1004,6 +1021,40 @@ Metadata:
   col:3 A.a3 Int32
   col:4 A.a4 Int32
 Memo:
+  00 LogicalGet A cols=[1, 2, 3, 4]
+"#,
+        );
+    }
+
+    #[test]
+    fn test_from_alias_rename_columns() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            builder
+                .from("A")?
+                .with_alias(TableAlias {
+                    name: "X".to_owned(),
+                    columns: vec!["x".to_owned(), "y".to_owned()],
+                })?
+                .project(vec![col("y"), col("x")])?
+                .build()
+        });
+
+        tester.expect_expr(
+            r#"
+LogicalProjection cols=[2, 1] exprs: [col:2, col:1]
+  input: LogicalGet A cols=[1, 2, 3, 4]
+  output cols: [2, 1]
+Metadata:
+  col:1 A.x Int32
+  col:2 A.y Int32
+  col:3 A.a3 Int32
+  col:4 A.a4 Int32
+Memo:
+  03 LogicalProjection input=00 exprs=[01, 02] cols=[2, 1]
+  02 Expr col:1
+  01 Expr col:2
   00 LogicalGet A cols=[1, 2, 3, 4]
 "#,
         );

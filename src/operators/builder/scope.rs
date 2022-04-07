@@ -1,5 +1,6 @@
 use crate::error::OptimizerError;
 use crate::meta::{ColumnId, MutableMetadata, RelationId};
+use crate::operators::builder::TableAlias;
 use std::rc::Rc;
 
 /// Stores columns and relations visible to/accessible from the current node of an operator tree.
@@ -79,14 +80,25 @@ impl OperatorScope {
         self.relations.add_all(other.relations);
     }
 
-    pub fn set_alias(&mut self, alias: String) -> Result<(), OptimizerError> {
-        fn set_alias(relation: &mut RelationInScope, alias: String) -> Result<(), OptimizerError> {
+    pub fn set_alias(&mut self, alias: TableAlias) -> Result<(), OptimizerError> {
+        fn set_alias(
+            relation: &mut RelationInScope,
+            alias: String,
+            columns: Vec<String>,
+        ) -> Result<(), OptimizerError> {
+            // rename first len(columns) from the relation.
+            let columns: Vec<(String, ColumnId)> =
+                columns.into_iter().enumerate().map(|(i, c)| (c, relation.columns[i].1)).collect();
+            let columns = columns.into_iter().chain(relation.columns.drain(0..)).collect();
+
             if relation.relation_id.is_some() {
                 relation.alias = Some(alias);
+                relation.columns = columns;
                 Ok(())
             } else if relation.name.is_empty() {
                 relation.name = alias.clone();
                 relation.alias = Some(alias);
+                relation.columns = columns;
                 Ok(())
             } else {
                 let message = format!("BUG: a relation has no relation_id but has a name. Relation: {:?}", relation);
@@ -96,8 +108,10 @@ impl OperatorScope {
 
         if let Some(relation) = self.relations.relations.first_mut() {
             let output_relation = &mut self.relation;
-            set_alias(relation, alias.clone())?;
-            set_alias(output_relation, alias)
+            let TableAlias { name: alias, columns } = alias;
+
+            set_alias(relation, alias.clone(), columns.clone())?;
+            set_alias(output_relation, alias, columns)
         } else {
             let message = "OperatorScope is empty!".to_string();
             Err(OptimizerError::Internal(message))
@@ -159,6 +173,10 @@ impl OperatorScope {
 
     pub fn into_columns(self) -> Vec<(String, ColumnId)> {
         self.relation.columns
+    }
+
+    pub fn output_relation(&self) -> &RelationInScope {
+        &self.relation
     }
 
     fn find_in_scope<F>(&self, f: &F) -> Option<ColumnId>
@@ -283,6 +301,10 @@ impl RelationInScope {
             relation_id: None,
             columns,
         }
+    }
+
+    pub fn columns(&self) -> &[(String, ColumnId)] {
+        &self.columns
     }
 
     fn has_name_or_alias(&self, name_or_alias: &str) -> bool {

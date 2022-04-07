@@ -89,7 +89,7 @@ pub struct ColumnMetadata {
     name: String,
     /// The type of this column.
     data_type: DataType,
-    /// If presents store the idenitifier of the relation this column belongs to.
+    /// If presents store the identifier of the relation this column belongs to.
     relation_id: Option<RelationId>,
     /// If present stores the name of the table this column belongs to.
     //TODO: Redundant use relation_id instead.
@@ -236,6 +236,16 @@ impl MutableMetadata {
         id
     }
 
+    /// Renames the column with the given id.
+    pub fn rename_column(&self, column_id: ColumnId, name: String) {
+        let mut inner = self.inner.borrow_mut();
+        let column = inner
+            .columns
+            .get_mut(column_id - 1)
+            .unwrap_or_else(|| panic!("Unknown or unexpected column id: {}", column_id));
+        column.name = name;
+    }
+
     /// Returns metadata for the relation with the given identifier.
     pub fn get_relation(&self, relation_id: &RelationId) -> RelationMetadataRef {
         let inner = self.inner.borrow();
@@ -296,7 +306,7 @@ struct MutableMetadataInner {
 }
 
 /// A reference to an instance of mutable metadata.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MetadataRef<'a> {
     metadata: &'a MutableMetadata,
 }
