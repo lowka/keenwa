@@ -84,12 +84,13 @@ impl OperatorScope {
         fn set_alias(
             relation: &mut RelationInScope,
             alias: String,
-            columns: Vec<String>,
+            renamed_columns: Vec<String>,
         ) -> Result<(), OptimizerError> {
             // rename first len(columns) from the relation.
+            let renamed_columns_len = renamed_columns.len();
             let columns: Vec<(String, ColumnId)> =
-                columns.into_iter().enumerate().map(|(i, c)| (c, relation.columns[i].1)).collect();
-            let columns = columns.into_iter().chain(relation.columns.drain(0..)).collect();
+                renamed_columns.into_iter().enumerate().map(|(i, c)| (c, relation.columns[i].1)).collect();
+            let columns = columns.into_iter().chain(relation.columns.drain(renamed_columns_len..)).collect();
 
             if relation.relation_id.is_some() {
                 relation.alias = Some(alias);

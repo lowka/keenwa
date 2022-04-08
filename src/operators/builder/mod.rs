@@ -1062,6 +1062,42 @@ Memo:
     }
 
     #[test]
+    fn test_from_alias_rename_columns_does_not_introduce_new_columns() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            builder
+                .from("A")?
+                .with_alias(TableAlias {
+                    name: "X".to_owned(),
+                    columns: vec!["x".to_owned(), "y".to_owned()],
+                })?
+                .project(vec![wildcard()])?
+                .build()
+        });
+
+        tester.expect_expr(
+            r#"
+LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:3, col:4]
+  input: LogicalGet A cols=[1, 2, 3, 4]
+  output cols: [1, 2, 3, 4]
+Metadata:
+  col:1 A.x Int32
+  col:2 A.y Int32
+  col:3 A.a3 Int32
+  col:4 A.a4 Int32
+Memo:
+  05 LogicalProjection input=00 exprs=[01, 02, 03, 04] cols=[1, 2, 3, 4]
+  04 Expr col:4
+  03 Expr col:3
+  02 Expr col:2
+  01 Expr col:1
+  00 LogicalGet A cols=[1, 2, 3, 4]
+"#,
+        );
+    }
+
+    #[test]
     fn test_get() {
         let mut tester = OperatorBuilderTester::new();
 
