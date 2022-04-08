@@ -12,7 +12,7 @@ use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::{ExprMemo, Operator, OperatorExpr, OperatorMetadata, Properties, RelationalProperties};
 use crate::properties::logical::LogicalProperties;
-use crate::properties::physical::PhysicalProperties;
+use crate::properties::physical::RequiredProperties;
 use crate::rules::{EvaluationResponse, Rule, RuleContext, RuleId, RuleIterator, RuleResult, RuleSet};
 
 /// Expects that given expression does not match the given rule.
@@ -80,7 +80,7 @@ impl RuleTester {
     pub fn apply(&mut self, expr: &LogicalExpr, expected: &str) {
         let memo_expr = self.memo.insert_group(Operator::from(OperatorExpr::from(expr.clone())));
 
-        let ctx = RuleContext::new(Rc::new(PhysicalProperties::none()), self.metadata.get_ref());
+        let ctx = RuleContext::new(Rc::new(None), self.metadata.get_ref());
         let rule_match = self.rule.matches(&ctx, expr);
         assert!(rule_match.is_some(), "Rule does not match: {:?}", self.rule);
 
@@ -105,7 +105,7 @@ impl RuleTester {
         let memo_expr = self.memo.insert_group(Operator::from(OperatorExpr::from(expr.clone())));
         let expr_str = format_operator_tree(&memo_expr);
 
-        let ctx = RuleContext::new(Rc::new(PhysicalProperties::none()), self.metadata.get_ref());
+        let ctx = RuleContext::new(Rc::new(None), self.metadata.get_ref());
         let rule_match = self.rule.matches(&ctx, expr);
         assert!(
             rule_match.is_none(),
@@ -177,20 +177,20 @@ where
     fn evaluate_properties(
         &self,
         expr: &PhysicalExpr,
-        required_properties: &PhysicalProperties,
+        required_properties: &RequiredProperties,
     ) -> Result<EvaluationResponse, OptimizerError> {
         self.rule_set.evaluate_properties(expr, required_properties)
     }
 
     fn create_enforcer(
         &self,
-        required_properties: &PhysicalProperties,
+        required_properties: &RequiredProperties,
         input: RelNode,
-    ) -> Result<(PhysicalExpr, PhysicalProperties), OptimizerError> {
+    ) -> Result<(PhysicalExpr, Option<RequiredProperties>), OptimizerError> {
         self.rule_set.create_enforcer(required_properties, input)
     }
 
-    fn can_explore_with_enforcer(&self, expr: &LogicalExpr, required_properties: &PhysicalProperties) -> bool {
+    fn can_explore_with_enforcer(&self, expr: &LogicalExpr, required_properties: &RequiredProperties) -> bool {
         if self.explore_with_enforcer {
             self.rule_set.can_explore_with_enforcer(expr, required_properties)
         } else {
@@ -208,7 +208,7 @@ pub fn new_src(src: &str, columns: Vec<ColumnId>) -> RelNode {
     });
     let props = RelationalProperties {
         logical: LogicalProperties::new(columns, None),
-        required: Default::default(),
+        physical: Default::default(),
     };
     RelNode::new(RelExpr::Logical(Box::new(expr)), props)
 }

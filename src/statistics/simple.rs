@@ -285,7 +285,7 @@ mod test {
     };
     use crate::operators::scalar::expr::AggregateFunction;
     use crate::operators::scalar::{ScalarExpr, ScalarNode};
-    use crate::operators::{Operator, OperatorExpr, Properties};
+    use crate::operators::{Operator, OperatorExpr, Properties, RelationalProperties};
     use crate::properties::logical::LogicalProperties;
     use crate::properties::physical::PhysicalProperties;
     use crate::statistics::simple::{DefaultSelectivityStatistics, SimpleCatalogStatisticsBuilder};
@@ -404,7 +404,10 @@ mod test {
             });
 
             let logical = LogicalProperties::new(vec![], Some(statistics));
-            let properties = Properties::new_relational_properties(logical, PhysicalProperties::none());
+            let properties = Properties::Relational(RelationalProperties {
+                logical,
+                physical: PhysicalProperties::none(),
+            });
 
             Operator::new(OperatorExpr::from(expr), properties)
         }

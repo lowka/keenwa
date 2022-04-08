@@ -6,7 +6,7 @@ use crate::operators::relational::join::{get_join_columns_pair, JoinCondition, J
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::ScalarNode;
 use crate::operators::{Operator, OperatorCopyIn};
-use crate::properties::physical::PhysicalProperties;
+use crate::properties::physical::RequiredProperties;
 use crate::properties::OrderingChoice;
 
 // TODO: Docs
@@ -104,7 +104,7 @@ impl PhysicalExpr {
         }
     }
 
-    pub fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+    pub fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         match self {
             PhysicalExpr::Projection(expr) => expr.build_required_properties(),
             PhysicalExpr::Select(expr) => expr.build_required_properties(),
@@ -168,7 +168,7 @@ impl Projection {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -221,7 +221,7 @@ impl Select {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -283,7 +283,7 @@ impl HashAggregate {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -355,7 +355,7 @@ impl HashJoin {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -427,13 +427,13 @@ impl MergeSortJoin {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         match get_join_columns_pair(&self.left, &self.right, &self.condition) {
             Some((left, right)) if !left.is_empty() && !right.is_empty() => {
-                let left_ordering = PhysicalProperties::new(OrderingChoice::new(left));
-                let right_ordering = PhysicalProperties::new(OrderingChoice::new(right));
+                let left_ordering = RequiredProperties::new_with_ordering(OrderingChoice::new(left));
+                let right_ordering = RequiredProperties::new_with_ordering(OrderingChoice::new(right));
 
-                Some(vec![left_ordering, right_ordering])
+                Some(vec![Some(left_ordering), Some(right_ordering)])
             }
             _ => None,
         }
@@ -501,7 +501,7 @@ impl NestedLoopJoin {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -551,7 +551,7 @@ impl Scan {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -589,7 +589,7 @@ impl IndexScan {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -631,7 +631,7 @@ impl Sort {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -680,7 +680,7 @@ impl Append {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -730,13 +730,13 @@ impl Unique {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         let left = self.left.props().logical().output_columns().to_vec();
         let right = self.right.props().logical().output_columns().to_vec();
-        let left_ordering = PhysicalProperties::new(OrderingChoice::new(left));
-        let right_ordering = PhysicalProperties::new(OrderingChoice::new(right));
+        let left_ordering = RequiredProperties::new_with_ordering(OrderingChoice::new(left));
+        let right_ordering = RequiredProperties::new_with_ordering(OrderingChoice::new(right));
 
-        let requirements = vec![left_ordering, right_ordering];
+        let requirements = vec![Some(left_ordering), Some(right_ordering)];
         Some(requirements)
     }
 
@@ -793,7 +793,7 @@ impl HashedSetOp {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -835,7 +835,7 @@ impl Empty {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<PhysicalProperties>> {
+    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 

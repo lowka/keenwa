@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::Display;
@@ -314,10 +315,14 @@ where
         if i == 0 {
             self.fmt.push('[');
         }
-        match input_required.as_option() {
-            None | Some(None) => {}
-            Some(Some(ordering)) => {
-                self.fmt.push_str(format!("ord:{:?}=", ordering.columns()).as_str());
+        match input_required {
+            None => {}
+            Some(required) => {
+                if let Some(ordering) = required.ordering() {
+                    self.fmt.push_str(format!("ord:{:?}=", ordering.columns()).as_str());
+                } else {
+                    panic!("Unexpected required property!: {:?}", required)
+                }
             }
         }
         self.fmt.push_str(format!("{:02}", input_group_id).as_str());

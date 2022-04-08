@@ -13,6 +13,7 @@ use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::ScalarNode;
 use crate::operators::{OperatorExpr, Properties, RelationalProperties};
 use crate::properties::logical::LogicalProperties;
+use crate::properties::physical::PhysicalProperties;
 use crate::statistics::StatisticsBuilder;
 
 /// Provides logical properties for memo expressions.
@@ -166,7 +167,10 @@ where
     ) -> Result<Properties, OptimizerError> {
         match expr {
             OperatorExpr::Relational(RelExpr::Logical(expr)) => {
-                let RelationalProperties { required, .. } = manual_props.to_relational();
+                let RelationalProperties {
+                    logical: _logical,
+                    physical,
+                } = manual_props.to_relational();
 
                 let LogicalProperties {
                     output_columns,
@@ -208,13 +212,13 @@ where
                     LogicalExpr::Empty(LogicalEmpty { .. }) => self.build_empty(),
                 }?;
                 let logical = LogicalProperties::new(output_columns, None);
-                let statistics = self.statistics.build_statistics(expr, &logical, metadata)?;
+                let statistics = self.statistics.build_statistics(expr, &logical, metadata.clone())?;
                 let logical = if let Some(statistics) = statistics {
                     logical.with_statistics(statistics)
                 } else {
                     logical
                 };
-                Ok(Properties::new_relational_properties(logical, required))
+                Ok(Properties::Relational(RelationalProperties { logical, physical }))
             }
             OperatorExpr::Relational(RelExpr::Physical(expr)) => {
                 // Only enforcer operators are copied into a memo as groups.
@@ -222,10 +226,13 @@ where
                 if let PhysicalExpr::Sort(Sort { input, .. }) = &**expr {
                     // Enforcer returns the same logical properties as its input
                     let logical = input.props().logical().clone();
-                    // Sort operator does not have any ordering requirements
-                    let required = input.props().required().clone().without_ordering();
+                    // Sort operator does not have any ordering requirements.
+                    let PhysicalProperties { required } = input.props().physical().clone();
+                    let physical = PhysicalProperties {
+                        required: required.map(|r| r.without_ordering()),
+                    };
 
-                    Ok(Properties::new_relational_properties(logical, required))
+                    Ok(Properties::Relational(RelationalProperties { logical, physical }))
                 } else {
                     Err(OptimizerError::Internal(
                         "Physical expressions are not allowed in an operator tree".to_string(),
@@ -234,7 +241,7 @@ where
             }
             OperatorExpr::Scalar(_) => {
                 let scalar = manual_props.to_scalar();
-                Ok(Properties::new_scalar_properties(scalar.nested_sub_queries))
+                Ok(Properties::Scalar(scalar))
             }
         }
     }

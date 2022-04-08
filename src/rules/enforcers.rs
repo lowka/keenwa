@@ -3,7 +3,7 @@ use crate::operators::relational::join::{get_join_columns_pair, JoinCondition};
 use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::physical::{IndexScan, MergeSortJoin, PhysicalExpr, Select, Sort};
 use crate::operators::relational::RelNode;
-use crate::properties::physical::PhysicalProperties;
+use crate::properties::physical::RequiredProperties;
 use crate::properties::OrderingChoice;
 use crate::rules::EvaluationResponse;
 
@@ -13,14 +13,14 @@ pub trait EnforcerRules {
     fn evaluate_properties(
         &self,
         expr: &PhysicalExpr,
-        properties: &PhysicalProperties,
+        properties: &RequiredProperties,
     ) -> Result<EvaluationResponse, OptimizerError> {
         evaluate_properties(expr, properties)
     }
 
     /// See [RuleSet::can_explore_with_enforcer](super::RuleSet::can_explore_with_enforcer).
-    fn can_explore_with_enforcer(&self, expr: &LogicalExpr, properties: &PhysicalProperties) -> bool {
-        if !properties.is_empty() {
+    fn can_explore_with_enforcer(&self, expr: &LogicalExpr, properties: &RequiredProperties) -> bool {
+        if properties.ordering().is_some() {
             matches!(expr, LogicalExpr::Select { .. } | LogicalExpr::Projection { .. })
         } else {
             false
@@ -30,9 +30,9 @@ pub trait EnforcerRules {
     /// See [RuleSet::create_enforcer](super::RuleSet::create_enforcer).
     fn create_enforcer(
         &self,
-        properties: &PhysicalProperties,
+        properties: &RequiredProperties,
         input: RelNode,
-    ) -> Result<(PhysicalExpr, PhysicalProperties), OptimizerError>;
+    ) -> Result<(PhysicalExpr, Option<RequiredProperties>), OptimizerError>;
 }
 
 /// Default implementation of [EnforcerRules].
@@ -43,23 +43,23 @@ pub struct DefaultEnforcers;
 impl EnforcerRules for DefaultEnforcers {
     fn create_enforcer(
         &self,
-        properties: &PhysicalProperties,
+        properties: &RequiredProperties,
         input: RelNode,
-    ) -> Result<(PhysicalExpr, PhysicalProperties), OptimizerError> {
+    ) -> Result<(PhysicalExpr, Option<RequiredProperties>), OptimizerError> {
         create_enforcer(properties, input)
     }
 }
 
 fn create_enforcer(
-    properties: &PhysicalProperties,
+    properties: &RequiredProperties,
     input: RelNode,
-) -> Result<(PhysicalExpr, PhysicalProperties), OptimizerError> {
+) -> Result<(PhysicalExpr, Option<RequiredProperties>), OptimizerError> {
     if let Some(ordering) = properties.ordering() {
         let sort_enforcer = PhysicalExpr::Sort(Sort {
             input,
             ordering: ordering.clone(),
         });
-        Ok((sort_enforcer, PhysicalProperties::none()))
+        Ok((sort_enforcer, None))
     } else {
         let message = format!("Unexpected physical property. Only ordering is supported: {:?}", properties);
         Err(OptimizerError::NotImplemented(message))
@@ -68,7 +68,7 @@ fn create_enforcer(
 
 fn evaluate_properties(
     expr: &PhysicalExpr,
-    required_properties: &PhysicalProperties,
+    required_properties: &RequiredProperties,
 ) -> Result<EvaluationResponse, OptimizerError> {
     let provides_property = expr_provides_property(expr, required_properties)?;
     let retains_property = if !provides_property {
@@ -82,8 +82,8 @@ fn evaluate_properties(
     })
 }
 
-pub fn expr_retains_property(expr: &PhysicalExpr, required: &PhysicalProperties) -> Result<bool, OptimizerError> {
-    let retains = match (expr, required.as_option()) {
+pub fn expr_retains_property(expr: &PhysicalExpr, required: &RequiredProperties) -> Result<bool, OptimizerError> {
+    let retains = match (expr, required.ordering()) {
         (_, None) => true,
         (PhysicalExpr::Select(Select { .. }), Some(_)) => true,
         (
@@ -91,10 +91,10 @@ pub fn expr_retains_property(expr: &PhysicalExpr, required: &PhysicalProperties)
                 left, right, condition, ..
             }),
             Some(ordering),
-        ) => join_provides_ordering(left, right, condition, ordering),
+        ) => join_provides_ordering(left, right, condition, Some(ordering)),
         (PhysicalExpr::IndexScan(IndexScan { columns, .. }), Some(ordering)) => {
             let idx_ordering = OrderingChoice::new(columns.clone());
-            ordering_is_preserved(&idx_ordering, ordering)
+            ordering_is_preserved(&idx_ordering, Some(ordering))
         }
         (
             PhysicalExpr::Sort(Sort {
@@ -102,25 +102,25 @@ pub fn expr_retains_property(expr: &PhysicalExpr, required: &PhysicalProperties)
                 ..
             }),
             Some(ordering),
-        ) => ordering_is_preserved(sort_ordering, ordering),
+        ) => ordering_is_preserved(sort_ordering, Some(ordering)),
         // ???: projection w/o expressions always retains required physical properties
         (_, _) => false,
     };
     Ok(retains)
 }
 
-pub fn expr_provides_property(expr: &PhysicalExpr, required: &PhysicalProperties) -> Result<bool, OptimizerError> {
-    let preserved = match (expr, required.as_option()) {
+pub fn expr_provides_property(expr: &PhysicalExpr, required: &RequiredProperties) -> Result<bool, OptimizerError> {
+    let preserved = match (expr, required.ordering()) {
         (_, None) => true,
         (
             PhysicalExpr::MergeSortJoin(MergeSortJoin {
                 left, right, condition, ..
             }),
             Some(ordering),
-        ) => join_provides_ordering(left, right, condition, ordering),
+        ) => join_provides_ordering(left, right, condition, Some(ordering)),
         (PhysicalExpr::IndexScan(IndexScan { columns, .. }), Some(ordering)) => {
             let idx_ordering = OrderingChoice::new(columns.clone());
-            ordering_is_preserved(&idx_ordering, ordering)
+            ordering_is_preserved(&idx_ordering, Some(ordering))
         }
         (
             PhysicalExpr::Sort(Sort {
@@ -128,7 +128,7 @@ pub fn expr_provides_property(expr: &PhysicalExpr, required: &PhysicalProperties
                 ..
             }),
             Some(ordering),
-        ) => ordering_is_preserved(sort_ordering, ordering),
+        ) => ordering_is_preserved(sort_ordering, Some(ordering)),
         (_, Some(_)) => false,
     };
     Ok(preserved)
