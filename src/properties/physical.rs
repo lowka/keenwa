@@ -1,5 +1,7 @@
 //! Physical properties. See [PhysicalProperties].
 
+use crate::meta::ColumnId;
+use itertools::Itertools;
 use std::fmt::{Display, Formatter};
 
 use crate::properties::OrderingChoice;
@@ -9,18 +11,24 @@ use crate::properties::OrderingChoice;
 pub struct PhysicalProperties {
     /// Physical properties required by an operator.
     pub required: Option<RequiredProperties>,
+    /// Presentation defines the order of columns expected by an operator.
+    pub presentation: Option<Presentation>,
 }
 
 impl PhysicalProperties {
     /// Returns physical properties object that has no requirements.
     pub const fn none() -> Self {
-        PhysicalProperties { required: None }
+        PhysicalProperties {
+            required: None,
+            presentation: None,
+        }
     }
 
     /// Creates a new physical properties with the given requirements.
     pub fn with_required(required: RequiredProperties) -> Self {
         PhysicalProperties {
             required: Some(required),
+            presentation: None,
         }
     }
 }
@@ -77,6 +85,22 @@ impl Display for RequiredProperties {
         if let Some(ordering) = self.ordering.as_ref() {
             write!(f, "ordering: {}", ordering)?;
         }
+        write!(f, " }}")
+    }
+}
+
+/// Presentation defines columns in the order expected by the operator.
+#[derive(Debug, Eq, PartialEq, Hash, Clone)]
+pub struct Presentation {
+    /// Columns in the order expected by the operator.
+    pub columns: Vec<(String, ColumnId)>,
+}
+
+impl Display for Presentation {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{{ ")?;
+        let output_columns = self.columns.iter().map(|c| format!("{}=col:{}", c.0, c.1)).join(", ");
+        write!(f, "columns: {}", output_columns)?;
         write!(f, " }}")
     }
 }
