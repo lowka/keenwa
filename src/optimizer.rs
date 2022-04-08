@@ -52,7 +52,7 @@ use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::{expr_with_new_inputs, ScalarExpr};
 use crate::operators::{ExprMemo, ExprRef, Operator, OperatorExpr, Properties};
-use crate::properties::physical::PhysicalProperties;
+use crate::properties::physical::RequiredProperties;
 use crate::rules::{EvaluationResponse, RuleContext, RuleId, RuleMatch, RuleResult, RuleSet, RuleType};
 
 /// Cost-based optimizer. See [module docs](self) for an overview of the algorithm.
@@ -83,7 +83,7 @@ where
 
         log::debug!("Optimizing expression: {:?}", expr);
 
-        let required_property = expr.props().relational().required().clone();
+        let required_property = expr.props().relational().physical().required.clone();
         let root_expr = memo.insert_group(expr);
         let root_group_id = root_expr.state().memo_group_id();
 
@@ -221,7 +221,7 @@ pub trait BestExprContext {
     fn child_group_id(&self, i: usize) -> GroupId;
 
     /// Returns physical properties required by the i-th child expression.
-    fn child_required(&self, i: usize) -> &PhysicalProperties;
+    fn child_required(&self, i: usize) -> Option<&RequiredProperties>;
 }
 
 // TODO: Add search bounds
@@ -529,20 +529,17 @@ fn enforce_properties<R>(
 {
     runtime_state.stats.tasks.enforce_properties += 1;
 
-    assert!(
-        !ctx.required_properties.is_empty(),
-        "Can not apply an enforcer - no required properties. ctx: {}, expr: {}",
-        ctx,
-        expr
-    );
+    let required_properties =
+        ctx.required_properties.as_ref().as_ref().unwrap_or_else(|| {
+            panic!("Can not apply an enforcer - no required properties. ctx: {}, expr: {}", ctx, expr)
+        });
 
     let (enforcer_expr, remaining_properties) = {
         let group = memo.get_group(&ctx.group_id());
         let input = RelNode::from_group(group);
 
-        let (enforcer_expr, remaining_properties) = rule_set
-            .create_enforcer(&ctx.required_properties, input)
-            .expect("Failed to apply an enforcer");
+        let (enforcer_expr, remaining_properties) =
+            rule_set.create_enforcer(required_properties, input).expect("Failed to apply an enforcer");
         let enforcer_expr = OperatorExpr::from(enforcer_expr);
         // ENFORCERS: Currently enforcers can not be retrieved from group.exprs()
         // because adding an enforcer to a group won't allow the optimizer to complete the optimization process:
@@ -658,14 +655,21 @@ where
 {
     let physical_expr = expr.expr().relational().physical();
     let required_properties = physical_expr.build_required_properties();
-    let EvaluationResponse {
-        provides_property,
-        retains_property,
-    } = rule_set
-        .evaluate_properties(physical_expr, &ctx.required_properties)
-        .expect("Invalid expr or required physical properties");
 
-    if ctx.required_properties.is_empty() && required_properties.is_none() {
+    let (provides_property, retains_property) = match ctx.required_properties.as_ref() {
+        Some(required_properties) => {
+            let EvaluationResponse {
+                provides_property,
+                retains_property,
+            } = rule_set
+                .evaluate_properties(physical_expr, required_properties)
+                .expect("Invalid expr or required physical properties");
+            (provides_property, retains_property)
+        }
+        None => (true, false),
+    };
+
+    if ctx.required_properties.is_none() && required_properties.is_none() {
         // Optimization context has no required properties + expression does not require any property from its inputs.
         // -> optimize each child expression using required properties of child expressions.
         // In this case every child expression is optimized using required properties of its memo group.
@@ -674,7 +678,7 @@ where
             .map(|child_expr| {
                 let required_properties = match child_expr.expr() {
                     OperatorExpr::Relational(_) => {
-                        properties_cache.insert(child_expr.props().relational().required.clone())
+                        properties_cache.insert(child_expr.props().relational().physical.required.clone())
                     }
                     OperatorExpr::Scalar(_) => properties_cache.none(),
                 };
@@ -743,11 +747,13 @@ where
     }
 
     let group = memo.get_group(&ctx.group);
-    if rule_set.can_explore_with_enforcer(group.expr().relational().logical(), &ctx.required_properties) {
-        runtime_state.tasks.schedule(Task::EnforceProperties {
-            ctx: ctx.clone(),
-            expr: ExprRefOption::none(),
-        })
+    if let Some(required_properties) = ctx.required_properties.as_ref() {
+        if rule_set.can_explore_with_enforcer(group.expr().relational().logical(), required_properties) {
+            runtime_state.tasks.schedule(Task::EnforceProperties {
+                ctx: ctx.clone(),
+                expr: ExprRefOption::none(),
+            })
+        }
     }
 
     for expr in group.mexprs() {
@@ -765,7 +771,7 @@ where
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 struct OptimizationContext {
     group: GroupId,
-    required_properties: Rc<PhysicalProperties>,
+    required_properties: Rc<Option<RequiredProperties>>,
 }
 
 impl OptimizationContext {
@@ -777,8 +783,8 @@ impl OptimizationContext {
 impl Display for OptimizationContext {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{{ group: {}", self.group)?;
-        if !self.required_properties.is_empty() {
-            write!(f, " {}", self.required_properties)?;
+        if let Some(required_properties) = self.required_properties.as_ref() {
+            write!(f, " {}", required_properties)?;
         }
         write!(f, " }}")
     }
@@ -954,7 +960,7 @@ struct InputContexts {
 }
 
 impl InputContexts {
-    fn with_required_properties(expr: &ExprRef, required_properties: Vec<Rc<PhysicalProperties>>) -> Self {
+    fn with_required_properties(expr: &ExprRef, required_properties: Vec<Rc<Option<RequiredProperties>>>) -> Self {
         let inputs = expr
             .children()
             .zip(required_properties.into_iter())
@@ -969,7 +975,7 @@ impl InputContexts {
         }
     }
 
-    fn new(expr: &ExprRef, required_properties: Rc<PhysicalProperties>) -> Self {
+    fn new(expr: &ExprRef, required_properties: Rc<Option<RequiredProperties>>) -> Self {
         InputContexts {
             inputs: expr
                 .children()
@@ -982,7 +988,7 @@ impl InputContexts {
         }
     }
 
-    fn completed(group: GroupId, required_properties: Rc<PhysicalProperties>) -> Self {
+    fn completed(group: GroupId, required_properties: Rc<Option<RequiredProperties>>) -> Self {
         let mut ctx = InputContexts {
             inputs: vec![OptimizationContext {
                 group,
@@ -1041,22 +1047,21 @@ fn new_cost_estimation_ctx(inputs: &InputContexts, state: &State) -> (CostEstima
 
 #[derive(Debug)]
 struct PhysicalPropertiesCache {
-    properties: RefCell<HashMap<PhysicalProperties, Rc<PhysicalProperties>>>,
+    properties: RefCell<HashMap<Option<RequiredProperties>, Rc<Option<RequiredProperties>>>>,
 }
 
 impl Default for PhysicalPropertiesCache {
     fn default() -> Self {
-        let none = PhysicalProperties::none();
         let cache = PhysicalPropertiesCache {
             properties: RefCell::new(HashMap::new()),
         };
-        cache.insert(none);
+        cache.insert(None);
         cache
     }
 }
 
 impl PhysicalPropertiesCache {
-    fn insert(&self, properties: PhysicalProperties) -> Rc<PhysicalProperties> {
+    fn insert(&self, properties: Option<RequiredProperties>) -> Rc<Option<RequiredProperties>> {
         let mut inner = self.properties.borrow_mut();
         let existing = inner.get(&properties);
 
@@ -1074,7 +1079,11 @@ impl PhysicalPropertiesCache {
         }
     }
 
-    fn insert_list(&self, vec: Option<Vec<PhysicalProperties>>, size: usize) -> Vec<Rc<PhysicalProperties>> {
+    fn insert_list(
+        &self,
+        vec: Option<Vec<Option<RequiredProperties>>>,
+        size: usize,
+    ) -> Vec<Rc<Option<RequiredProperties>>> {
         match vec {
             None => self.none_list(size),
             Some(props) => {
@@ -1085,14 +1094,14 @@ impl PhysicalPropertiesCache {
         }
     }
 
-    fn none(&self) -> Rc<PhysicalProperties> {
+    fn none(&self) -> Rc<Option<RequiredProperties>> {
         let inner = self.properties.borrow_mut();
-        let none = PhysicalProperties::none();
+        let none = None;
         let rc = inner.get(&none).expect("Empty physical properties are always present");
         rc.clone()
     }
 
-    fn none_list(&self, size: usize) -> Vec<Rc<PhysicalProperties>> {
+    fn none_list(&self, size: usize) -> Vec<Rc<Option<RequiredProperties>>> {
         let mut props = Vec::with_capacity(size);
         for _ in 0..size {
             let none = self.none();
@@ -1143,8 +1152,8 @@ impl<'o> BestExprContext for OptimizerResultCallbackContext<'o> {
         self.inputs[i].group_id()
     }
 
-    fn child_required(&self, i: usize) -> &PhysicalProperties {
-        &self.inputs[i].required_properties
+    fn child_required(&self, i: usize) -> Option<&RequiredProperties> {
+        self.inputs[i].required_properties.as_ref().as_ref()
     }
 }
 

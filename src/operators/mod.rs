@@ -60,25 +60,32 @@ impl Operator {
         self.state.props()
     }
 
-    /// Creates a new operator from this one but with new required properties.
-    pub fn with_required(self, required: PhysicalProperties) -> Self {
+    /// Creates a new operator from this one but with new [physical properties](PhysicalProperties).
+    pub fn with_physical(self, physical: PhysicalProperties) -> Self {
+        self.with_rel_properties(|p| RelationalProperties {
+            logical: p.logical,
+            physical,
+        })
+    }
+
+    fn with_rel_properties<F>(self, modify_properties: F) -> Self
+    where
+        F: FnOnce(RelationalProperties) -> RelationalProperties,
+    {
         let Operator { state } = self;
         assert!(
             state.expr().is_relational(),
-            "Scalar expressions do not support physical properties: {:?}",
+            "Scalar expressions do not support relational properties: {:?}",
             state.expr()
         );
         let old_properties = match state.props().clone() {
             Properties::Relational(props) => props,
             Properties::Scalar(_) => panic!("Relational operator with scalar properties"),
         };
+        let properties = (modify_properties)(old_properties);
         let expr = state.expr().clone();
-        let props = RelationalProperties {
-            logical: old_properties.logical,
-            required,
-        };
         Operator {
-            state: MemoExprState::new(expr, Properties::Relational(props)),
+            state: MemoExprState::new(expr, Properties::Relational(properties)),
         }
     }
 }
@@ -143,10 +150,6 @@ pub enum Properties {
 }
 
 impl Properties {
-    pub fn new_relational_properties(logical: LogicalProperties, required: PhysicalProperties) -> Self {
-        Properties::Relational(RelationalProperties { logical, required })
-    }
-
     pub fn new_scalar_properties(nested_sub_queries: Vec<Operator>) -> Self {
         Properties::Scalar(ScalarProperties { nested_sub_queries })
     }
@@ -197,7 +200,7 @@ impl Props for Properties {
 #[derive(Debug, Clone, Default)]
 pub struct RelationalProperties {
     pub(crate) logical: LogicalProperties,
-    pub(crate) required: PhysicalProperties,
+    pub(crate) physical: PhysicalProperties,
 }
 
 impl RelationalProperties {
@@ -206,9 +209,9 @@ impl RelationalProperties {
         &self.logical
     }
 
-    /// Physical properties required by an expression.
-    pub fn required(&self) -> &PhysicalProperties {
-        &self.required
+    /// Physical properties of an expression.
+    pub fn physical(&self) -> &PhysicalProperties {
+        &self.physical
     }
 }
 
@@ -294,7 +297,9 @@ impl MemoExpr for Operator {
         _props: Self::Props,
         sub_queries: impl Iterator<Item = Self>,
     ) -> Self::Props {
-        Properties::new_scalar_properties(sub_queries.collect())
+        Properties::Scalar(ScalarProperties {
+            nested_sub_queries: sub_queries.collect(),
+        })
     }
 
     fn num_children(&self) -> usize {

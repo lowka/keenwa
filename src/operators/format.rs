@@ -95,10 +95,11 @@ impl OperatorTreeFormatter {
             if let Properties::Relational(props) = props {
                 let logical = props.logical();
                 buf.push_str(format!("{}output cols: {:?}\n", padding, logical.output_columns()).as_str());
-                if !props.required.is_empty() {
-                    if let Some(ordering) = props.required().ordering() {
-                        buf.push_str(format!("{}ordering: {:?}\n", padding, ordering.columns()).as_str());
-                    }
+
+                let physical = props.physical();
+                let required = physical.required.as_ref();
+                if let Some(ordering) = required.and_then(|r| r.ordering()) {
+                    buf.push_str(format!("{}ordering: {:?}\n", padding, ordering.columns()).as_str());
                 }
             }
         }

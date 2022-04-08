@@ -4,50 +4,24 @@ use std::fmt::{Display, Formatter};
 
 use crate::properties::OrderingChoice;
 
-/// Physical properties required by an operator.
+/// Physical properties of an operator.
 #[derive(Debug, Eq, PartialEq, Hash, Clone)]
 pub struct PhysicalProperties {
-    inner: Option<Values>,
+    /// Physical properties required by an operator.
+    pub required: Option<RequiredProperties>,
 }
 
 impl PhysicalProperties {
     /// Returns physical properties object that has no requirements.
     pub const fn none() -> Self {
-        PhysicalProperties { inner: None }
+        PhysicalProperties { required: None }
     }
 
-    /// Creates a new physical properties object that require the the given ordering.
-    pub fn new(ordering: OrderingChoice) -> Self {
-        let values = Values {
-            ordering: Some(ordering),
-        };
-        PhysicalProperties { inner: Some(values) }
-    }
-
-    /// Returns `true` if this physical properties object has no requirements.
-    pub fn is_empty(&self) -> bool {
-        self.inner.is_none()
-    }
-
-    /// Returns the required ordering.
-    pub fn ordering(&self) -> Option<&OrderingChoice> {
-        match &self.inner {
-            None => None,
-            Some(p) => {
-                assert!(p.ordering.is_some(), "Unexpected physical property. Only ordering is supported: {:?}", self);
-                p.ordering.as_ref()
-            }
+    /// Creates a new physical properties with the given requirements.
+    pub fn with_required(required: RequiredProperties) -> Self {
+        PhysicalProperties {
+            required: Some(required),
         }
-    }
-
-    /// Returns this physical properties object in the form of an [`Option`](std::option::Option).
-    pub fn as_option(&self) -> Option<Option<&OrderingChoice>> {
-        self.inner.as_ref().map(|_| self.ordering())
-    }
-
-    /// Returns a copy of this physical properties without ordering requirements.
-    pub fn without_ordering(self) -> PhysicalProperties {
-        PhysicalProperties::none()
     }
 }
 
@@ -60,14 +34,49 @@ impl Default for PhysicalProperties {
 impl Display for PhysicalProperties {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{{ ")?;
-        if let Some(Some(ordering)) = self.as_option() {
-            write!(f, "ordering: {}", ordering)?;
+        if let Some(required) = self.required.as_ref() {
+            write!(f, "required: {}", required)?;
         }
         write!(f, " }}")
     }
 }
 
+/// Physical properties required by an operator.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
-struct Values {
+pub struct RequiredProperties {
     ordering: Option<OrderingChoice>,
+}
+
+impl RequiredProperties {
+    /// Creates properties that require the given ordering.
+    pub fn new_with_ordering(ordering: OrderingChoice) -> Self {
+        RequiredProperties {
+            ordering: Some(ordering),
+        }
+    }
+
+    /// Returns `true` if there are any required properties.
+    pub fn is_some(&self) -> bool {
+        self.ordering.is_some()
+    }
+
+    /// Returns the required [ordering](OrderingChoice).
+    pub fn ordering(&self) -> Option<&OrderingChoice> {
+        self.ordering.as_ref()
+    }
+
+    /// Returns new required properties that do not require [ordering](OrderingChoice).
+    pub fn without_ordering(self) -> RequiredProperties {
+        RequiredProperties { ordering: None }
+    }
+}
+
+impl Display for RequiredProperties {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{{ ")?;
+        if let Some(ordering) = self.ordering.as_ref() {
+            write!(f, "ordering: {}", ordering)?;
+        }
+        write!(f, " }}")
+    }
 }

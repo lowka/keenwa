@@ -13,7 +13,7 @@ use scope::{OperatorScope, RelationInScope};
 
 use crate::catalog::CatalogRef;
 use crate::error::OptimizerError;
-use crate::memo::{MemoExprState, Props};
+use crate::memo::MemoExprState;
 use crate::meta::{ColumnId, ColumnMetadata, MutableMetadata};
 use crate::operators::relational::join::{JoinCondition, JoinOn, JoinType, JoinUsing};
 use crate::operators::relational::logical::{
@@ -26,7 +26,7 @@ use crate::operators::scalar::types::resolve_expr_type;
 use crate::operators::scalar::value::ScalarValue;
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
 use crate::operators::{ExprMemo, Operator, OperatorExpr};
-use crate::properties::physical::PhysicalProperties;
+use crate::properties::physical::{PhysicalProperties, RequiredProperties};
 use crate::properties::OrderingChoice;
 
 mod aggregate;
@@ -54,7 +54,7 @@ impl OrderingOptions {
     }
 
     /// Returns ordering options.
-    fn options(&self) -> &[OrderingOption] {
+    pub fn options(&self) -> &[OrderingOption] {
         &self.options
     }
 }
@@ -378,8 +378,9 @@ impl OperatorBuilder {
                 }
 
                 let ordering = OrderingChoice::new(ordering_columns);
-                let required = PhysicalProperties::new(ordering);
-                self.operator = Some(operator.with_required(required));
+                let required = RequiredProperties::new_with_ordering(ordering);
+                let physical = PhysicalProperties::with_required(required);
+                self.operator = Some(operator.with_physical(physical));
                 self.scope = Some(scope);
                 Ok(self)
             }
@@ -1601,7 +1602,7 @@ Memo:
 
             let subquery_props = Properties::Relational(RelationalProperties {
                 logical: LogicalProperties::new(vec![1], None),
-                required: PhysicalProperties::none(),
+                physical: PhysicalProperties::none(),
             });
             let subquery = Operator::new(state.expr().clone(), subquery_props);
             let expr = ScalarExpr::SubQuery(RelNode::from(subquery));

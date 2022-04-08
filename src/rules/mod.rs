@@ -10,7 +10,7 @@ use crate::meta::MetadataRef;
 use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::relational::RelNode;
-use crate::properties::physical::PhysicalProperties;
+use crate::properties::physical::RequiredProperties;
 use crate::rules::enforcers::{DefaultEnforcers, EnforcerRules};
 
 mod enforcers;
@@ -89,20 +89,20 @@ pub enum RuleResult {
 
 #[derive(Debug)]
 pub struct RuleContext<'m> {
-    required_properties: Rc<PhysicalProperties>,
+    required_properties: Rc<Option<RequiredProperties>>,
     metadata: MetadataRef<'m>,
 }
 
 impl<'m> RuleContext<'m> {
-    pub fn new(required_properties: Rc<PhysicalProperties>, metadata: MetadataRef<'m>) -> Self {
+    pub fn new(required_properties: Rc<Option<RequiredProperties>>, metadata: MetadataRef<'m>) -> Self {
         RuleContext {
             required_properties,
             metadata,
         }
     }
 
-    pub fn required_properties(&self) -> &PhysicalProperties {
-        self.required_properties.as_ref()
+    pub fn required_properties(&self) -> Option<&RequiredProperties> {
+        self.required_properties.as_ref().as_ref()
     }
 
     pub fn metadata(&self) -> &MetadataRef {
@@ -131,16 +131,16 @@ pub trait RuleSet {
     fn evaluate_properties(
         &self,
         expr: &PhysicalExpr,
-        required_properties: &PhysicalProperties,
+        required_properties: &RequiredProperties,
     ) -> Result<EvaluationResponse, OptimizerError>;
 
     /// Creates an enforcer operator for the specified physical properties.
     /// If enforcer can not be created this method must return an error.
     fn create_enforcer(
         &self,
-        required_properties: &PhysicalProperties,
+        required_properties: &RequiredProperties,
         input: RelNode,
-    ) -> Result<(PhysicalExpr, PhysicalProperties), OptimizerError>;
+    ) -> Result<(PhysicalExpr, Option<RequiredProperties>), OptimizerError>;
 
     /// Provides a hint to the optimizer whether or not to explore an alternative plan for the given expression
     /// that can use an enforcer as a parent expression. For example:
@@ -164,7 +164,7 @@ pub trait RuleSet {
     /// ```
     /// Plan #2 is more beneficial because in this case a sort operation will have less tuples to sort.
     ///
-    fn can_explore_with_enforcer(&self, expr: &LogicalExpr, required_properties: &PhysicalProperties) -> bool;
+    fn can_explore_with_enforcer(&self, expr: &LogicalExpr, required_properties: &RequiredProperties) -> bool;
 }
 
 /// An iterator over available optimization rules.
@@ -264,34 +264,20 @@ impl RuleSet for StaticRuleSet {
     fn evaluate_properties(
         &self,
         expr: &PhysicalExpr,
-        required_properties: &PhysicalProperties,
+        required_properties: &RequiredProperties,
     ) -> Result<EvaluationResponse, OptimizerError> {
-        if required_properties.is_empty() {
-            let response = EvaluationResponse {
-                provides_property: true,
-                retains_property: false,
-            };
-            Ok(response)
-        } else {
-            self.enforcers.evaluate_properties(expr, required_properties)
-        }
+        self.enforcers.evaluate_properties(expr, required_properties)
     }
 
     fn create_enforcer(
         &self,
-        required_properties: &PhysicalProperties,
+        required_properties: &RequiredProperties,
         input: RelNode,
-    ) -> Result<(PhysicalExpr, PhysicalProperties), OptimizerError> {
-        assert!(
-            !required_properties.is_empty(),
-            "Unable to create an enforcer - no required properties: {:?}",
-            required_properties
-        );
-
+    ) -> Result<(PhysicalExpr, Option<RequiredProperties>), OptimizerError> {
         self.enforcers.create_enforcer(required_properties, input)
     }
 
-    fn can_explore_with_enforcer(&self, expr: &LogicalExpr, required_properties: &PhysicalProperties) -> bool {
+    fn can_explore_with_enforcer(&self, expr: &LogicalExpr, required_properties: &RequiredProperties) -> bool {
         self.enforcers.can_explore_with_enforcer(expr, required_properties)
     }
 }

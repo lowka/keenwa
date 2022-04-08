@@ -11,7 +11,7 @@ use crate::meta::ColumnId;
 pub mod logical;
 pub mod physical;
 
-/// Ordering.
+/// Ordering. Describes how columns are sorted.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct OrderingChoice {
     columns: Vec<ColumnId>,
