@@ -227,9 +227,11 @@ where
                     // Enforcer returns the same logical properties as its input
                     let logical = input.props().logical().clone();
                     // Sort operator does not have any ordering requirements.
-                    let PhysicalProperties { required } = input.props().physical().clone();
+                    let PhysicalProperties { required, presentation } = input.props().physical().clone();
                     let physical = PhysicalProperties {
                         required: required.map(|r| r.without_ordering()),
+                        // Use the same presentation as the input operator.
+                        presentation,
                     };
 
                     Ok(Properties::Relational(RelationalProperties { logical, physical }))
