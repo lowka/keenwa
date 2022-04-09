@@ -6,7 +6,7 @@ use crate::meta::{ColumnId, MetadataRef};
 use crate::operators::relational::join::{JoinCondition, JoinType};
 use crate::operators::relational::logical::{
     LogicalAggregate, LogicalDistinct, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect,
-    LogicalJoin, LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
+    LogicalJoin, LogicalLimit, LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
 };
 use crate::operators::relational::physical::{PhysicalExpr, Sort};
 use crate::operators::relational::{RelExpr, RelNode};
@@ -154,6 +154,12 @@ where
 
         Ok(LogicalProperties::new(output_columns, None))
     }
+
+    fn build_limit_offset(&self, input: &RelNode) -> Result<LogicalProperties, OptimizerError> {
+        let output_columns = input.props().logical().output_columns.to_vec();
+
+        Ok(LogicalProperties::new(output_columns, None))
+    }
 }
 
 impl<T> Debug for LogicalPropertiesBuilder<T>
@@ -222,6 +228,8 @@ where
                     LogicalExpr::Distinct(LogicalDistinct { input, on_expr, .. }) => {
                         self.build_distinct(input, on_expr.as_ref())
                     }
+                    LogicalExpr::Limit(LogicalLimit { input, .. })
+                    | LogicalExpr::Offset(LogicalOffset { input, .. }) => self.build_limit_offset(input),
                     LogicalExpr::Empty(LogicalEmpty { .. }) => self.build_empty(),
                 }?;
                 let logical = LogicalProperties::new(output_columns, None);

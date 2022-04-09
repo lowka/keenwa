@@ -12,7 +12,7 @@ use crate::meta::{ColumnId, MetadataRef};
 use crate::operators::relational::join::{JoinCondition, JoinType};
 use crate::operators::relational::logical::{
     LogicalAggregate, LogicalDistinct, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin,
-    LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
+    LogicalLimit, LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
 };
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::ExprRewriter;
@@ -141,6 +141,26 @@ where
         //FIXME: The result of a distinct operator should include only non-duplicate rows.
         Ok(Some(Statistics::from_row_count(row_count)))
     }
+
+    fn build_limit(&self, input: &RelNode, rows: usize) -> Result<Option<Statistics>, OptimizerError> {
+        let input_statistics = input.props().logical().statistics().unwrap();
+        let input_rows = input_statistics.row_count();
+        let rows = rows as f64;
+
+        let rows = if rows > input_rows { input_rows } else { rows };
+
+        Ok(Some(Statistics::from_row_count(rows as f64)))
+    }
+
+    fn build_offset(&self, input: &RelNode, rows: usize) -> Result<Option<Statistics>, OptimizerError> {
+        let input_statistics = input.props().logical().statistics().unwrap();
+        let input_rows = input_statistics.row_count();
+        let rows = rows as f64;
+
+        let rows = if input_rows > rows { rows } else { rows - input_rows };
+
+        Ok(Some(Statistics::from_row_count(rows)))
+    }
 }
 
 impl<T> StatisticsBuilder for SimpleCatalogStatisticsBuilder<T>
@@ -189,6 +209,8 @@ where
             LogicalExpr::Distinct(LogicalDistinct { input, on_expr, .. }) => {
                 self.build_distinct(input, on_expr.as_ref())
             }
+            LogicalExpr::Limit(LogicalLimit { input, rows }) => self.build_limit(input, *rows),
+            LogicalExpr::Offset(LogicalOffset { input, rows }) => self.build_offset(input, *rows),
             LogicalExpr::Empty(_) => self.build_empty(),
         }
     }

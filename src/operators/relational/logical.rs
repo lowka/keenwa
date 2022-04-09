@@ -22,6 +22,8 @@ pub enum LogicalExpr {
     Intersect(LogicalIntersect),
     Except(LogicalExcept),
     Distinct(LogicalDistinct),
+    Limit(LogicalLimit),
+    Offset(LogicalOffset),
     /// Relation that produces no rows.
     Empty(LogicalEmpty),
 }
@@ -38,6 +40,8 @@ impl LogicalExpr {
             LogicalExpr::Intersect(expr) => expr.copy_in(visitor, expr_ctx),
             LogicalExpr::Except(expr) => expr.copy_in(visitor, expr_ctx),
             LogicalExpr::Distinct(expr) => expr.copy_in(visitor, expr_ctx),
+            LogicalExpr::Limit(expr) => expr.copy_in(visitor, expr_ctx),
+            LogicalExpr::Offset(expr) => expr.copy_in(visitor, expr_ctx),
             LogicalExpr::Empty(_) => {}
         }
     }
@@ -53,6 +57,8 @@ impl LogicalExpr {
             LogicalExpr::Intersect(expr) => LogicalExpr::Intersect(expr.with_new_inputs(inputs)),
             LogicalExpr::Except(expr) => LogicalExpr::Except(expr.with_new_inputs(inputs)),
             LogicalExpr::Distinct(expr) => LogicalExpr::Distinct(expr.with_new_inputs(inputs)),
+            LogicalExpr::Limit(expr) => LogicalExpr::Limit(expr.with_new_inputs(inputs)),
+            LogicalExpr::Offset(expr) => LogicalExpr::Offset(expr.with_new_inputs(inputs)),
             LogicalExpr::Empty(expr) => LogicalExpr::Empty(expr.with_new_inputs(inputs)),
         }
     }
@@ -68,6 +74,8 @@ impl LogicalExpr {
             LogicalExpr::Intersect(expr) => expr.num_children(),
             LogicalExpr::Except(expr) => expr.num_children(),
             LogicalExpr::Distinct(expr) => expr.num_children(),
+            LogicalExpr::Limit(expr) => expr.num_children(),
+            LogicalExpr::Offset(expr) => expr.num_children(),
             LogicalExpr::Empty(expr) => expr.num_children(),
         }
     }
@@ -83,6 +91,8 @@ impl LogicalExpr {
             LogicalExpr::Intersect(expr) => expr.get_child(i),
             LogicalExpr::Except(expr) => expr.get_child(i),
             LogicalExpr::Distinct(expr) => expr.get_child(i),
+            LogicalExpr::Limit(expr) => expr.get_child(i),
+            LogicalExpr::Offset(expr) => expr.get_child(i),
             LogicalExpr::Empty(expr) => expr.get_child(i),
         }
     }
@@ -101,6 +111,8 @@ impl LogicalExpr {
             LogicalExpr::Intersect(expr) => expr.format_expr(f),
             LogicalExpr::Except(expr) => expr.format_expr(f),
             LogicalExpr::Distinct(expr) => expr.format_expr(f),
+            LogicalExpr::Limit(expr) => expr.format_expr(f),
+            LogicalExpr::Offset(expr) => expr.format_expr(f),
             LogicalExpr::Empty(expr) => expr.format_expr(f),
         }
     }
@@ -188,6 +200,12 @@ impl LogicalExpr {
                 right.expr().logical().accept(visitor)?;
             }
             LogicalExpr::Distinct(LogicalDistinct { input, .. }) => {
+                input.expr().logical().accept(visitor)?;
+            }
+            LogicalExpr::Limit(LogicalLimit { input, .. }) => {
+                input.expr().logical().accept(visitor)?;
+            }
+            LogicalExpr::Offset(LogicalOffset { input, .. }) => {
                 input.expr().logical().accept(visitor)?;
             }
             LogicalExpr::Empty(_) => {}
@@ -679,6 +697,88 @@ impl LogicalDistinct {
         match i {
             0 => Some(self.input.mexpr()),
             1 => self.on_expr.as_ref().map(|expr| expr.mexpr()),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LogicalLimit {
+    pub input: RelNode,
+    pub rows: usize,
+}
+
+impl LogicalLimit {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.input);
+    }
+
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
+        inputs.expect_len(self.num_children(), "LogicalLimit");
+
+        LogicalLimit {
+            input: inputs.rel_node(),
+            rows: self.rows,
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("LogicalLimit");
+        f.write_expr("input", &self.input);
+        f.write_value("rows", self.rows);
+    }
+
+    fn num_children(&self) -> usize {
+        1
+    }
+
+    fn get_child(&self, i: usize) -> Option<&Operator> {
+        match i {
+            0 => Some(self.input.mexpr()),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LogicalOffset {
+    pub input: RelNode,
+    pub rows: usize,
+}
+
+impl LogicalOffset {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.input);
+    }
+
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
+        inputs.expect_len(self.num_children(), "LogicalOffset");
+
+        LogicalOffset {
+            input: inputs.rel_node(),
+            rows: self.rows,
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("LogicalOffset");
+        f.write_expr("input", &self.input);
+        f.write_value("rows", self.rows);
+    }
+
+    fn num_children(&self) -> usize {
+        1
+    }
+
+    fn get_child(&self, i: usize) -> Option<&Operator> {
+        match i {
+            0 => Some(self.input.mexpr()),
             _ => None,
         }
     }
