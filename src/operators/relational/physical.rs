@@ -27,6 +27,8 @@ pub enum PhysicalExpr {
     Append(Append),
     Unique(Unique),
     HashedSetOp(HashedSetOp),
+    Limit(Limit),
+    Offset(Offset),
     /// Relation that produces no rows.
     Empty(Empty),
 }
@@ -46,6 +48,8 @@ impl PhysicalExpr {
             PhysicalExpr::Unique(expr) => expr.copy_in(visitor, expr_ctx),
             PhysicalExpr::Append(expr) => expr.copy_in(visitor, expr_ctx),
             PhysicalExpr::HashedSetOp(expr) => expr.copy_in(visitor, expr_ctx),
+            PhysicalExpr::Limit(expr) => expr.copy_in(visitor, expr_ctx),
+            PhysicalExpr::Offset(expr) => expr.copy_in(visitor, expr_ctx),
             PhysicalExpr::Empty(_) => {}
         }
     }
@@ -64,6 +68,8 @@ impl PhysicalExpr {
             PhysicalExpr::Unique(expr) => PhysicalExpr::Unique(expr.with_new_inputs(inputs)),
             PhysicalExpr::Append(expr) => PhysicalExpr::Append(expr.with_new_inputs(inputs)),
             PhysicalExpr::HashedSetOp(expr) => PhysicalExpr::HashedSetOp(expr.with_new_inputs(inputs)),
+            PhysicalExpr::Limit(expr) => PhysicalExpr::Limit(expr.with_new_inputs(inputs)),
+            PhysicalExpr::Offset(expr) => PhysicalExpr::Offset(expr.with_new_inputs(inputs)),
             PhysicalExpr::Empty(expr) => PhysicalExpr::Empty(expr.with_new_inputs(inputs)),
         }
     }
@@ -82,6 +88,8 @@ impl PhysicalExpr {
             PhysicalExpr::Unique(expr) => expr.num_children(),
             PhysicalExpr::Append(expr) => expr.num_children(),
             PhysicalExpr::HashedSetOp(expr) => expr.num_children(),
+            PhysicalExpr::Limit(expr) => expr.num_children(),
+            PhysicalExpr::Offset(expr) => expr.num_children(),
             PhysicalExpr::Empty(expr) => expr.num_children(),
         }
     }
@@ -100,6 +108,8 @@ impl PhysicalExpr {
             PhysicalExpr::Unique(expr) => expr.get_child(i),
             PhysicalExpr::Append(expr) => expr.get_child(i),
             PhysicalExpr::HashedSetOp(expr) => expr.get_child(i),
+            PhysicalExpr::Limit(expr) => expr.get_child(i),
+            PhysicalExpr::Offset(expr) => expr.get_child(i),
             PhysicalExpr::Empty(expr) => expr.get_child(i),
         }
     }
@@ -118,6 +128,8 @@ impl PhysicalExpr {
             PhysicalExpr::Unique(expr) => expr.build_required_properties(),
             PhysicalExpr::Append(expr) => expr.build_required_properties(),
             PhysicalExpr::HashedSetOp(expr) => expr.build_required_properties(),
+            PhysicalExpr::Limit(expr) => expr.build_required_properties(),
+            PhysicalExpr::Offset(expr) => expr.build_required_properties(),
             PhysicalExpr::Empty(expr) => expr.build_required_properties(),
         }
     }
@@ -139,6 +151,8 @@ impl PhysicalExpr {
             PhysicalExpr::Unique(expr) => expr.format_expr(f),
             PhysicalExpr::Append(expr) => expr.format_expr(f),
             PhysicalExpr::HashedSetOp(expr) => expr.format_expr(f),
+            PhysicalExpr::Limit(expr) => expr.format_expr(f),
+            PhysicalExpr::Offset(expr) => expr.format_expr(f),
             PhysicalExpr::Empty(expr) => expr.format_expr(f),
         }
     }
@@ -836,6 +850,96 @@ impl HashedSetOp {
         f.write_value("intersect", &self.intersect);
         f.write_value("all", self.all);
         f.write_values("cols", &self.columns)
+    }
+}
+
+/// Limits the output of the input operator to produce no more than the specified number of rows.
+#[derive(Debug, Clone)]
+pub struct Limit {
+    pub input: RelNode,
+    pub rows: usize,
+}
+
+impl Limit {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.input);
+    }
+
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
+        inputs.expect_len(self.num_children(), "Limit");
+        Limit {
+            input: inputs.rel_node(),
+            rows: self.rows,
+        }
+    }
+
+    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
+        None
+    }
+
+    fn num_children(&self) -> usize {
+        1
+    }
+
+    fn get_child(&self, i: usize) -> Option<&Operator> {
+        match i {
+            0 => Some(self.input.mexpr()),
+            _ => None,
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("Limit");
+        f.write_expr("input", &self.input);
+        f.write_value("rows", self.rows)
+    }
+}
+
+/// Skips the first `rows` number of items produced by the input operator.
+#[derive(Debug, Clone)]
+pub struct Offset {
+    pub input: RelNode,
+    pub rows: usize,
+}
+
+impl Offset {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.input);
+    }
+
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
+        inputs.expect_len(self.num_children(), "Offset");
+        Offset {
+            input: inputs.rel_node(),
+            rows: self.rows,
+        }
+    }
+
+    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
+        None
+    }
+
+    fn num_children(&self) -> usize {
+        1
+    }
+
+    fn get_child(&self, i: usize) -> Option<&Operator> {
+        match i {
+            0 => Some(self.input.mexpr()),
+            _ => None,
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("Offset");
+        f.write_expr("input", &self.input);
+        f.write_value("rows", self.rows)
     }
 }
 

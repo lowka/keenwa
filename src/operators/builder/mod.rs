@@ -17,8 +17,8 @@ use crate::memo::MemoExprState;
 use crate::meta::{ColumnId, ColumnMetadata, MutableMetadata};
 use crate::operators::relational::join::{JoinCondition, JoinOn, JoinType, JoinUsing};
 use crate::operators::relational::logical::{
-    LogicalDistinct, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin,
-    LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
+    LogicalDistinct, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin, LogicalLimit,
+    LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
 };
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::ExprRewriter;
@@ -458,6 +458,22 @@ impl OperatorBuilder {
             on_expr,
             columns,
         });
+        self.add_operator_and_scope(expr, input_scope);
+        Ok(self)
+    }
+
+    /// Adds a limit operator.
+    pub fn limit(mut self, rows: usize) -> Result<Self, OptimizerError> {
+        let (input, input_scope) = self.rel_node()?;
+        let expr = LogicalExpr::Limit(LogicalLimit { input, rows });
+        self.add_operator_and_scope(expr, input_scope);
+        Ok(self)
+    }
+
+    /// Adds an offset operator.
+    pub fn offset(mut self, rows: usize) -> Result<Self, OptimizerError> {
+        let (input, input_scope) = self.rel_node()?;
+        let expr = LogicalExpr::Offset(LogicalOffset { input, rows });
         self.add_operator_and_scope(expr, input_scope);
         Ok(self)
     }

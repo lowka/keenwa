@@ -13,9 +13,12 @@ pub use set::{HashSetOpRule, UnionRule};
 use crate::catalog::CatalogRef;
 use crate::error::OptimizerError;
 use crate::operators::relational::logical::{
-    LogicalDistinct, LogicalEmpty, LogicalExpr, LogicalGet, LogicalProjection, LogicalSelect,
+    LogicalDistinct, LogicalEmpty, LogicalExpr, LogicalGet, LogicalLimit, LogicalOffset, LogicalProjection,
+    LogicalSelect,
 };
-use crate::operators::relational::physical::{Empty, HashAggregate, PhysicalExpr, Projection, Scan, Select, Unique};
+use crate::operators::relational::physical::{
+    Empty, HashAggregate, Limit, Offset, PhysicalExpr, Projection, Scan, Select, Unique,
+};
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
 use crate::operators::ScalarProperties;
 use crate::rules::{Rule, RuleContext, RuleMatch, RuleResult, RuleType};
@@ -220,6 +223,47 @@ impl Rule for DistinctRule {
                         columns: columns.clone(),
                     })
                 };
+                Ok(Some(RuleResult::Implementation(expr)))
+            }
+            _ => Ok(None),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct LimitOffsetRule;
+
+impl Rule for LimitOffsetRule {
+    fn name(&self) -> String {
+        "LimitOffsetRule".into()
+    }
+
+    fn rule_type(&self) -> RuleType {
+        RuleType::Implementation
+    }
+
+    fn matches(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Option<RuleMatch> {
+        if matches!(expr, LogicalExpr::Limit(_) | LogicalExpr::Offset(_)) {
+            Some(RuleMatch::Expr)
+        } else {
+            None
+        }
+    }
+
+    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
+        match expr {
+            LogicalExpr::Limit(LogicalLimit { input, rows }) => {
+                let expr = PhysicalExpr::Limit(Limit {
+                    input: input.clone(),
+                    rows: *rows,
+                });
+                Ok(Some(RuleResult::Implementation(expr)))
+            }
+            LogicalExpr::Offset(LogicalOffset { input, rows }) => {
+                let expr = PhysicalExpr::Offset(Offset {
+                    input: input.clone(),
+                    rows: *rows,
+                });
                 Ok(Some(RuleResult::Implementation(expr)))
             }
             _ => Ok(None),

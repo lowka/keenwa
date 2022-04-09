@@ -113,6 +113,8 @@ fn rewrite(mut state: State, expr: &RelNode) -> RelNode {
         LogicalExpr::Intersect(_) => rewrite_inputs(state, expr),
         LogicalExpr::Except(_) => rewrite_inputs(state, expr),
         LogicalExpr::Distinct(_) => rewrite_inputs(state, expr),
+        LogicalExpr::Limit(_) => rewrite_inputs(state, expr),
+        LogicalExpr::Offset(_) => rewrite_inputs(state, expr),
         LogicalExpr::Empty(_) => rewrite_inputs(state, expr),
     }
 }
@@ -835,6 +837,26 @@ LogicalDistinct cols=[1, 2]
   input: LogicalSelect
     input: LogicalGet A cols=[1, 2]
     filter: Expr col:1 > 100
+"#,
+        );
+    }
+
+    #[test]
+    fn test_push_past_limit_offset() {
+        rewrite_expr(
+            |builder| {
+                let from_a = builder.get("A", vec!["a1", "a2"])?;
+                let limit_offset = from_a.offset(10)?.limit(5)?;
+                let filter = col("a1").gt(scalar(100));
+                let filter_a1 = limit_offset.select(Some(filter))?;
+                Ok(filter_a1)
+            },
+            r#"
+LogicalLimit rows=5
+  input: LogicalOffset rows=10
+    input: LogicalSelect
+      input: LogicalGet A cols=[1, 2]
+      filter: Expr col:1 > 100
 "#,
         );
     }

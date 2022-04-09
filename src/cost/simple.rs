@@ -3,7 +3,7 @@
 use std::fmt::{Debug, Formatter};
 
 use crate::cost::{Cost, CostEstimationContext, CostEstimator};
-use crate::operators::relational::physical::{HashAggregate, HashedSetOp, PhysicalExpr, Unique};
+use crate::operators::relational::physical::{HashAggregate, HashedSetOp, Limit, Offset, PhysicalExpr, Unique};
 use crate::statistics::Statistics;
 
 /// A very simple implementation of a [CostEstimator].
@@ -130,6 +130,15 @@ impl CostEstimator for SimpleCostEstimator {
                 };
 
                 (rows + hashtable_cost + deduplication_cost) as usize
+            }
+            PhysicalExpr::Limit(Limit { rows, .. }) => {
+                // Limit operator is executed at most `rows` times.
+                *rows
+            }
+            PhysicalExpr::Offset(Offset { rows, .. }) => {
+                // The cost of an offset operator is equal to the number of rows it must skip
+                // after that it is just a passthrough operator.
+                *rows
             }
             PhysicalExpr::Empty(_) => 0,
         }

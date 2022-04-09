@@ -809,3 +809,25 @@ fn test_distinct_hash_aggregate() {
 "#,
     );
 }
+
+#[test]
+fn test_limit_offset() {
+    let mut tester = OptimizerTester::new();
+    tester.set_operator(|builder| {
+        let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
+        let result = from_a.offset(10)?.limit(4)?;
+
+        result.build()
+    });
+
+    tester.add_rules(|_| vec![Box::new(DistinctRule)]);
+    tester.set_table_row_count("A", 100);
+
+    tester.optimize(
+        r#"
+02 Limit [01] rows=4
+01 Offset [00] rows=10
+00 Scan A cols=[1, 2]
+"#,
+    );
+}
