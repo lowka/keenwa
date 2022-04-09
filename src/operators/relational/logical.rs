@@ -21,6 +21,7 @@ pub enum LogicalExpr {
     Union(LogicalUnion),
     Intersect(LogicalIntersect),
     Except(LogicalExcept),
+    Distinct(LogicalDistinct),
     /// Relation that produces no rows.
     Empty(LogicalEmpty),
 }
@@ -36,6 +37,7 @@ impl LogicalExpr {
             LogicalExpr::Union(expr) => expr.copy_in(visitor, expr_ctx),
             LogicalExpr::Intersect(expr) => expr.copy_in(visitor, expr_ctx),
             LogicalExpr::Except(expr) => expr.copy_in(visitor, expr_ctx),
+            LogicalExpr::Distinct(expr) => expr.copy_in(visitor, expr_ctx),
             LogicalExpr::Empty(_) => {}
         }
     }
@@ -50,6 +52,7 @@ impl LogicalExpr {
             LogicalExpr::Union(expr) => LogicalExpr::Union(expr.with_new_inputs(inputs)),
             LogicalExpr::Intersect(expr) => LogicalExpr::Intersect(expr.with_new_inputs(inputs)),
             LogicalExpr::Except(expr) => LogicalExpr::Except(expr.with_new_inputs(inputs)),
+            LogicalExpr::Distinct(expr) => LogicalExpr::Distinct(expr.with_new_inputs(inputs)),
             LogicalExpr::Empty(expr) => LogicalExpr::Empty(expr.with_new_inputs(inputs)),
         }
     }
@@ -64,6 +67,7 @@ impl LogicalExpr {
             LogicalExpr::Union(expr) => expr.num_children(),
             LogicalExpr::Intersect(expr) => expr.num_children(),
             LogicalExpr::Except(expr) => expr.num_children(),
+            LogicalExpr::Distinct(expr) => expr.num_children(),
             LogicalExpr::Empty(expr) => expr.num_children(),
         }
     }
@@ -78,6 +82,7 @@ impl LogicalExpr {
             LogicalExpr::Union(expr) => expr.get_child(i),
             LogicalExpr::Intersect(expr) => expr.get_child(i),
             LogicalExpr::Except(expr) => expr.get_child(i),
+            LogicalExpr::Distinct(expr) => expr.get_child(i),
             LogicalExpr::Empty(expr) => expr.get_child(i),
         }
     }
@@ -95,6 +100,7 @@ impl LogicalExpr {
             LogicalExpr::Union(expr) => expr.format_expr(f),
             LogicalExpr::Intersect(expr) => expr.format_expr(f),
             LogicalExpr::Except(expr) => expr.format_expr(f),
+            LogicalExpr::Distinct(expr) => expr.format_expr(f),
             LogicalExpr::Empty(expr) => expr.format_expr(f),
         }
     }
@@ -180,6 +186,9 @@ impl LogicalExpr {
             | LogicalExpr::Except(LogicalExcept { left, right, .. }) => {
                 left.expr().logical().accept(visitor)?;
                 right.expr().logical().accept(visitor)?;
+            }
+            LogicalExpr::Distinct(LogicalDistinct { input, .. }) => {
+                input.expr().logical().accept(visitor)?;
             }
             LogicalExpr::Empty(_) => {}
         }
@@ -626,6 +635,52 @@ impl LogicalExcept {
         f.write_expr("right", &self.right);
         f.write_value("all", self.all);
         f.write_values("cols", &self.columns);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LogicalDistinct {
+    pub input: RelNode,
+    pub on_expr: Option<ScalarNode>,
+    pub columns: Vec<ColumnId>,
+}
+
+impl LogicalDistinct {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.input);
+        visitor.visit_opt_scalar(expr_ctx, self.on_expr.as_ref());
+    }
+
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
+        inputs.expect_len(self.num_children(), "LogicalDistinct");
+
+        LogicalDistinct {
+            input: inputs.rel_node(),
+            on_expr: self.on_expr.as_ref().map(|_| inputs.scalar_node()),
+            columns: self.columns.clone(),
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("LogicalDistinct");
+        f.write_expr("input", &self.input);
+        f.write_expr_if_present("on", self.on_expr.as_ref());
+        f.write_values("cols", &self.columns);
+    }
+
+    fn num_children(&self) -> usize {
+        1 + self.on_expr.as_ref().map(|_| 1).unwrap_or_default()
+    }
+
+    fn get_child(&self, i: usize) -> Option<&Operator> {
+        match i {
+            0 => Some(self.input.mexpr()),
+            1 => self.on_expr.as_ref().map(|expr| expr.mexpr()),
+            _ => None,
+        }
     }
 }
 

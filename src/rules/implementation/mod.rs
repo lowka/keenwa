@@ -12,8 +12,12 @@ pub use set::{HashSetOpRule, UnionRule};
 
 use crate::catalog::CatalogRef;
 use crate::error::OptimizerError;
-use crate::operators::relational::logical::{LogicalEmpty, LogicalExpr, LogicalGet, LogicalProjection, LogicalSelect};
-use crate::operators::relational::physical::{Empty, PhysicalExpr, Projection, Scan, Select};
+use crate::operators::relational::logical::{
+    LogicalDistinct, LogicalEmpty, LogicalExpr, LogicalGet, LogicalProjection, LogicalSelect,
+};
+use crate::operators::relational::physical::{Empty, HashAggregate, PhysicalExpr, Projection, Scan, Select, Unique};
+use crate::operators::scalar::{ScalarExpr, ScalarNode};
+use crate::operators::ScalarProperties;
 use crate::rules::{Rule, RuleContext, RuleMatch, RuleResult, RuleType};
 
 #[derive(Debug)]
@@ -162,6 +166,63 @@ impl Rule for EmptyRule {
             }))))
         } else {
             Ok(None)
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct DistinctRule;
+
+impl Rule for DistinctRule {
+    fn name(&self) -> String {
+        "DistinctRule".into()
+    }
+
+    fn rule_type(&self) -> RuleType {
+        RuleType::Implementation
+    }
+
+    fn matches(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Option<RuleMatch> {
+        if matches!(expr, LogicalExpr::Distinct(_)) {
+            Some(RuleMatch::Expr)
+        } else {
+            None
+        }
+    }
+
+    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
+        match expr {
+            LogicalExpr::Distinct(LogicalDistinct {
+                input,
+                on_expr,
+                columns,
+            }) => {
+                let expr = if let Some(on_expr) = on_expr {
+                    PhysicalExpr::Unique(Unique {
+                        inputs: vec![input.clone()],
+                        on_expr: Some(on_expr.clone()),
+                        columns: columns.clone(),
+                    })
+                } else {
+                    let group_exprs: Vec<ScalarNode> = columns
+                        .iter()
+                        .map(|id| {
+                            let expr = ScalarNode::new(ScalarExpr::Column(*id), ScalarProperties::default());
+                            expr
+                        })
+                        .collect();
+
+                    PhysicalExpr::HashAggregate(HashAggregate {
+                        input: input.clone(),
+                        aggr_exprs: group_exprs.clone(),
+                        group_exprs,
+                        having: None,
+                        columns: columns.clone(),
+                    })
+                };
+                Ok(Some(RuleResult::Implementation(expr)))
+            }
+            _ => Ok(None),
         }
     }
 }

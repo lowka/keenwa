@@ -709,45 +709,54 @@ impl Append {
 
 #[derive(Debug, Clone)]
 pub struct Unique {
-    pub left: RelNode,
-    pub right: RelNode,
+    pub inputs: Vec<RelNode>,
+    pub on_expr: Option<ScalarNode>,
     pub columns: Vec<ColumnId>,
 }
 
 impl Unique {
     fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
-        visitor.visit_rel(expr_ctx, &self.left);
-        visitor.visit_rel(expr_ctx, &self.right);
+        for input in self.inputs.iter() {
+            visitor.visit_rel(expr_ctx, input);
+        }
+        visitor.visit_opt_scalar(expr_ctx, self.on_expr.as_ref());
     }
 
     fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(2, "Unique");
+        let num_children = self.num_children();
+        inputs.expect_len(num_children, "Unique");
 
         Unique {
-            left: inputs.rel_node(),
-            right: inputs.rel_node(),
+            inputs: inputs.rel_nodes(self.inputs.len()),
+            on_expr: self.on_expr.as_ref().map(|_| inputs.scalar_node()),
             columns: self.columns.clone(),
         }
     }
 
     fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
-        let left = self.left.props().logical().output_columns().to_vec();
-        let right = self.right.props().logical().output_columns().to_vec();
-        let left_ordering = RequiredProperties::new_with_ordering(OrderingChoice::new(left));
-        let right_ordering = RequiredProperties::new_with_ordering(OrderingChoice::new(right));
-
-        let requirements = vec![Some(left_ordering), Some(right_ordering)];
+        let mut requirements: Vec<_> = self
+            .inputs
+            .iter()
+            .map(|input| {
+                let columns = input.props().logical().output_columns().to_vec();
+                Some(RequiredProperties::new_with_ordering(OrderingChoice::new(columns)))
+            })
+            .collect();
+        if self.on_expr.is_some() {
+            requirements.push(None);
+        }
         Some(requirements)
     }
 
     fn num_children(&self) -> usize {
-        2
+        self.inputs.len() + self.on_expr.as_ref().map(|_| 1).unwrap_or_default()
     }
 
     fn get_child(&self, i: usize) -> Option<&Operator> {
-        match i {
-            0 => Some(self.left.mexpr()),
-            1 => Some(self.right.mexpr()),
+        let num_input = self.inputs.len();
+        match num_input {
+            _ if i < num_input => self.inputs.get(i).map(|input| input.mexpr()),
+            _ if i >= num_input && i < self.num_children() => self.on_expr.as_ref().map(|expr| expr.mexpr()),
             _ => None,
         }
     }
@@ -757,8 +766,16 @@ impl Unique {
         F: MemoExprFormatter,
     {
         f.write_name("Unique");
-        f.write_expr("left", &self.left);
-        f.write_expr("right", &self.right);
+        let num_input = self.inputs.len();
+        match num_input {
+            1 => f.write_expr("input", &self.inputs[0]),
+            2 => {
+                f.write_expr("left", &self.inputs[0]);
+                f.write_expr("right", &self.inputs[1]);
+            }
+            _ => f.write_exprs("inputs", self.inputs.iter()),
+        }
+        f.write_expr_if_present("on", self.on_expr.as_ref());
         f.write_values("cols", &self.columns);
     }
 }

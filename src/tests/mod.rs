@@ -761,3 +761,51 @@ fn test_select_1() {
 "#,
     );
 }
+
+#[test]
+fn test_distinct_on_expr_as_unique() {
+    let mut tester = OptimizerTester::new();
+    tester.set_operator(|builder| {
+        let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
+        let distinct = from_a.distinct(Some(col("a1")))?;
+
+        distinct.build()
+    });
+
+    tester.add_rules(|_| vec![Box::new(DistinctRule)]);
+    tester.set_table_row_count("A", 100);
+
+    tester.optimize(
+        r#"
+02 Unique [ord:[1, 2]=00 01] cols=[1, 2]
+01 Expr col:1
+00 Sort [00] ord=[1, 2]
+00 Scan A cols=[1, 2]
+"#,
+    );
+}
+
+#[test]
+fn test_distinct_hash_aggregate() {
+    let mut tester = OptimizerTester::new();
+    tester.set_operator(|builder| {
+        let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
+        let distinct = from_a.distinct(None)?;
+
+        distinct.build()
+    });
+
+    tester.add_rules(|_| vec![Box::new(DistinctRule)]);
+    tester.set_table_row_count("A", 100);
+
+    tester.optimize(
+        r#"
+01 HashAggregate [00 02 03 02 03] cols=[1, 2]
+03 Expr col:2
+02 Expr col:1
+03 Expr col:2
+02 Expr col:1
+00 Scan A cols=[1, 2]
+"#,
+    );
+}

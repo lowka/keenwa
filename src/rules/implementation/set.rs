@@ -16,7 +16,7 @@ impl Rule for UnionRule {
     }
 
     fn matches(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Option<RuleMatch> {
-        if matches!(expr, LogicalExpr::Union { .. } | LogicalExpr::Intersect { .. } | LogicalExpr::Except { .. }) {
+        if matches!(expr, LogicalExpr::Union { .. }) {
             Some(RuleMatch::Expr)
         } else {
             None
@@ -39,8 +39,8 @@ impl Rule for UnionRule {
                 })
             } else {
                 PhysicalExpr::Unique(Unique {
-                    left: left.clone(),
-                    right: right.clone(),
+                    inputs: vec![left.clone(), right.clone()],
+                    on_expr: None,
                     columns: columns.clone(),
                 })
             };
