@@ -11,8 +11,8 @@ use crate::error::OptimizerError;
 use crate::meta::{ColumnId, MetadataRef};
 use crate::operators::relational::join::{JoinCondition, JoinType};
 use crate::operators::relational::logical::{
-    LogicalAggregate, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin, LogicalProjection,
-    LogicalSelect, LogicalUnion, SetOperator,
+    LogicalAggregate, LogicalDistinct, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin,
+    LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
 };
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::ExprRewriter;
@@ -130,6 +130,17 @@ where
 
         Ok(selectivity)
     }
+
+    fn build_distinct(
+        &self,
+        input: &RelNode,
+        _on_expr: Option<&ScalarNode>,
+    ) -> Result<Option<Statistics>, OptimizerError> {
+        let input_statistics = input.props().logical().statistics().unwrap();
+        let row_count = input_statistics.row_count();
+        //FIXME: The result of a distinct operator should include only non-duplicate rows.
+        Ok(Some(Statistics::from_row_count(row_count)))
+    }
 }
 
 impl<T> StatisticsBuilder for SimpleCatalogStatisticsBuilder<T>
@@ -175,6 +186,9 @@ where
                 all,
                 columns,
             }) => self.build_set_operator(SetOperator::Except, *all, left, right, columns),
+            LogicalExpr::Distinct(LogicalDistinct { input, on_expr, .. }) => {
+                self.build_distinct(input, on_expr.as_ref())
+            }
             LogicalExpr::Empty(_) => self.build_empty(),
         }
     }

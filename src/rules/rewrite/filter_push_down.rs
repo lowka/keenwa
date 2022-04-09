@@ -112,6 +112,7 @@ fn rewrite(mut state: State, expr: &RelNode) -> RelNode {
         LogicalExpr::Union(_) => rewrite_inputs(state, expr),
         LogicalExpr::Intersect(_) => rewrite_inputs(state, expr),
         LogicalExpr::Except(_) => rewrite_inputs(state, expr),
+        LogicalExpr::Distinct(_) => rewrite_inputs(state, expr),
         LogicalExpr::Empty(_) => rewrite_inputs(state, expr),
     }
 }
@@ -817,6 +818,25 @@ LogicalAggregate cols=[1, 2]
       filter: Expr col:1 > 100
 "#,
         )
+    }
+
+    #[test]
+    fn test_push_past_distinct() {
+        rewrite_expr(
+            |builder| {
+                let from_a = builder.get("A", vec!["a1", "a2"])?;
+                let distinct = from_a.distinct(None)?;
+                let filter = col("a1").gt(scalar(100));
+                let filter_a1 = distinct.select(Some(filter))?;
+                Ok(filter_a1)
+            },
+            r#"
+LogicalDistinct cols=[1, 2]
+  input: LogicalSelect
+    input: LogicalGet A cols=[1, 2]
+    filter: Expr col:1 > 100
+"#,
+        );
     }
 
     fn rewrite_expr<F>(f: F, expected: &str)

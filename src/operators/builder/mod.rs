@@ -17,8 +17,8 @@ use crate::memo::MemoExprState;
 use crate::meta::{ColumnId, ColumnMetadata, MutableMetadata};
 use crate::operators::relational::join::{JoinCondition, JoinOn, JoinType, JoinUsing};
 use crate::operators::relational::logical::{
-    LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin, LogicalProjection,
-    LogicalSelect, LogicalUnion, SetOperator,
+    LogicalDistinct, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin,
+    LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
 };
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::ExprRewriter;
@@ -432,6 +432,33 @@ impl OperatorBuilder {
         };
         let expr = LogicalExpr::Empty(LogicalEmpty { return_one_row });
         self.add_input_operator(expr, RelationInScope::from_columns(vec![]));
+        Ok(self)
+    }
+
+    /// Adds a distinct operator.
+    pub fn distinct(mut self, on_expr: Option<ScalarExpr>) -> Result<Self, OptimizerError> {
+        let (input, input_scope) = self.rel_node()?;
+        let on_expr = if let Some(on_expr) = on_expr {
+            let mut rewriter = RewriteExprs::new(
+                &input_scope,
+                ValidateFilterExpr {
+                    allow_aggregates: false,
+                },
+            );
+            let on_expr = on_expr.rewrite(&mut rewriter)?;
+            let expr = self.add_scalar_node(on_expr);
+            Some(expr)
+        } else {
+            None
+        };
+
+        let columns = input_scope.columns().iter().map(|(_, id)| *id).collect();
+        let expr = LogicalExpr::Distinct(LogicalDistinct {
+            input,
+            on_expr,
+            columns,
+        });
+        self.add_operator_and_scope(expr, input_scope);
         Ok(self)
     }
 
@@ -1764,6 +1791,29 @@ Memo:
     fn test_except() {
         expect_set_op(SetOperator::Except, false, "LogicalExcept");
         expect_set_op(SetOperator::Except, true, "LogicalExcept");
+    }
+
+    #[test]
+    fn test_distinct() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| builder.from("A")?.distinct(None)?.build());
+
+        tester.expect_expr(
+            r#"
+LogicalDistinct cols=[1, 2, 3, 4]
+  input: LogicalGet A cols=[1, 2, 3, 4]
+  output cols: [1, 2, 3, 4]
+Metadata:
+  col:1 A.a1 Int32
+  col:2 A.a2 Int32
+  col:3 A.a3 Int32
+  col:4 A.a4 Int32
+Memo:
+  01 LogicalDistinct input=00 cols=[1, 2, 3, 4]
+  00 LogicalGet A cols=[1, 2, 3, 4]
+"#,
+        );
     }
 
     fn expect_set_op(set_op: SetOperator, all: bool, logical_op: &str) {

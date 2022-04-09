@@ -40,7 +40,7 @@ Cost-based query optimizer (WIP).
 - [x] Union/Except/Intersect (ALL).
 - [ ] Fetch/Limit/Offset
 - [ ] VALUES operator (?).
-- [ ] Distinct option in SELECT
+- [x] Distinct option in SELECT
 - TODO
 
 #### Aggregation

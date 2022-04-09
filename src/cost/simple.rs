@@ -3,7 +3,7 @@
 use std::fmt::{Debug, Formatter};
 
 use crate::cost::{Cost, CostEstimationContext, CostEstimator};
-use crate::operators::relational::physical::{HashAggregate, HashedSetOp, PhysicalExpr};
+use crate::operators::relational::physical::{HashAggregate, HashedSetOp, PhysicalExpr, Unique};
 use crate::statistics::Statistics;
 
 /// A very simple implementation of a [CostEstimator].
@@ -81,12 +81,19 @@ impl CostEstimator for SimpleCostEstimator {
 
                 (row_count.ln() * row_count) as usize
             }
-            PhysicalExpr::Unique(_) => {
+            PhysicalExpr::Unique(Unique { inputs, .. }) => {
                 // Inputs are sorted
-                let left_stats = ctx.child_statistics(0).unwrap();
-                let right_stats = ctx.child_statistics(1).unwrap();
+                let row_count: f64 = inputs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, _)| {
+                        let stats = ctx.child_statistics(i).unwrap();
+                        stats.row_count()
+                    })
+                    .sum();
+                // TODO: Reduce the number of output rows by on_expr.
 
-                (left_stats.row_count() + right_stats.row_count()) as usize
+                row_count as usize
             }
             PhysicalExpr::Append(_) => {
                 let left_stats = ctx.child_statistics(0).unwrap();

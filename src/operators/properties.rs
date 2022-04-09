@@ -5,8 +5,8 @@ use crate::memo::Props;
 use crate::meta::{ColumnId, MetadataRef};
 use crate::operators::relational::join::{JoinCondition, JoinType};
 use crate::operators::relational::logical::{
-    LogicalAggregate, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin,
-    LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
+    LogicalAggregate, LogicalDistinct, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect,
+    LogicalJoin, LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
 };
 use crate::operators::relational::physical::{PhysicalExpr, Sort};
 use crate::operators::relational::{RelExpr, RelNode};
@@ -144,6 +144,16 @@ where
 
         Ok(LogicalProperties::new(output_columns, None))
     }
+
+    fn build_distinct(
+        &self,
+        input: &RelNode,
+        _on_expr: Option<&ScalarNode>,
+    ) -> Result<LogicalProperties, OptimizerError> {
+        let output_columns = input.props().logical().output_columns.to_vec();
+
+        Ok(LogicalProperties::new(output_columns, None))
+    }
 }
 
 impl<T> Debug for LogicalPropertiesBuilder<T>
@@ -209,6 +219,9 @@ where
                         all,
                         columns,
                     }) => self.build_except(left, right, *all, columns),
+                    LogicalExpr::Distinct(LogicalDistinct { input, on_expr, .. }) => {
+                        self.build_distinct(input, on_expr.as_ref())
+                    }
                     LogicalExpr::Empty(LogicalEmpty { .. }) => self.build_empty(),
                 }?;
                 let logical = LogicalProperties::new(output_columns, None);
