@@ -44,6 +44,8 @@ where
     Not(Box<Expr<T>>),
     /// Negation of an arithmetic expression (eg. - 1).
     Negation(Box<Expr<T>>),
+    /// IS NULL/ IS NOT NULL expression.
+    IsNull { not: bool, expr: Box<Expr<T>> },
     /// An expression with the given name (eg. 1 + 1 as two).
     // TODO: Move to projection builder.
     Alias(Box<Expr<T>>, String),
@@ -111,6 +113,9 @@ where
             Expr::Alias(expr, _) => {
                 expr.accept(visitor)?;
             }
+            Expr::IsNull { expr, .. } => {
+                expr.accept(visitor)?;
+            }
             Expr::Aggregate { args, filter, .. } => {
                 for arg in args {
                     arg.accept(visitor)?;
@@ -162,6 +167,10 @@ where
                 let expr = rewrite_boxed(*expr, rewriter)?;
                 Expr::Alias(expr, name)
             }
+            Expr::IsNull { not, expr } => {
+                let expr = rewrite_boxed(*expr, rewriter)?;
+                Expr::IsNull { not, expr }
+            }
             Expr::Aggregate {
                 func,
                 distinct,
@@ -198,6 +207,7 @@ where
             Expr::Not(expr) => vec![expr.as_ref().clone()],
             Expr::Negation(expr) => vec![expr.as_ref().clone()],
             Expr::Alias(expr, _) => vec![expr.as_ref().clone()],
+            Expr::IsNull { expr, .. } => vec![expr.as_ref().clone()],
             Expr::Aggregate { args, filter, .. } => {
                 let mut children: Vec<_> = args.to_vec();
                 if let Some(filter) = filter.clone() {
@@ -260,6 +270,13 @@ where
             Expr::Alias(_, name) => {
                 expect_children("Alias", children.len(), 1);
                 Expr::Alias(Box::new(children.swap_remove(0)), name.clone())
+            }
+            Expr::IsNull { not, .. } => {
+                expect_children("IsNull", children.len(), 1);
+                Expr::IsNull {
+                    not: *not,
+                    expr: Box::new(children.swap_remove(0)),
+                }
             }
             Expr::Aggregate {
                 func,
@@ -503,6 +520,13 @@ where
             Expr::Not(expr) => write!(f, "NOT {}", &*expr),
             Expr::Negation(expr) => write!(f, "-{}", &*expr),
             Expr::Alias(expr, name) => write!(f, "{} AS {}", &*expr, name),
+            Expr::IsNull { not, expr } => {
+                if *not {
+                    write!(f, "IS NOT NULL {}", &*expr)
+                } else {
+                    write!(f, "IS NULL {}", &*expr)
+                }
+            }
             Expr::SubQuery(expr) => {
                 write!(f, "SubQuery ")?;
                 expr.write_to_fmt(f)
@@ -687,6 +711,7 @@ impl Scalar for String {
 
 #[cfg(test)]
 mod test {
+    use crate::operators::scalar::expr::Expr::Scalar;
     use std::cell::Cell;
     use std::convert::Infallible;
     use std::hash::Hasher;
@@ -773,6 +798,24 @@ mod test {
     fn not_expr_traversal() {
         let expr = Expr::Scalar(ScalarValue::Bool(true)).not();
         expect_traversal_order(&expr, vec!["pre:NOT true", "pre:true", "post:true", "post:NOT true"])
+    }
+
+    #[test]
+    fn is_null_expr_traversal() {
+        let expr = Expr::IsNull {
+            not: false,
+            expr: Box::new(Expr::Scalar(ScalarValue::Bool(true))),
+        };
+        expect_traversal_order(&expr, vec!["pre:IS NULL true", "pre:true", "post:true", "post:IS NULL true"])
+    }
+
+    #[test]
+    fn is_not_null_expr_traversal() {
+        let expr = Expr::IsNull {
+            not: true,
+            expr: Box::new(Expr::Scalar(ScalarValue::Bool(true))),
+        };
+        expect_traversal_order(&expr, vec!["pre:IS NOT NULL true", "pre:true", "post:true", "post:IS NOT NULL true"])
     }
 
     #[test]
