@@ -6,7 +6,7 @@ use crate::operators::relational::logical::{
     LogicalAggregate, LogicalExpr, LogicalExprVisitor, LogicalJoin, LogicalSelect,
 };
 use crate::operators::relational::{RelExpr, RelNode};
-use crate::operators::scalar::{get_subquery, ScalarExpr};
+use crate::operators::scalar::get_subquery;
 use crate::operators::{Operator, OperatorExpr, Properties};
 use itertools::Itertools;
 use std::fmt::Display;

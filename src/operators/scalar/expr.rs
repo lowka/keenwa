@@ -669,12 +669,12 @@ where
                 };
                 for (i, (when, then)) in when_then_exprs.iter().enumerate() {
                     if i == 0 && newline || i > 0 {
-                        write!(f, "\n")?;
+                        write!(f, " ")?;
                     }
                     write!(f, "WHEN {} THEN {}", when, then)?;
                 }
                 if let Some(expr) = else_expr {
-                    write!(f, "\nELSE {}", expr)?;
+                    write!(f, " ELSE {}", expr)?;
                 }
                 Ok(())
             }
@@ -1044,10 +1044,7 @@ mod test {
             &expr,
             1,
             vec![
-                r#"pre:CASE col:1 > 10
-WHEN col:1 = 11 THEN 10 + 1
-WHEN col:1 = 12 THEN 10 + 2
-ELSE col:1"#,
+                "pre:CASE col:1 > 10 WHEN col:1 = 11 THEN 10 + 1 WHEN col:1 = 12 THEN 10 + 2 ELSE col:1",
                 // EXPR
                 "col:1 > 10",
                 // WHEN
@@ -1060,10 +1057,7 @@ ELSE col:1"#,
                 "10 + 2",
                 // ELSE
                 "col:1",
-                r#"post:CASE col:1 > 10
-WHEN col:1 = 11 THEN 10 + 1
-WHEN col:1 = 12 THEN 10 + 2
-ELSE col:1"#,
+                "post:CASE col:1 > 10 WHEN col:1 = 11 THEN 10 + 1 WHEN col:1 = 12 THEN 10 + 2 ELSE col:1",
             ],
         )
     }
