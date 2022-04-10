@@ -21,7 +21,11 @@ pub struct AggregateBuilder<'a> {
 }
 
 pub(super) enum AggrExpr {
-    Function { func: AggregateFunction, column: String },
+    Function {
+        func: AggregateFunction,
+        distinct: bool,
+        column: String,
+    },
     Column(String),
     Expr(ScalarExpr),
 }
@@ -33,6 +37,7 @@ impl AggregateBuilder<'_> {
             .map_err(|_| OptimizerError::Argument(format!("Unknown aggregate function {}", func)))?;
         let aggr_expr = AggrExpr::Function {
             func,
+            distinct: false,
             column: column_name.into(),
         };
         self.aggr_exprs.push(aggr_expr);
@@ -79,12 +84,13 @@ impl AggregateBuilder<'_> {
 
         for expr in aggr_exprs {
             match expr {
-                AggrExpr::Function { func, column } => {
+                AggrExpr::Function { func, distinct, column } => {
                     let mut rewriter = RewriteExprs::new(&scope, ValidateProjectionExpr::projection_expr());
                     let expr = ScalarExpr::ColumnName(column);
                     let expr = expr.rewrite(&mut rewriter)?;
                     let aggr_expr = ScalarExpr::Aggregate {
                         func,
+                        distinct,
                         args: vec![expr],
                         filter: None,
                     };

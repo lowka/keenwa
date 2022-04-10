@@ -298,6 +298,7 @@ mod test {
         fn aggr(f: &str, args: Vec<Expr>) -> Expr {
             Expr::Aggregate {
                 func: AggregateFunction::try_from(f).unwrap(),
+                distinct: false,
                 args,
                 filter: None,
             }
