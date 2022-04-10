@@ -477,7 +477,10 @@ pub struct SetPropertiesCallback<P> {
     properties_provider: Rc<P>,
 }
 
-impl<P> SetPropertiesCallback<P> {
+impl<P> SetPropertiesCallback<P>
+where
+    P: PropertiesProvider,
+{
     /// Creates a new callback with the given `properties_provider`.
     pub fn new(properties_provider: Rc<P>) -> Self {
         SetPropertiesCallback { properties_provider }
@@ -514,10 +517,10 @@ impl OperatorMemoBuilder {
         OperatorMemoBuilder { metadata }
     }
 
-    /// Creates a memo with the given [LogicalPropertiesBuilder].
-    pub fn build_with_properties<T>(self, properties: LogicalPropertiesBuilder<T>) -> ExprMemo
+    /// Creates a memo with the given [PropertiesProvider].
+    pub fn build_with_properties<T>(self, properties: T) -> ExprMemo
     where
-        T: StatisticsBuilder + 'static,
+        T: PropertiesProvider + 'static,
     {
         let propagate_properties = SetPropertiesCallback::new(Rc::new(properties));
         let memo_callback = Rc::new(propagate_properties);
