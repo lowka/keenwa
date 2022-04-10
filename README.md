@@ -96,7 +96,9 @@ Cost-based query optimizer (WIP).
 - [ ] Functions expressions.
 - [x] IS NULL/IS NOT NULL.
 - [ ] IN/NOT IN <expression>.
-- [ ] EXISTS <query>.
+- [x] IN/NOT IN <subquery>.
+- [x] EXISTS/NOT EXISTS <subquery>.
+- [ ] ANY/ALL <subquery>.
 - [ ] BETWEEN.
 - [x] CASE expression.
 - [ ] LIKE/NOT LIKE
