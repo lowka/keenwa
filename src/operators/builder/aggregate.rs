@@ -262,6 +262,7 @@ fn disallow_nested_subqueries(expr: &ScalarExpr, clause: &str, location: &str) -
                 ScalarExpr::BinaryExpr { .. } => {}
                 ScalarExpr::Cast { .. } => {}
                 ScalarExpr::Not(_) => {}
+                ScalarExpr::IsNull { .. } => {}
                 ScalarExpr::Negation(_) => {}
                 ScalarExpr::Alias(_, _) => {}
                 ScalarExpr::Aggregate { .. } => {}

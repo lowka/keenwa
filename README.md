@@ -94,7 +94,7 @@ Cost-based query optimizer (WIP).
 - [x] Basic identifiers (`table.column`, etc)
 - [ ] Compound identifiers (`schema.object.whatever`, etc)
 - [ ] Functions expressions.
-- [ ] IS NULL/IS NOT NULL.
+- [x] IS NULL/IS NOT NULL.
 - [ ] IN/NOT IN <expression>.
 - [ ] EXISTS <query>.
 - [ ] BETWEEN.

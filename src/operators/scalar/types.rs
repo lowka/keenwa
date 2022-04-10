@@ -44,6 +44,10 @@ where
             Ok(tpe)
         }
         Expr::Alias(expr, _) => resolve_expr_type(expr, column_registry),
+        Expr::IsNull { expr, .. } => {
+            let _ = resolve_expr_type(expr, column_registry)?;
+            Ok(DataType::Bool)
+        }
         Expr::Aggregate { func, args, .. } => {
             for (i, arg) in args.iter().enumerate() {
                 let arg_tpe = resolve_expr_type(arg, column_registry)?;
@@ -291,6 +295,17 @@ mod test {
         expect_type(&bool_value().alias("a"), &DataType::Bool);
         expect_type(&int_value().alias("a"), &DataType::Int32);
         expect_type(&str_value().alias("a"), &DataType::String);
+    }
+
+    #[test]
+    fn is_null() {
+        expect_type(
+            &Expr::IsNull {
+                not: true,
+                expr: Box::new(str_value()),
+            },
+            &DataType::Bool,
+        );
     }
 
     #[test]
