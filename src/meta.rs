@@ -236,7 +236,11 @@ impl MutableMetadata {
         id
     }
 
-    /// Renames the column with the given id.
+    /// Renames the column with the given identifier.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if there is no metadata for the column with the given identifier.
     pub fn rename_column(&self, column_id: ColumnId, name: String) {
         let mut inner = self.inner.borrow_mut();
         let column = inner
@@ -247,6 +251,10 @@ impl MutableMetadata {
     }
 
     /// Returns metadata for the relation with the given identifier.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if relolation with the given identifier does not exist.
     pub fn get_relation(&self, relation_id: &RelationId) -> RelationMetadataRef {
         let inner = self.inner.borrow();
         let r = Ref::map(inner, |inner| {
@@ -262,7 +270,7 @@ impl MutableMetadata {
     ///
     /// # Panics
     ///
-    /// This method panics if there is no metadata for the given column.
+    /// This method panics if there is no metadata for the column with the given identifier.
     pub fn get_column(&self, column_id: &ColumnId) -> ColumnMetadataRef {
         let inner = self.inner.borrow();
         let r = Ref::map(inner, |inner| {
