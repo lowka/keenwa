@@ -6,7 +6,7 @@ use crate::meta::ColumnId;
 use crate::operators::relational::join::{JoinCondition, JoinOn, JoinType};
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::expr::ExprVisitor;
-use crate::operators::scalar::{ScalarExpr, ScalarNode};
+use crate::operators::scalar::{get_subquery, ScalarExpr, ScalarNode};
 use crate::operators::{Operator, OperatorCopyIn, OperatorExpr};
 
 // TODO: Docs
@@ -148,9 +148,9 @@ impl LogicalExpr {
             type Error = OptimizerError;
 
             fn post_visit(&mut self, expr: &ScalarExpr) -> Result<(), Self::Error> {
-                if let ScalarExpr::SubQuery(rel_node) = expr {
-                    if self.visitor.pre_visit_subquery(self.parent_expr, rel_node)? {
-                        rel_node.expr().logical().accept(self.visitor)?;
+                if let Some(query) = get_subquery(expr) {
+                    if self.visitor.pre_visit_subquery(self.parent_expr, query)? {
+                        query.expr().logical().accept(self.visitor)?;
                     }
                 }
                 Ok(())

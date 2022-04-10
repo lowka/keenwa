@@ -74,6 +74,27 @@ pub fn qualified_wildcard(qualifier: &str) -> ScalarExpr {
     ScalarExpr::Wildcard(Some(qualifier.into()))
 }
 
+/// Returns a subquery if the given expression contains one.
+pub fn get_subquery(expr: &ScalarExpr) -> Option<&RelNode> {
+    match expr {
+        ScalarExpr::Column(_) => None,
+        ScalarExpr::ColumnName(_) => None,
+        ScalarExpr::Scalar(_) => None,
+        ScalarExpr::BinaryExpr { .. } => None,
+        ScalarExpr::Cast { .. } => None,
+        ScalarExpr::Not(_) => None,
+        ScalarExpr::Negation(_) => None,
+        ScalarExpr::IsNull { .. } => None,
+        ScalarExpr::Alias(_, _) => None,
+        ScalarExpr::Case { .. } => None,
+        ScalarExpr::Aggregate { .. } => None,
+        ScalarExpr::SubQuery(query) => Some(query),
+        ScalarExpr::Exists { query, .. } => Some(query),
+        ScalarExpr::InSubQuery { query, .. } => Some(query),
+        ScalarExpr::Wildcard(_) => None,
+    }
+}
+
 // TODO: Implement ColumnRegistry for all metadata types.
 impl<T> ColumnTypeRegistry for T
 where

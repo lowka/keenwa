@@ -76,7 +76,7 @@ where
     /// An EXIST / NOT EXISTS (<subquery>) expression.
     Exists { not: bool, query: T },
     /// IN / NOT IN (<subquery>) expression.
-    InSubQuery { not: bool, query: T },
+    InSubQuery { not: bool, expr: Box<Expr<T>>, query: T },
     /// Wildcard expression (eg. `*`, `alias.*` etc).
     Wildcard(Option<String>),
 }
@@ -409,10 +409,11 @@ where
                     query: query.clone(),
                 }
             }
-            Expr::InSubQuery { not, query } => {
-                expect_children("InSubQuery", children.len(), 0);
+            Expr::InSubQuery { not, query, .. } => {
+                expect_children("InSubQuery", children.len(), 1);
                 Expr::InSubQuery {
                     not: *not,
+                    expr: Box::new(children.swap_remove(0)),
                     query: query.clone(),
                 }
             }
@@ -693,11 +694,12 @@ where
                 }
                 query.write_to_fmt(f)
             }
-            Expr::InSubQuery { not, query } => {
+            Expr::InSubQuery { not, expr, query } => {
+                write!(f, "{}", expr)?;
                 if *not {
-                    write!(f, "NOT IN ")?;
+                    write!(f, " NOT IN ")?;
                 } else {
-                    write!(f, "IN ")?;
+                    write!(f, " IN ")?;
                 }
                 query.write_to_fmt(f)
             }
