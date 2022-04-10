@@ -1,7 +1,6 @@
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
 use crate::meta::ColumnId;
-use crate::not_implemented;
 use crate::operators::scalar::expr::{AggregateFunction, BinaryOp, Expr, NestedExpr};
 
 /// A helper trait that provides the type of the given column.
