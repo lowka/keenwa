@@ -51,6 +51,8 @@ where
     Aggregate {
         /// The aggregate function.
         func: AggregateFunction,
+        /// If set the aggregate function will accept only distinct values from its input.
+        distinct: bool,
         /// A list of arguments.
         args: Vec<Expr<T>>,
         /// A filter expression. Specifies a condition which selects input rows used by this aggregate expression.
@@ -160,8 +162,14 @@ where
                 let expr = rewrite_boxed(*expr, rewriter)?;
                 Expr::Alias(expr, name)
             }
-            Expr::Aggregate { func, args, filter } => Expr::Aggregate {
+            Expr::Aggregate {
                 func,
+                distinct,
+                args,
+                filter,
+            } => Expr::Aggregate {
+                func,
+                distinct,
                 args: rewrite_vec(args, rewriter)?,
                 filter: rewrite_boxed_option(filter, rewriter)?,
             },
@@ -253,7 +261,12 @@ where
                 expect_children("Alias", children.len(), 1);
                 Expr::Alias(Box::new(children.swap_remove(0)), name.clone())
             }
-            Expr::Aggregate { func, args, filter } => {
+            Expr::Aggregate {
+                func,
+                distinct,
+                args,
+                filter,
+            } => {
                 expect_children("Aggregate", children.len(), args.len() + filter.as_ref().map(|_| 1).unwrap_or(0));
                 let (args, filter) = if filter.is_some() {
                     // filter is the last expression (see Expr::get_children)
@@ -266,6 +279,7 @@ where
                 };
                 Expr::Aggregate {
                     func: func.clone(),
+                    distinct: *distinct,
                     args,
                     filter,
                 }
@@ -470,8 +484,17 @@ where
             Expr::Scalar(value) => write!(f, "{}", value),
             Expr::BinaryExpr { lhs, op, rhs } => write!(f, "{} {} {}", lhs, op, rhs),
             Expr::Cast { expr, data_type } => write!(f, "CAST({} as {})", expr, data_type),
-            Expr::Aggregate { func, args, filter } => {
-                write!(f, "{}({})", func, DisplayArgs(args))?;
+            Expr::Aggregate {
+                func,
+                distinct,
+                args,
+                filter,
+            } => {
+                write!(f, "{}(", func)?;
+                if *distinct {
+                    write!(f, "distinct ")?;
+                }
+                write!(f, "{})", DisplayArgs(args))?;
                 if let Some(filter) = filter {
                     write!(f, " filter (where {})", filter)?;
                 }
@@ -756,6 +779,7 @@ mod test {
     fn aggr_expr_traversal_no_filter() {
         let expr = Expr::Aggregate {
             func: AggregateFunction::Avg,
+            distinct: false,
             args: vec![Expr::Column(1)],
             filter: None,
         };
@@ -766,6 +790,7 @@ mod test {
     fn aggr_expr_traversal_with_filter() {
         let expr = Expr::Aggregate {
             func: AggregateFunction::Avg,
+            distinct: false,
             args: vec![Expr::Column(1)],
             filter: Some(Box::new(Expr::Scalar(ScalarValue::Bool(true)))),
         };

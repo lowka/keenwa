@@ -337,6 +337,7 @@ mod test {
             .into(),
             aggr_exprs: vec![ScalarNode::from(ScalarExpr::Aggregate {
                 func: AggregateFunction::Avg,
+                distinct: false,
                 args: vec![ScalarExpr::Column(1)],
                 filter: None,
             })],
