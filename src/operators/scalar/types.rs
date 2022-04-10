@@ -1,6 +1,7 @@
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
 use crate::meta::ColumnId;
+use crate::not_implemented;
 use crate::operators::scalar::expr::{AggregateFunction, BinaryOp, Expr, NestedExpr};
 
 /// A helper trait that provides the type of the given column.
@@ -47,6 +48,49 @@ where
         Expr::IsNull { expr, .. } => {
             let _ = resolve_expr_type(expr, column_registry)?;
             Ok(DataType::Bool)
+        }
+        Expr::Case {
+            expr: base_expr,
+            when_then_exprs,
+            else_expr,
+        } => {
+            if let Some(expr) = base_expr {
+                let tpe = resolve_expr_type(expr, column_registry)?;
+                expect_type_or_null(&tpe, &DataType::Bool, expr)?
+            }
+
+            let mut expr_result_type: Option<DataType> = None;
+
+            for (when, then) in when_then_exprs {
+                let condition_type = resolve_expr_type(when, column_registry)?;
+                expect_type_or_null(&condition_type, &DataType::Bool, when)?;
+                let result_type = resolve_expr_type(then, column_registry)?;
+
+                match &mut expr_result_type {
+                    Some(tpe) if tpe != &result_type => {
+                        return Err(OptimizerError::Internal(format!(
+                            "Unexpected result type in a THEN clause of a CASE expression. Expected {} but got {}",
+                            tpe, result_type
+                        )));
+                    }
+                    _ => expr_result_type = Some(result_type),
+                }
+            }
+
+            if let Some(else_expr) = else_expr {
+                let result_type = resolve_expr_type(else_expr, column_registry)?;
+                match &mut expr_result_type {
+                    Some(tpe) if tpe != &result_type => {
+                        return Err(OptimizerError::Internal(format!(
+                            "Unexpected result type in an ELSE clause of a CASE expression. Expected {} but got {}",
+                            tpe, result_type
+                        )));
+                    }
+                    _ => expr_result_type = Some(result_type),
+                }
+            }
+
+            Ok(expr_result_type.expect("Invalid case expression"))
         }
         Expr::Aggregate { func, args, .. } => {
             for (i, arg) in args.iter().enumerate() {

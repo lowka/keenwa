@@ -49,6 +49,15 @@ where
     /// An expression with the given name (eg. 1 + 1 as two).
     // TODO: Move to projection builder.
     Alias(Box<Expr<T>>, String),
+    /// Case expression.
+    Case {
+        /// Base case expression.
+        expr: Option<Box<Expr<T>>>,
+        /// A collection of WHEN <expr> THEN <expr> clauses.
+        when_then_exprs: Vec<(Expr<T>, Expr<T>)>,
+        /// ELSE <expr>.
+        else_expr: Option<Box<Expr<T>>>,
+    },
     /// An aggregate expression.
     Aggregate {
         /// The aggregate function.
@@ -116,6 +125,22 @@ where
             Expr::IsNull { expr, .. } => {
                 expr.accept(visitor)?;
             }
+            Expr::Case {
+                expr,
+                when_then_exprs,
+                else_expr,
+            } => {
+                if let Some(expr) = expr {
+                    expr.accept(visitor)?;
+                }
+                for (when, then) in when_then_exprs {
+                    when.accept(visitor)?;
+                    then.accept(visitor)?;
+                }
+                if let Some(expr) = else_expr {
+                    expr.accept(visitor)?;
+                }
+            }
             Expr::Aggregate { args, filter, .. } => {
                 for arg in args {
                     arg.accept(visitor)?;
@@ -171,6 +196,15 @@ where
                 let expr = rewrite_boxed(*expr, rewriter)?;
                 Expr::IsNull { not, expr }
             }
+            Expr::Case {
+                expr,
+                when_then_exprs,
+                else_expr,
+            } => Expr::Case {
+                expr: rewrite_boxed_option(expr, rewriter)?,
+                when_then_exprs: rewrite_pairs_vec(when_then_exprs, rewriter)?,
+                else_expr: rewrite_boxed_option(else_expr, rewriter)?,
+            },
             Expr::Aggregate {
                 func,
                 distinct,
@@ -207,6 +241,24 @@ where
             Expr::Not(expr) => vec![expr.as_ref().clone()],
             Expr::Negation(expr) => vec![expr.as_ref().clone()],
             Expr::Alias(expr, _) => vec![expr.as_ref().clone()],
+            Expr::Case {
+                expr,
+                when_then_exprs,
+                else_expr,
+            } => {
+                let mut children = vec![];
+                if let Some(expr) = expr {
+                    children.push(expr.as_ref().clone());
+                }
+                for (when, then) in when_then_exprs.iter() {
+                    children.push(when.clone());
+                    children.push(then.clone());
+                }
+                if let Some(expr) = else_expr {
+                    children.push(expr.as_ref().clone());
+                }
+                children
+            }
             Expr::IsNull { expr, .. } => vec![expr.as_ref().clone()],
             Expr::Aggregate { args, filter, .. } => {
                 let mut children: Vec<_> = args.to_vec();
@@ -276,6 +328,43 @@ where
                 Expr::IsNull {
                     not: *not,
                     expr: Box::new(children.swap_remove(0)),
+                }
+            }
+            Expr::Case {
+                expr,
+                when_then_exprs,
+                else_expr,
+            } => {
+                let opt_num =
+                    expr.as_ref().map(|_| 1).unwrap_or_default() + else_expr.as_ref().map(|_| 1).unwrap_or_default();
+                expect_children("Case", children.len(), opt_num + when_then_exprs.len() * 2);
+
+                let expr = if let Some(_) = expr {
+                    let expr = Box::new(children.remove(0));
+                    Some(expr)
+                } else {
+                    None
+                };
+
+                let else_expr = if let Some(_) = else_expr {
+                    Some(Box::new(children.swap_remove(children.len() - 1)))
+                } else {
+                    None
+                };
+
+                let mut idx = 0;
+                let (when, then): (Vec<_>, Vec<_>) = children.into_iter().partition(|_| {
+                    let odd = idx % 2 == 0;
+                    idx += 1;
+                    odd
+                });
+
+                let when_then_exprs: Vec<_> = when.into_iter().zip(then).collect();
+
+                Expr::Case {
+                    expr,
+                    when_then_exprs,
+                    else_expr,
                 }
             }
             Expr::Aggregate {
@@ -442,6 +531,23 @@ where
     exprs.into_iter().map(|e| e.rewrite(rewriter)).collect()
 }
 
+fn rewrite_pairs_vec<T, V>(
+    exprs: Vec<(Expr<T>, Expr<T>)>,
+    rewriter: &mut V,
+) -> Result<Vec<(Expr<T>, Expr<T>)>, V::Error>
+where
+    V: ExprRewriter<T>,
+    T: NestedExpr,
+{
+    let mut result = vec![];
+    for (left, right) in exprs {
+        let left = left.rewrite(rewriter)?;
+        let right = right.rewrite(rewriter)?;
+        result.push((left, right));
+    }
+    Ok(result)
+}
+
 fn rewrite_boxed_option<T, V>(expr: Option<Box<Expr<T>>>, rewriter: &mut V) -> Result<Option<Box<Expr<T>>>, V::Error>
 where
     V: ExprRewriter<T>,
@@ -520,6 +626,32 @@ where
             Expr::Not(expr) => write!(f, "NOT {}", &*expr),
             Expr::Negation(expr) => write!(f, "-{}", &*expr),
             Expr::Alias(expr, name) => write!(f, "{} AS {}", &*expr, name),
+            Expr::Case {
+                expr,
+                when_then_exprs,
+                else_expr,
+            } => {
+                let newline = match expr {
+                    None => {
+                        write!(f, "CASE ")?;
+                        false
+                    }
+                    Some(expr) => {
+                        write!(f, "CASE {}", expr)?;
+                        true
+                    }
+                };
+                for (i, (when, then)) in when_then_exprs.iter().enumerate() {
+                    if i == 0 && newline || i > 0 {
+                        write!(f, "\n")?;
+                    }
+                    write!(f, "WHEN {} THEN {}", when, then)?;
+                }
+                if let Some(expr) = else_expr {
+                    write!(f, "\nELSE {}", expr)?;
+                }
+                Ok(())
+            }
             Expr::IsNull { not, expr } => {
                 if *not {
                     write!(f, "IS NOT NULL {}", &*expr)
@@ -851,6 +983,50 @@ mod test {
     }
 
     #[test]
+    fn case_traversal() {
+        fn val(i: i32) -> Expr {
+            Expr::Scalar(ScalarValue::Int32(i))
+        }
+
+        let col1 = Expr::Column(1);
+
+        let expr = Expr::Case {
+            expr: Some(Box::new(col1.clone().gt(val(10)))),
+            when_then_exprs: vec![
+                (col1.clone().eq(val(11)), val(10) + val(1)),
+                (col1.clone().eq(val(12)), val(10) + val(2)),
+            ],
+            else_expr: Some(Box::new(col1.clone())),
+        };
+        expect_traversal_order_with_depth(
+            &expr,
+            1,
+            vec![
+                r#"pre:CASE col:1 > 10
+WHEN col:1 = 11 THEN 10 + 1
+WHEN col:1 = 12 THEN 10 + 2
+ELSE col:1"#,
+                // EXPR
+                "col:1 > 10",
+                // WHEN
+                "col:1 = 11",
+                // THEN
+                "10 + 1",
+                // WHEN
+                "col:1 = 12",
+                // THEN
+                "10 + 2",
+                // ELSE
+                "col:1",
+                r#"post:CASE col:1 > 10
+WHEN col:1 = 11 THEN 10 + 1
+WHEN col:1 = 12 THEN 10 + 2
+ELSE col:1"#,
+            ],
+        )
+    }
+
+    #[test]
     fn sub_query_traversal() {
         let expr = Expr::SubQuery(DummyRelExpr);
         expect_traversal_order(&expr, vec!["pre:SubQuery DummyRelExpr", "post:SubQuery DummyRelExpr"]);
@@ -959,24 +1135,41 @@ mod test {
     }
 
     fn expect_traversal_order(expr: &Expr, expected: Vec<&str>) {
+        expect_traversal_order_with_depth(expr, usize::MAX, expected)
+    }
+
+    fn expect_traversal_order_with_depth(expr: &Expr, max_depth: usize, expected: Vec<&str>) {
         struct TraversalTester {
             exprs: Vec<String>,
+            depth: usize,
+            max_depth: usize,
         }
         impl ExprVisitor<DummyRelExpr> for TraversalTester {
             type Error = Infallible;
 
             fn pre_visit(&mut self, expr: &Expr) -> Result<bool, Self::Error> {
-                self.exprs.push(format!("pre:{}", expr));
-                Ok(true)
+                if self.depth >= self.max_depth {
+                    self.exprs.push(format!("{}", expr));
+                    Ok(false)
+                } else {
+                    self.exprs.push(format!("pre:{}", expr));
+                    self.depth += 1;
+                    Ok(true)
+                }
             }
 
             fn post_visit(&mut self, expr: &Expr) -> Result<(), Self::Error> {
                 self.exprs.push(format!("post:{}", expr));
+                self.depth -= 1;
                 Ok(())
             }
         }
 
-        let mut visitor = TraversalTester { exprs: Vec::new() };
+        let mut visitor = TraversalTester {
+            exprs: Vec::new(),
+            depth: 0,
+            max_depth,
+        };
         expr.accept(&mut visitor).unwrap();
 
         let expected: Vec<String> = expected.into_iter().map(|s| s.to_string()).collect();
