@@ -209,10 +209,7 @@ impl Rule for DistinctRule {
                 } else {
                     let group_exprs: Vec<ScalarNode> = columns
                         .iter()
-                        .map(|id| {
-                            let expr = ScalarNode::new(ScalarExpr::Column(*id), ScalarProperties::default());
-                            expr
-                        })
+                        .map(|id| ScalarNode::new(ScalarExpr::Column(*id), ScalarProperties::default()))
                         .collect();
 
                     PhysicalExpr::HashAggregate(HashAggregate {

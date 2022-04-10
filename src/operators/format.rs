@@ -296,7 +296,7 @@ impl OperatorFormatter for SubQueriesFormatter {
         let mut new_line = true;
         // Sub queries from columns:
         for column in self.metadata.get_columns() {
-            if let Some(query) = column.expr().and_then(|e| get_subquery(e)) {
+            if let Some(query) = column.expr().and_then(get_subquery) {
                 if new_line {
                     new_line = false;
                     buf.push('\n');

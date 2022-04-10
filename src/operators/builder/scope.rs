@@ -86,11 +86,12 @@ impl OperatorScope {
             alias: String,
             renamed_columns: Vec<String>,
         ) -> Result<(), OptimizerError> {
-            // rename first len(columns) from the relation.
             let renamed_columns_len = renamed_columns.len();
-            let columns: Vec<(String, ColumnId)> =
+            // rename first len(columns) from the relation.
+            let mut columns: Vec<(String, ColumnId)> =
                 renamed_columns.into_iter().enumerate().map(|(i, c)| (c, relation.columns[i].1)).collect();
-            let columns = columns.into_iter().chain(relation.columns.drain(renamed_columns_len..)).collect();
+            // use remaining columns from the relation.
+            columns.extend(relation.columns.drain(renamed_columns_len..));
 
             if relation.relation_id.is_some() {
                 relation.alias = Some(alias);

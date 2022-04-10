@@ -350,14 +350,14 @@ where
                     expr.as_ref().map(|_| 1).unwrap_or_default() + else_expr.as_ref().map(|_| 1).unwrap_or_default();
                 expect_children("Case", children.len(), opt_num + when_then_exprs.len() * 2);
 
-                let expr = if let Some(_) = expr {
+                let expr = if expr.is_some() {
                     let expr = Box::new(children.remove(0));
                     Some(expr)
                 } else {
                     None
                 };
 
-                let else_expr = if let Some(_) = else_expr {
+                let else_expr = if else_expr.is_some() {
                     Some(Box::new(children.swap_remove(children.len() - 1)))
                 } else {
                     None
@@ -557,6 +557,8 @@ where
     exprs.into_iter().map(|e| e.rewrite(rewriter)).collect()
 }
 
+// Result<Vec<(expr, expr)>, V:Error> is used only once.
+#[allow(clippy::type_complexity)]
 fn rewrite_pairs_vec<T, V>(
     exprs: Vec<(Expr<T>, Expr<T>)>,
     rewriter: &mut V,
