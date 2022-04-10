@@ -267,7 +267,7 @@ fn disallow_nested_subqueries(expr: &ScalarExpr, clause: &str, location: &str) -
                 ScalarExpr::Alias(_, _) => {}
                 ScalarExpr::Case { .. } => {}
                 ScalarExpr::Aggregate { .. } => {}
-                ScalarExpr::SubQuery(_) => {
+                ScalarExpr::SubQuery(_) | ScalarExpr::Exists { .. } | ScalarExpr::InSubQuery { .. } => {
                     return Err(OptimizerError::NotImplemented(format!(
                         "{}: Subqueries in {} are not implemented",
                         self.clause, self.location
