@@ -7,7 +7,7 @@ use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::{AggregateFunction, ExprVisitor};
 use crate::operators::scalar::exprs::collect_columns;
 use crate::operators::scalar::value::ScalarValue;
-use crate::operators::scalar::{ScalarExpr, ScalarNode};
+use crate::operators::scalar::{get_subquery, ScalarExpr, ScalarNode};
 use crate::operators::{Operator, OperatorExpr};
 use std::collections::HashSet;
 use std::convert::TryFrom;
@@ -267,18 +267,19 @@ fn disallow_nested_subqueries(expr: &ScalarExpr, clause: &str, location: &str) -
                 ScalarExpr::Alias(_, _) => {}
                 ScalarExpr::Case { .. } => {}
                 ScalarExpr::Aggregate { .. } => {}
-                ScalarExpr::SubQuery(_) | ScalarExpr::Exists { .. } | ScalarExpr::InSubQuery { .. } => {
-                    return Err(OptimizerError::NotImplemented(format!(
-                        "{}: Subqueries in {} are not implemented",
-                        self.clause, self.location
-                    )))
-                }
                 ScalarExpr::Wildcard(_) => {
                     return Err(OptimizerError::Internal(format!(
                         "{}: Wildcard expressions are not allowed",
                         self.clause
                     )))
                 }
+                _ if get_subquery(expr).is_some() => {
+                    return Err(OptimizerError::NotImplemented(format!(
+                        "{}: Subqueries in {} are not implemented",
+                        self.clause, self.location
+                    )));
+                }
+                _ => {}
             }
             Ok(())
         }

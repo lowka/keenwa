@@ -24,7 +24,7 @@ use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::ExprRewriter;
 use crate::operators::scalar::types::resolve_expr_type;
 use crate::operators::scalar::value::ScalarValue;
-use crate::operators::scalar::{ScalarExpr, ScalarNode};
+use crate::operators::scalar::{get_subquery, ScalarExpr, ScalarNode};
 use crate::operators::{ExprMemo, Operator, OperatorExpr};
 use crate::properties::physical::{PhysicalProperties, RequiredProperties};
 use crate::properties::OrderingChoice;
@@ -800,24 +800,27 @@ where
                     }
                 }
             }
-            ScalarExpr::SubQuery(ref rel_node) => {
-                let output_columns = rel_node.props().logical().output_columns();
-                if output_columns.len() != 1 {
-                    let message = "Subquery must return exactly one column";
-                    return Err(OptimizerError::Internal(message.into()));
-                }
-
-                match rel_node.state() {
-                    MemoExprState::Owned(_) => {
-                        //FIXME: Add method to handle nested relational expressions to OperatorCallback?
-                        Err(OptimizerError::Internal(
-                            "Use OperatorBuilder::sub_query_builder to build a nested sub query".to_string(),
-                        ))
+            _ => {
+                if let Some(query) = get_subquery(&expr) {
+                    let output_columns = query.props().logical().output_columns();
+                    if output_columns.len() != 1 {
+                        let message = "Subquery must return exactly one column";
+                        return Err(OptimizerError::Internal(message.into()));
                     }
-                    MemoExprState::Memo(_) => Ok(expr),
+
+                    match query.state() {
+                        MemoExprState::Owned(_) => {
+                            //FIXME: Add method to handle nested relational expressions to OperatorCallback?
+                            Err(OptimizerError::Internal(
+                                "Use OperatorBuilder::sub_query_builder to build a nested sub query".to_string(),
+                            ))
+                        }
+                        MemoExprState::Memo(_) => Ok(expr),
+                    }
+                } else {
+                    Ok(expr)
                 }
             }
-            _ => Ok(expr),
         }?;
         self.validator.validate(&expr)?;
         Ok(expr)

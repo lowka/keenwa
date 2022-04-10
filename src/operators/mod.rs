@@ -18,7 +18,7 @@ use crate::memo::{
 };
 use crate::meta::MutableMetadata;
 use crate::operators::properties::{LogicalPropertiesBuilder, PropertiesProvider};
-use crate::operators::scalar::expr_with_new_inputs;
+use crate::operators::scalar::{expr_with_new_inputs, get_subquery};
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
 use crate::statistics::StatisticsBuilder;
@@ -394,8 +394,8 @@ impl<T> OperatorCopyIn<'_, '_, T> {
             type Error = Infallible;
 
             fn post_visit(&mut self, expr: &ScalarExpr) -> Result<(), Self::Error> {
-                if let ScalarExpr::SubQuery(rel_node) = expr {
-                    self.collector.visit_expr(rel_node)
+                if let Some(subquery) = get_subquery(expr) {
+                    self.collector.visit_expr(subquery)
                 }
                 Ok(())
             }

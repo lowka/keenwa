@@ -6,7 +6,7 @@ use crate::operators::relational::logical::{
     LogicalAggregate, LogicalExpr, LogicalExprVisitor, LogicalJoin, LogicalSelect,
 };
 use crate::operators::relational::{RelExpr, RelNode};
-use crate::operators::scalar::ScalarExpr;
+use crate::operators::scalar::{get_subquery, ScalarExpr};
 use crate::operators::{Operator, OperatorExpr, Properties};
 use itertools::Itertools;
 use std::fmt::Display;
@@ -296,7 +296,7 @@ impl OperatorFormatter for SubQueriesFormatter {
         let mut new_line = true;
         // Sub queries from columns:
         for column in self.metadata.get_columns() {
-            if let Some(ScalarExpr::SubQuery(query)) = column.expr() {
+            if let Some(query) = column.expr().and_then(|e| get_subquery(e)) {
                 if new_line {
                     new_line = false;
                     buf.push('\n');
@@ -317,11 +317,12 @@ impl OperatorFormatter for SubQueriesFormatter {
                 // CollectSubQueries never returns an error.
                 expr.accept(&mut visitor).unwrap();
             }
-            // Alias(SubQuery(_), _) is not covered ?
-            OperatorExpr::Scalar(ScalarExpr::SubQuery(query)) => {
-                buf.push_str("Sub query from scalar operator:\n".to_string().as_str());
-                buf.push_str(format_operator_tree(query.mexpr()).as_str());
-                buf.push('\n');
+            OperatorExpr::Scalar(expr) => {
+                if let Some(query) = get_subquery(expr) {
+                    buf.push_str("Sub query from scalar operator:\n".to_string().as_str());
+                    buf.push_str(format_operator_tree(query.mexpr()).as_str());
+                    buf.push('\n');
+                }
             }
             _ => {}
         }
