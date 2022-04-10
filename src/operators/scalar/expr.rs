@@ -71,8 +71,12 @@ where
         filter: Option<Box<Expr<T>>>,
     },
     /// A subquery expression.
-    //TODO: Implement table subquery operators such as ALL, ANY, SOME, EXISTS, UNIQUE.
+    //TODO: Implement table subquery operators such as ALL, ANY, SOME, UNIQUE.
     SubQuery(T),
+    /// An EXIST / NOT EXISTS (<subquery>) expression.
+    Exists { not: bool, query: T },
+    /// IN / NOT IN (<subquery>) expression.
+    InSubQuery { not: bool, query: T },
     /// Wildcard expression (eg. `*`, `alias.*` etc).
     Wildcard(Option<String>),
 }
@@ -149,7 +153,7 @@ where
                     f.accept(visitor)?;
                 }
             }
-            Expr::SubQuery(_) => {
+            Expr::SubQuery(_) | Expr::InSubQuery { .. } | Expr::Exists { .. } => {
                 // Should be handled by visitor::pre_visit because Expr is generic over
                 // the type of a nested sub query.
             }
@@ -217,6 +221,8 @@ where
                 filter: rewrite_boxed_option(filter, rewriter)?,
             },
             Expr::SubQuery(_) => rewriter.rewrite(self)?,
+            Expr::Exists { .. } => rewriter.rewrite(self)?,
+            Expr::InSubQuery { .. } => rewriter.rewrite(self)?,
             Expr::Wildcard(qualifier) => Expr::Wildcard(qualifier),
         };
         rewriter.post_rewrite(expr)
@@ -268,6 +274,8 @@ where
                 children
             }
             Expr::SubQuery(_) => vec![],
+            Expr::Exists { .. } => vec![],
+            Expr::InSubQuery { .. } => vec![],
             Expr::Wildcard(_) => vec![],
         }
     }
@@ -393,6 +401,20 @@ where
             Expr::SubQuery(node) => {
                 expect_children("SubQuery", children.len(), 0);
                 Expr::SubQuery(node.clone())
+            }
+            Expr::Exists { not, query } => {
+                expect_children("Exists", children.len(), 0);
+                Expr::Exists {
+                    not: *not,
+                    query: query.clone(),
+                }
+            }
+            Expr::InSubQuery { not, query } => {
+                expect_children("InSubQuery", children.len(), 0);
+                Expr::InSubQuery {
+                    not: *not,
+                    query: query.clone(),
+                }
             }
             Expr::Wildcard(qualifier) => {
                 expect_children("Wildcard", children.len(), 0);
@@ -659,9 +681,25 @@ where
                     write!(f, "IS NULL {}", &*expr)
                 }
             }
-            Expr::SubQuery(expr) => {
+            Expr::SubQuery(query) => {
                 write!(f, "SubQuery ")?;
-                expr.write_to_fmt(f)
+                query.write_to_fmt(f)
+            }
+            Expr::Exists { not, query } => {
+                if *not {
+                    write!(f, "NOT EXISTS ")?;
+                } else {
+                    write!(f, "EXISTS ")?;
+                }
+                query.write_to_fmt(f)
+            }
+            Expr::InSubQuery { not, query } => {
+                if *not {
+                    write!(f, "NOT IN ")?;
+                } else {
+                    write!(f, "IN ")?;
+                }
+                query.write_to_fmt(f)
             }
             Expr::Wildcard(qualifier) => match qualifier {
                 None => write!(f, "*"),
@@ -843,7 +881,6 @@ impl Scalar for String {
 
 #[cfg(test)]
 mod test {
-    use crate::operators::scalar::expr::Expr::Scalar;
     use std::cell::Cell;
     use std::convert::Infallible;
     use std::hash::Hasher;

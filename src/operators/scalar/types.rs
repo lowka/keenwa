@@ -110,9 +110,9 @@ where
             }
             Ok(DataType::Int32)
         }
-        Expr::SubQuery(rel_expr) => {
-            // rel_expr must be a valid subquery.
-            let cols = rel_expr.output_columns();
+        Expr::SubQuery(query) | Expr::Exists { query, .. } | Expr::InSubQuery { query, .. } => {
+            // query must be a valid subquery.
+            let cols = query.output_columns();
             let col_id = cols[0];
             Ok(column_registry.get_column_type(&col_id))
         }
