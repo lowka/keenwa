@@ -187,7 +187,10 @@ where
                 let expr = rewrite_boxed(*expr, rewriter)?;
                 Expr::Cast { expr, data_type }
             }
-            Expr::Not(expr) => expr.rewrite(rewriter)?,
+            Expr::Not(expr) => {
+                let expr = rewrite_boxed(*expr, rewriter)?;
+                Expr::Not(expr)
+            }
             Expr::Negation(expr) => {
                 let expr = expr.rewrite(rewriter)?;
                 Expr::Negation(Box::new(expr))
