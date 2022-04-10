@@ -98,7 +98,7 @@ Cost-based query optimizer (WIP).
 - [ ] IN/NOT IN <expression>.
 - [ ] EXISTS <query>.
 - [ ] BETWEEN.
-- [ ] CASE expression.
+- [x] CASE expression.
 - [ ] LIKE/NOT LIKE
 - [ ] Tuples.
 - [ ] Array access.

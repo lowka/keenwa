@@ -265,6 +265,7 @@ fn disallow_nested_subqueries(expr: &ScalarExpr, clause: &str, location: &str) -
                 ScalarExpr::IsNull { .. } => {}
                 ScalarExpr::Negation(_) => {}
                 ScalarExpr::Alias(_, _) => {}
+                ScalarExpr::Case { .. } => {}
                 ScalarExpr::Aggregate { .. } => {}
                 ScalarExpr::SubQuery(_) => {
                     return Err(OptimizerError::NotImplemented(format!(
