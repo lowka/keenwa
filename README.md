@@ -95,7 +95,7 @@ Cost-based query optimizer (WIP).
 - [ ] Compound identifiers (`schema.object.whatever`, etc)
 - [ ] Functions expressions.
 - [x] IS NULL/IS NOT NULL.
-- [ ] IN/NOT IN <expression>.
+- [x] IN/NOT IN (list).
 - [x] IN/NOT IN <subquery>.
 - [x] EXISTS/NOT EXISTS <subquery>.
 - [ ] ANY/ALL <subquery>.
