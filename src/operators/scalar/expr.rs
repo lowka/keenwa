@@ -44,6 +44,12 @@ where
     Not(Box<Expr<T>>),
     /// Negation of an arithmetic expression (eg. - 1).
     Negation(Box<Expr<T>>),
+    /// IN/ NOT IN (item1, .., itemN) expression.
+    InList {
+        not: bool,
+        expr: Box<Expr<T>>,
+        exprs: Vec<Expr<T>>,
+    },
     /// IS NULL/ IS NOT NULL expression.
     IsNull { not: bool, expr: Box<Expr<T>> },
     /// An expression with the given name (eg. 1 + 1 as two).
@@ -126,6 +132,12 @@ where
             Expr::Alias(expr, _) => {
                 expr.accept(visitor)?;
             }
+            Expr::InList { expr, exprs, .. } => {
+                expr.accept(visitor)?;
+                for expr in exprs {
+                    expr.accept(visitor)?;
+                }
+            }
             Expr::IsNull { expr, .. } => {
                 expr.accept(visitor)?;
             }
@@ -199,6 +211,11 @@ where
                 let expr = rewrite_boxed(*expr, rewriter)?;
                 Expr::Alias(expr, name)
             }
+            Expr::InList { not, expr, exprs } => {
+                let expr = rewrite_boxed(*expr, rewriter)?;
+                let exprs = rewrite_vec(exprs, rewriter)?;
+                Expr::InList { not, expr, exprs }
+            }
             Expr::IsNull { not, expr } => {
                 let expr = rewrite_boxed(*expr, rewriter)?;
                 Expr::IsNull { not, expr }
@@ -268,6 +285,12 @@ where
                 }
                 children
             }
+            Expr::InList { expr, exprs, .. } => {
+                let mut result = Vec::with_capacity(1 + exprs.len());
+                result.push(*expr.clone());
+                result.extend(exprs.clone().into_iter());
+                result
+            }
             Expr::IsNull { expr, .. } => vec![expr.as_ref().clone()],
             Expr::Aggregate { args, filter, .. } => {
                 let mut children: Vec<_> = args.to_vec();
@@ -333,6 +356,14 @@ where
             Expr::Alias(_, name) => {
                 expect_children("Alias", children.len(), 1);
                 Expr::Alias(Box::new(children.swap_remove(0)), name.clone())
+            }
+            Expr::InList { not, exprs, .. } => {
+                expect_children("InList", children.len(), 1 + exprs.len());
+                Expr::InList {
+                    not: *not,
+                    expr: Box::new(children.swap_remove(0)),
+                    exprs: children,
+                }
             }
             Expr::IsNull { not, .. } => {
                 expect_children("IsNull", children.len(), 1);
@@ -680,6 +711,20 @@ where
                 }
                 Ok(())
             }
+            Expr::InList { not, expr, exprs } => {
+                if *not {
+                    write!(f, "{} NOT IN (", &*expr)?;
+                } else {
+                    write!(f, "{} IN (", &*expr)?;
+                }
+                for (i, expr) in exprs.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", expr)?;
+                }
+                write!(f, ")")
+            }
             Expr::IsNull { not, expr } => {
                 if *not {
                     write!(f, "IS NOT NULL {}", &*expr)
@@ -983,6 +1028,20 @@ mod test {
             expr: Box::new(Expr::Scalar(ScalarValue::Bool(true))),
         };
         expect_traversal_order(&expr, vec!["pre:IS NULL true", "pre:true", "post:true", "post:IS NULL true"])
+    }
+
+    #[test]
+    fn in_list_expr_traversal() {
+        let expr = Expr::InList {
+            not: false,
+            expr: Box::new(Expr::Scalar(ScalarValue::Bool(false))),
+            exprs: vec![Expr::Scalar(ScalarValue::Bool(true)), Expr::Scalar(ScalarValue::Int32(1))],
+        };
+        expect_traversal_order_with_depth(
+            &expr,
+            1,
+            vec!["pre:false IN (true, 1)", "false", "true", "1", "post:false IN (true, 1)"],
+        )
     }
 
     #[test]

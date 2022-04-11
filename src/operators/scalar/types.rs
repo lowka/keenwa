@@ -44,6 +44,13 @@ where
             Ok(tpe)
         }
         Expr::Alias(expr, _) => resolve_expr_type(expr, column_registry),
+        Expr::InList { expr, exprs, .. } => {
+            let _ = resolve_expr_type(expr, column_registry)?;
+            for expr in exprs {
+                let _ = resolve_expr_type(expr, column_registry)?;
+            }
+            Ok(DataType::Bool)
+        }
         Expr::IsNull { expr, .. } => {
             let _ = resolve_expr_type(expr, column_registry)?;
             Ok(DataType::Bool)
@@ -376,6 +383,18 @@ mod test {
             &Expr::IsNull {
                 not: true,
                 expr: Box::new(str_value()),
+            },
+            &DataType::Bool,
+        );
+    }
+
+    #[test]
+    fn in_list() {
+        expect_type(
+            &Expr::InList {
+                not: true,
+                expr: Box::new(str_value()),
+                exprs: vec![str_value(), bool_value()],
             },
             &DataType::Bool,
         );

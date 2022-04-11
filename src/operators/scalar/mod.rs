@@ -84,6 +84,7 @@ pub fn get_subquery(expr: &ScalarExpr) -> Option<&RelNode> {
         ScalarExpr::Cast { .. } => None,
         ScalarExpr::Not(_) => None,
         ScalarExpr::Negation(_) => None,
+        ScalarExpr::InList { .. } => None,
         ScalarExpr::IsNull { .. } => None,
         ScalarExpr::Alias(_, _) => None,
         ScalarExpr::Case { .. } => None,
