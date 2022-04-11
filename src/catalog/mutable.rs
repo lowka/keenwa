@@ -271,6 +271,18 @@ impl Hash for CaseInsensitiveString {
     }
 }
 
+#[allow(dead_code)]
+fn catalog_is_sync_and_send() {
+    fn ensure_sync_send<T>()
+    where
+        T: Sync + Send,
+    {
+    }
+
+    ensure_sync_send::<MutableCatalog>();
+    ensure_sync_send::<MutableSchema>();
+}
+
 #[cfg(test)]
 mod test {
     use crate::catalog::mutable::{MutableCatalog, MutableSchema};
