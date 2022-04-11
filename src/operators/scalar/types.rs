@@ -109,7 +109,11 @@ where
             }
             Ok(DataType::Int32)
         }
-        Expr::SubQuery(query) | Expr::Exists { query, .. } | Expr::InSubQuery { query, .. } => {
+        Expr::Exists { .. } | Expr::InSubQuery { .. } => {
+            // query must be a valid subquery.
+            Ok(DataType::Bool)
+        }
+        Expr::SubQuery(query) => {
             // query must be a valid subquery.
             let cols = query.output_columns();
             let col_id = cols[0];
@@ -260,6 +264,11 @@ mod test {
         }
     }
 
+    fn new_subquery_from_column(registry: &mut MockColumnTypeRegistry, col_type: DataType) -> DummyRelExpr {
+        let id = registry.add_column(col_type);
+        DummyRelExpr(vec![id])
+    }
+
     #[test]
     fn column_name_type_should_not_be_resolved() {
         let col = Expr::ColumnName("a".into());
@@ -292,8 +301,7 @@ mod test {
     fn subquery_type() {
         fn expect_subquery_type(col_type: DataType) {
             let mut registry = MockColumnTypeRegistry::default();
-            let id = registry.add_column(col_type.clone());
-            let subquery = DummyRelExpr(vec![id]);
+            let subquery = new_subquery_from_column(&mut registry, col_type.clone());
             let expr = Expr::SubQuery(subquery);
 
             expect_resolved(&expr, &registry, &col_type);
@@ -302,6 +310,28 @@ mod test {
         expect_subquery_type(DataType::Bool);
         expect_subquery_type(DataType::Int32);
         expect_subquery_type(DataType::String);
+    }
+
+    #[test]
+    fn exists_subquery() {
+        let mut registry = MockColumnTypeRegistry::default();
+        let query = new_subquery_from_column(&mut registry, DataType::Int32);
+        let expr = Expr::Exists { not: false, query };
+
+        expect_resolved(&expr, &registry, &DataType::Bool);
+    }
+
+    #[test]
+    fn in_subquery() {
+        let mut registry = MockColumnTypeRegistry::default();
+        let query = new_subquery_from_column(&mut registry, DataType::Int32);
+        let expr = Expr::InSubQuery {
+            expr: Box::new(col_name("a")),
+            not: false,
+            query,
+        };
+
+        expect_resolved(&expr, &registry, &DataType::Bool);
     }
 
     #[test]
