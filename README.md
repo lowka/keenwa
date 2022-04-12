@@ -96,9 +96,9 @@ Cost-based query optimizer (WIP).
 - [ ] Functions expressions.
 - [x] IS NULL/IS NOT NULL.
 - [x] IN/NOT IN (list).
-- [x] IN/NOT IN <subquery>.
-- [x] EXISTS/NOT EXISTS <subquery>.
-- [ ] ANY/ALL <subquery>.
+- [x] IN/NOT IN `<subquery>`.
+- [x] EXISTS/NOT EXISTS `<subquery>`.
+- [ ] ANY/ALL `<subquery>`.
 - [ ] BETWEEN.
 - [x] CASE expression.
 - [ ] LIKE/NOT LIKE
@@ -183,8 +183,8 @@ See test cases in `sql/*_tests.yaml`.
 - [x] AGGREGATE DISTINCT
 - [ ] VALUES(..)
 
-- [x] NOT IN/ IN <subquery>
-- [x] EXISTS/NOT EXISTS <subquery>.
+- [x] NOT IN/ IN `<subquery>`
+- [x] EXISTS/NOT EXISTS `<subquery>`.
 
 #### Basic DML operators
 
