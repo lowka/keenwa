@@ -242,7 +242,11 @@ where
             },
             Expr::SubQuery(_) => rewriter.rewrite(self)?,
             Expr::Exists { .. } => rewriter.rewrite(self)?,
-            Expr::InSubQuery { .. } => rewriter.rewrite(self)?,
+            Expr::InSubQuery { not, expr, query } => Expr::InSubQuery {
+                not,
+                expr: rewrite_boxed(*expr, rewriter)?,
+                query,
+            },
             Expr::Wildcard(qualifier) => Expr::Wildcard(qualifier),
         };
         rewriter.post_rewrite(expr)
