@@ -206,26 +206,26 @@ ok: |
     input: LogicalEmpty return_one_row=true
 ---
 query: |
-  SELECT * FROM a WHERE a IN (SELECT 1)
+  SELECT * FROM a WHERE a1 IN (SELECT 1)
 ok: |
   LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:3, col:4]
     input: LogicalSelect
       input: LogicalGet a cols=[1, 2, 3, 4]
-      filter: Expr col:a IN 02
+      filter: Expr col:1 IN 02
 
-  Sub query from filter col:a IN 02:
+  Sub query from filter col:1 IN 02:
   LogicalProjection cols=[5] exprs: [1]
     input: LogicalEmpty return_one_row=true
 ---
 query: |
-  SELECT * FROM a WHERE a NOT IN (SELECT 1)
+  SELECT * FROM a WHERE a1 NOT IN (SELECT 1)
 ok: |
   LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:3, col:4]
     input: LogicalSelect
       input: LogicalGet a cols=[1, 2, 3, 4]
-      filter: Expr col:a NOT IN 02
+      filter: Expr col:1 NOT IN 02
 
-  Sub query from filter col:a NOT IN 02:
+  Sub query from filter col:1 NOT IN 02:
   LogicalProjection cols=[5] exprs: [1]
     input: LogicalEmpty return_one_row=true
 ---
