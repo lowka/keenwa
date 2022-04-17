@@ -7,7 +7,6 @@ use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use itertools::Itertools;
-use triomphe::Arc;
 
 use crate::error::OptimizerError;
 use crate::memo::arc::MemoArc;
@@ -219,6 +218,10 @@ pub trait MemoExpr: Clone {
         props: Self::Props,
         sub_queries: impl Iterator<Item = Self>,
     ) -> Self::Props;
+
+    fn new_properties(props: Self::Props) -> Self::Props {
+        props.clone()
+    }
 
     /// Returns the number of child expressions of this memo expression.
     fn num_children(&self) -> usize;

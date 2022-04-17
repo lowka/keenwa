@@ -29,7 +29,7 @@ ok: |
       input: LogicalEmpty return_one_row=true
   
   Sub query from column 4:
-  LogicalProjection cols=[2] exprs: [2 + col:1]
+  LogicalProjection cols=[2] outer_cols=[1] exprs: [2 + col:1]
     input: LogicalEmpty return_one_row=true
 
 ---
@@ -40,7 +40,7 @@ ok: |
     input: LogicalGet a cols=[1, 2, 3, 4]
   
   Sub query from column 5:
-  LogicalProjection cols=[2] exprs: [col:2]
+  LogicalProjection cols=[2] outer_cols=[2] exprs: [col:2]
     input: LogicalEmpty return_one_row=true
 
 ---
@@ -88,7 +88,7 @@ ok: |
       right: LogicalGet b cols=[5, 6, 7]
   
   Sub query from column 9:
-  LogicalProjection cols=[8] exprs: [col:1 + col:5]
+  LogicalProjection cols=[8] outer_cols=[1, 5] exprs: [col:1 + col:5]
     input: LogicalEmpty return_one_row=true
 
 ---
@@ -103,8 +103,8 @@ ok: |
     input: LogicalGet c cols=[1, 2, 3]
   
   Sub query from column 12:
-  LogicalProjection cols=[11] exprs: [col:4 + col:8 + col:1]
-    input: LogicalJoin type=Inner on=col:4 = col:8 AND col:4 = col:1
+  LogicalProjection cols=[11] outer_cols=[1] exprs: [col:4 + col:8 + col:1]
+    input: LogicalJoin type=Inner on=col:4 = col:8 AND col:4 = col:1 outer_cols=[1]
       left: LogicalGet a cols=[4, 5, 6, 7]
       right: LogicalGet b cols=[8, 9, 10]
 
@@ -128,8 +128,8 @@ ok: |
     input: LogicalGet a cols=[1, 2, 3, 4]
   
   Sub query from column 9:
-  LogicalAggregate cols=[8] aggr_exprs: [count(col:5)]
-    input: LogicalSelect
+  LogicalAggregate cols=[8] outer_cols=[1] aggr_exprs: [count(col:5)]
+    input: LogicalSelect outer_cols=[1]
       input: LogicalGet b cols=[5, 6, 7]
       filter: Expr col:5 = col:1
 
@@ -141,7 +141,7 @@ ok: |
     input: LogicalGet a cols=[1, 2, 3, 4]
   
   Sub query from column 9:
-  LogicalAggregate cols=[8] aggr_exprs: [sum(col:5 + col:1)]
+  LogicalAggregate cols=[8] outer_cols=[1] aggr_exprs: [sum(col:5 + col:1)]
     input: LogicalGet b cols=[5, 6, 7]
 
 ---
@@ -152,7 +152,7 @@ ok: |
     input: LogicalGet a cols=[1, 2, 3, 4]
   
   Sub query from column 9:
-  LogicalAggregate cols=[8]
+  LogicalAggregate cols=[8] outer_cols=[1]
     aggr_exprs: [sum(col:5 + col:1)]
     group_exprs: [col:1]
     input: LogicalGet b cols=[5, 6, 7]
@@ -175,7 +175,7 @@ ok: |
   LogicalAggregate cols=[5] aggr_exprs: [count(col:1)]
     input: LogicalGet a cols=[1, 2, 3, 4]
   Sub query from aggregate SubQuery 02:
-  LogicalAggregate cols=[9]
+  LogicalAggregate cols=[9] outer_cols=[1]
     aggr_exprs: [count(col:7)]
     group_exprs: [col:1]
     input: LogicalGet b cols=[6, 7, 8]
@@ -228,4 +228,18 @@ ok: |
   Sub query from filter col:1 NOT IN 02:
   LogicalProjection cols=[5] exprs: [1]
     input: LogicalEmpty return_one_row=true
+---
+query: |
+  SELECT (SELECT DISTINCT ON (a1) b1 FROM b LIMIT 1 OFFSET 2) FROM a
+ok: |
+  LogicalProjection cols=[8] exprs: [SubQuery 06]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+
+  Sub query from column 8:
+  LogicalLimit rows=1 outer_cols=[1]
+    input: LogicalOffset rows=2 outer_cols=[1]
+      input: LogicalDistinct cols=[5] outer_cols=[1]
+        input: LogicalProjection cols=[5] exprs: [col:5]
+          input: LogicalGet b cols=[5, 6, 7]
+        on: Expr col:1
 ---

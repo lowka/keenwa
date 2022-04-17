@@ -32,7 +32,7 @@ pub mod scalar;
 pub type OperatorMetadata = Rc<MutableMetadata>;
 pub type ExprMemo = Memo<Operator, OperatorMetadata>;
 pub type ExprRef = MemoExprRef<Operator>;
-pub type ExprCallback = MemoGroupCallbackRef<OperatorExpr, Properties, ExprScope, OperatorMetadata>;
+pub type ExprCallback = MemoGroupCallbackRef<OperatorExpr, Properties, OuterScope, OperatorMetadata>;
 
 /// An operator is an expression (which can be either logical or physical) with a set of properties.
 /// A tree of operators can represent both initial (unoptimized) and optimized query plans.
@@ -259,7 +259,7 @@ impl crate::memo::Expr for OperatorExpr {
 impl MemoExpr for Operator {
     type Expr = OperatorExpr;
     type Props = Properties;
-    type Scope = ExprScope;
+    type Scope = OuterScope;
 
     fn from_state(state: MemoExprState<Self>) -> Self {
         Operator { state }
@@ -322,15 +322,25 @@ impl MemoExpr for Operator {
         }
     }
 
-    fn format_expr<F>(expr: &Self::Expr, _props: &Self::Props, f: &mut F)
+    fn format_expr<F>(expr: &Self::Expr, props: &Self::Props, f: &mut F)
     where
         F: MemoExprFormatter,
     {
         match expr {
-            OperatorExpr::Relational(expr) => match expr {
-                RelExpr::Logical(expr) => expr.format_expr(f),
-                RelExpr::Physical(expr) => expr.format_expr(f),
-            },
+            OperatorExpr::Relational(expr) => {
+                match expr {
+                    RelExpr::Logical(expr) => {
+                        expr.format_expr(f);
+                    }
+                    RelExpr::Physical(expr) => expr.format_expr(f),
+                };
+                // FIXME: Add formatting options add move the code below to the formatter.
+                let properties = props.relational().logical();
+                if !properties.outer_columns.is_empty() {
+                    f.write_values("outer_cols", &properties.outer_columns)
+                }
+                //
+            }
             OperatorExpr::Scalar(expr) => expr.format_expr(f),
         }
     }
@@ -475,17 +485,30 @@ impl From<ScalarExpr> for OperatorExpr {
 /// ExprScope stores information that is used to build logical properties of an operator.
 /// See [MemoExpr::Scope].
 //???: Rename OperatorScope to BuildScope, Rename this struct to OperatorScope.
-pub struct ExprScope;
+pub struct OuterScope {
+    pub outer_columns: Vec<ColumnId>,
+}
 
-impl ExprScope {
+impl OuterScope {
     /// Creates a scope for the root of an operator tree.
     pub fn root() -> Self {
-        ExprScope
+        OuterScope {
+            outer_columns: Vec::new(),
+        }
     }
 
     /// Creates a scope from the given properties.
-    pub fn from_properties(_props: &Properties) -> Self {
-        ExprScope
+    pub fn from_properties(props: &Properties) -> Self {
+        match props {
+            Properties::Relational(props) => OuterScope {
+                outer_columns: props.logical.outer_columns.to_vec(),
+            },
+            Properties::Scalar(_) => OuterScope {
+                // Currently properties of a scalar expression do not include the outer columns
+                // referenced in by it because the outer columns are only used by relational operators.
+                outer_columns: Vec::new(),
+            },
+        }
     }
 }
 
@@ -511,7 +534,7 @@ where
 {
     type Expr = OperatorExpr;
     type Props = Properties;
-    type Scope = ExprScope;
+    type Scope = OuterScope;
     type Metadata = OperatorMetadata;
 
     fn new_group(
@@ -522,7 +545,7 @@ where
         metadata: &Self::Metadata,
     ) -> Result<Self::Props, OptimizerError> {
         // Every time a new expression is added into a memo we need to compute logical properties of that expression.
-        self.properties_provider.build_properties(expr, provided_props, metadata.get_ref())
+        self.properties_provider.build_properties(expr, scope, provided_props, metadata.get_ref())
     }
 }
 

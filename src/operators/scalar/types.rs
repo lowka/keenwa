@@ -225,6 +225,10 @@ mod test {
             &self.0
         }
 
+        fn outer_columns(&self) -> &[ColumnId] {
+            &[]
+        }
+
         fn write_to_fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
             write!(f, "{:?}", self)
         }

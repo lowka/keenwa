@@ -92,6 +92,9 @@ pub trait NestedExpr: Debug + Clone + Eq + Hash {
     /// Returns the output columns returned by this nested expression.
     fn output_columns(&self) -> &[ColumnId];
 
+    /// Outer columns used by this expression.
+    fn outer_columns(&self) -> &[ColumnId];
+
     /// Writes this nested expression to the given formatter.
     fn write_to_fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result;
 }
@@ -165,9 +168,13 @@ where
                     f.accept(visitor)?;
                 }
             }
-            Expr::SubQuery(_) | Expr::InSubQuery { .. } | Expr::Exists { .. } => {
+            Expr::SubQuery(_) | Expr::Exists { .. } => {
                 // Should be handled by visitor::pre_visit because Expr is generic over
                 // the type of a nested sub query.
+            }
+            Expr::InSubQuery { expr, .. } => {
+                // See the comment for Expr::SubQuery above.
+                expr.accept(visitor)?;
             }
             Expr::Wildcard(_) => {}
         }
@@ -963,6 +970,10 @@ mod test {
 
     impl NestedExpr for DummyRelExpr {
         fn output_columns(&self) -> &[ColumnId] {
+            &[]
+        }
+
+        fn outer_columns(&self) -> &[ColumnId] {
             &[]
         }
 

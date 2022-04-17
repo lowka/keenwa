@@ -51,7 +51,7 @@ use crate::meta::MetadataRef;
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::{expr_with_new_inputs, ScalarExpr};
-use crate::operators::{ExprMemo, ExprRef, ExprScope, Operator, OperatorExpr, Properties};
+use crate::operators::{ExprMemo, ExprRef, Operator, OperatorExpr, OuterScope, Properties};
 use crate::properties::physical::RequiredProperties;
 use crate::rules::{EvaluationResponse, RuleContext, RuleId, RuleMatch, RuleResult, RuleSet, RuleType};
 
@@ -84,7 +84,7 @@ where
         log::debug!("Optimizing expression: {:?}", expr);
 
         let required_property = expr.props().relational().physical().required.clone();
-        let scope = ExprScope::from_properties(expr.props());
+        let scope = OuterScope::from_properties(expr.props());
         let root_expr = memo.insert_group(expr, &scope);
         let root_group_id = root_expr.state().memo_group_id();
 
@@ -491,7 +491,7 @@ fn apply_rule<R>(
                 let new_operator = OperatorExpr::from(expr);
                 let new_operator = Operator::from(new_operator);
                 let memo_group = memo.get_group(&ctx.group);
-                let scope = ExprScope::from_properties(memo_group.props());
+                let scope = OuterScope::from_properties(memo_group.props());
                 let group_token = memo_group.to_group_token();
                 let new_expr = memo.insert_group_member(group_token, new_operator, &scope);
                 let new_expr = new_expr.state().memo_expr();
@@ -508,7 +508,7 @@ fn apply_rule<R>(
                 let new_operator = OperatorExpr::from(expr);
                 let new_operator = Operator::from(new_operator);
                 let memo_group = memo.get_group(&ctx.group);
-                let scope = ExprScope::from_properties(memo_group.props());
+                let scope = OuterScope::from_properties(memo_group.props());
                 let group_token = memo_group.to_group_token();
                 let new_expr = memo.insert_group_member(group_token, new_operator, &scope);
                 let new_expr = new_expr.state().memo_expr();
@@ -540,7 +540,7 @@ fn enforce_properties<R>(
 
     let (enforcer_expr, remaining_properties) = {
         let group = memo.get_group(&ctx.group_id());
-        let scope = ExprScope::from_properties(group.props());
+        let scope = OuterScope::from_properties(group.props());
         let input = RelNode::from_group(group);
 
         let (enforcer_expr, remaining_properties) =

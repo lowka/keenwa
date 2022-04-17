@@ -31,6 +31,19 @@ ok: |
     right: LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
       input: LogicalGet b cols=[5, 6, 7]
 ---
+query: |
+  SELECT (SELECT a1 UNION SELECT 1) FROM a
+ok: |
+  LogicalProjection cols=[7] exprs: [SubQuery 05]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+  
+  Sub query from column 7:
+  LogicalUnion all=false cols=[6] outer_cols=[1]
+    left: LogicalProjection cols=[1] outer_cols=[1] exprs: [col:1]
+      input: LogicalEmpty return_one_row=true
+    right: LogicalProjection cols=[5] exprs: [1]
+      input: LogicalEmpty return_one_row=true
+---
 
 # EXCEPT
 query: |
@@ -55,7 +68,19 @@ ok: |
     right: LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
       input: LogicalGet b cols=[5, 6, 7]
 ---
-
+query: |
+  SELECT (SELECT a1 EXCEPT SELECT 1) FROM a
+ok: |
+  LogicalProjection cols=[7] exprs: [SubQuery 05]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+  
+  Sub query from column 7:
+  LogicalExcept all=false cols=[6] outer_cols=[1]
+    left: LogicalProjection cols=[1] outer_cols=[1] exprs: [col:1]
+      input: LogicalEmpty return_one_row=true
+    right: LogicalProjection cols=[5] exprs: [1]
+      input: LogicalEmpty return_one_row=true
+---
 # INTERSECT
 query: |
   SELECT a1, a2 FROM a
@@ -78,3 +103,16 @@ ok: |
       input: LogicalGet a cols=[1, 2, 3, 4]
     right: LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
       input: LogicalGet b cols=[5, 6, 7]
+---
+query: |
+  SELECT (SELECT a1 INTERSECT SELECT 1) FROM a
+ok: |
+  LogicalProjection cols=[7] exprs: [SubQuery 05]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+  
+  Sub query from column 7:
+  LogicalIntersect all=false cols=[6] outer_cols=[1]
+    left: LogicalProjection cols=[1] outer_cols=[1] exprs: [col:1]
+      input: LogicalEmpty return_one_row=true
+    right: LogicalProjection cols=[5] exprs: [1]
+      input: LogicalEmpty return_one_row=true

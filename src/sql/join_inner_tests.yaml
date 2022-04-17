@@ -32,3 +32,15 @@ error: |
   Not supported: JOIN without condition is allowed only for CROSS join types
 ---
 
+# condition contains a column from the outer scope.
+query: |
+  SELECT a1, (SELECT 1 FROM b JOIN c ON b1=c1 AND c1=a2) FROM a
+ok: |
+  LogicalProjection cols=[1, 12] exprs: [col:1, SubQuery 05]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+
+  Sub query from column 12:
+  LogicalProjection cols=[11] outer_cols=[2] exprs: [1]
+    input: LogicalJoin type=Inner on=col:5 = col:8 AND col:8 = col:2 outer_cols=[2]
+      left: LogicalGet b cols=[5, 6, 7]
+      right: LogicalGet c cols=[8, 9, 10]

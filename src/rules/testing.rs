@@ -11,7 +11,7 @@ use crate::operators::relational::logical::{LogicalExpr, LogicalGet};
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::{
-    ExprMemo, ExprScope, Operator, OperatorExpr, OperatorMetadata, Properties, RelationalProperties,
+    ExprMemo, Operator, OperatorExpr, OperatorMetadata, OuterScope, Properties, RelationalProperties,
 };
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::RequiredProperties;
@@ -58,7 +58,7 @@ impl RuleTester {
         impl MemoGroupCallback for Callback {
             type Expr = OperatorExpr;
             type Props = Properties;
-            type Scope = ExprScope;
+            type Scope = OuterScope;
             type Metadata = OperatorMetadata;
 
             fn new_group(
@@ -83,7 +83,7 @@ impl RuleTester {
     /// Attempts to apply the rule to the given expression and then compares the result with the expected value.
     pub fn apply(&mut self, expr: &LogicalExpr, expected: &str) {
         let operator = Operator::from(OperatorExpr::from(expr.clone()));
-        let scope = ExprScope::root();
+        let scope = OuterScope::root();
         let memo_expr = self.memo.insert_group(operator, &scope);
 
         let ctx = RuleContext::new(Rc::new(None), self.metadata.get_ref());
@@ -98,7 +98,7 @@ impl RuleTester {
             Ok(None) => panic!("Rule matched but not applied: {:?}", self.rule),
             Err(e) => panic!("Failed to apply a rule. Rule: {:?}. Error: {}", self.rule, e),
         };
-        let scope = ExprScope::root();
+        let scope = OuterScope::root();
         let new_expr = self.memo.insert_group(expr, &scope);
         let actual_expr = format_operator_tree(&new_expr);
 
@@ -110,7 +110,7 @@ impl RuleTester {
     /// on the given expression. If that call does not return `Ok(None)` this methods fails.
     pub fn no_match(&mut self, expr: &LogicalExpr, can_apply: bool) {
         let operator = Operator::from(OperatorExpr::from(expr.clone()));
-        let scope = ExprScope::root();
+        let scope = OuterScope::root();
         let memo_expr = self.memo.insert_group(operator, &scope);
         let expr_str = format_operator_tree(&memo_expr);
 

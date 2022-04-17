@@ -265,7 +265,7 @@ mod test {
     impl MemoExprScopeProvider for TestScope {
         type Expr = TestOperator;
 
-        fn build_scope(expr: &Self::Expr) -> Self {
+        fn build_scope(_expr: &Self::Expr) -> Self {
             TestScope
         }
     }
@@ -983,7 +983,7 @@ mod test {
                 expr: &Self::Expr,
                 _scope: &Self::Scope,
                 provided_props: Self::Props,
-                metadata: &Self::Metadata,
+                _metadata: &Self::Metadata,
             ) -> Result<Self::Props, OptimizerError> {
                 let mut added = self.added.borrow_mut();
                 let mut buf = String::new();

@@ -61,6 +61,10 @@ impl NestedExpr for RelNode {
         self.props().logical.output_columns()
     }
 
+    fn outer_columns(&self) -> &[ColumnId] {
+        &self.props().logical.outer_columns
+    }
+
     fn write_to_fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self.state() {
             MemoExprState::Owned(_) => {

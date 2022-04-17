@@ -25,8 +25,14 @@ where
     type Error = Infallible;
 
     fn post_visit(&mut self, expr: &Expr<T>) -> Result<(), Self::Error> {
-        if let Expr::Column(id) = expr {
-            self.columns.push(*id);
+        match expr {
+            Expr::SubQuery(query) | Expr::InSubQuery { query, .. } | Expr::Exists { query, .. } => {
+                self.columns.extend_from_slice(query.outer_columns());
+            }
+            Expr::Column(id) => {
+                self.columns.push(*id);
+            }
+            _ => {}
         }
         Ok(())
     }
@@ -42,12 +48,19 @@ mod test {
     use crate::operators::scalar::exprs::collect_columns;
     use crate::operators::scalar::value::ScalarValue;
 
-    #[derive(Debug, Eq, PartialEq, Clone, Hash)]
-    struct DummyExpr;
+    #[derive(Debug, Eq, PartialEq, Clone, Hash, Default)]
+    struct DummyExpr {
+        output_columns: Vec<ColumnId>,
+        outer_columns: Vec<ColumnId>,
+    }
 
     impl NestedExpr for DummyExpr {
         fn output_columns(&self) -> &[ColumnId] {
-            &[]
+            &self.output_columns
+        }
+
+        fn outer_columns(&self) -> &[ColumnId] {
+            &self.outer_columns
         }
 
         fn write_to_fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -71,5 +84,49 @@ mod test {
         let columns = collect_columns(&expr);
         let empty = Vec::<ColumnId>::new();
         assert_eq!(columns, empty, "no columns");
+    }
+
+    #[test]
+    fn test_collect_columns_from_nested_query() {
+        test_subqueries(
+            &DummyExpr {
+                output_columns: vec![1],
+                outer_columns: vec![],
+            },
+            vec![],
+            "output columns must not be returned",
+        );
+
+        test_subqueries(
+            &DummyExpr {
+                output_columns: vec![],
+                outer_columns: vec![1],
+            },
+            vec![1],
+            "outer columns must be included",
+        );
+    }
+
+    fn expect_columns(expr: &Expr, expected: Vec<ColumnId>, message: &str) {
+        let columns = collect_columns(&expr);
+        assert_eq!(expected, columns, "{} ", message);
+    }
+
+    fn test_subqueries(expr: &DummyExpr, expected: Vec<ColumnId>, message: &str) {
+        let subquery = Expr::SubQuery(expr.clone());
+        expect_columns(&subquery, expected.clone(), message);
+
+        let subquery = Expr::Exists {
+            not: false,
+            query: expr.clone(),
+        };
+        expect_columns(&subquery, expected.clone(), message);
+
+        let subquery = Expr::InSubQuery {
+            not: false,
+            expr: Box::new(Expr::Scalar(ScalarValue::Int32(1))),
+            query: expr.clone(),
+        };
+        expect_columns(&subquery, expected, message);
     }
 }

@@ -10,11 +10,16 @@ use crate::operators::relational::logical::{
 };
 use crate::operators::relational::physical::{PhysicalExpr, Sort};
 use crate::operators::relational::{RelExpr, RelNode};
-use crate::operators::scalar::ScalarNode;
-use crate::operators::{OperatorExpr, Properties, RelationalProperties};
+use crate::operators::scalar::{exprs, ScalarNode};
+use crate::operators::{OperatorExpr, OuterScope, Properties, RelationalProperties};
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
 use crate::statistics::StatisticsBuilder;
+
+pub struct PropertiesContext<'a> {
+    pub outer_columns: &'a [ColumnId],
+    pub properties: Properties,
+}
 
 /// Provides logical properties for memo expressions.
 pub trait PropertiesProvider {
@@ -23,6 +28,7 @@ pub trait PropertiesProvider {
     fn build_properties(
         &self,
         expr: &OperatorExpr,
+        scope: &OuterScope,
         provided_props: Properties,
         metadata: MetadataRef,
     ) -> Result<Properties, OptimizerError>;
@@ -52,19 +58,46 @@ where
     pub fn build_select(
         &self,
         input: &RelNode,
-        _filter: Option<&ScalarNode>,
+        filter: Option<&ScalarNode>,
+        metadata: MetadataRef,
+        outer_scope: &OuterScope,
     ) -> Result<LogicalProperties, OptimizerError> {
-        Ok(LogicalProperties::new(input.props().logical().output_columns.to_vec(), None))
+        let output_columns = input.props().logical().output_columns.to_vec();
+
+        let mut outer_columns = OuterColumnsBuilder::new(outer_scope, metadata);
+        outer_columns.add_input(input);
+        if let Some(expr) = filter {
+            outer_columns.add_expr(expr)
+        }
+        let outer_columns = outer_columns.build();
+
+        Ok(LogicalProperties {
+            output_columns,
+            outer_columns,
+            statistics: None,
+        })
     }
 
     /// Builds logical properties for a projection operator.
     pub fn build_projection(
         &self,
-        _input: &RelNode,
+        input: &RelNode,
         columns: &[ColumnId],
+        metadata: MetadataRef,
+        outer_scope: &OuterScope,
     ) -> Result<LogicalProperties, OptimizerError> {
         let output_columns = columns.to_vec();
-        Ok(LogicalProperties::new(output_columns, None))
+
+        let mut outer_columns = OuterColumnsBuilder::new(outer_scope, metadata);
+        outer_columns.add_input(input);
+        outer_columns.add_projection(columns);
+        let outer_columns = outer_columns.build();
+
+        Ok(LogicalProperties {
+            output_columns,
+            outer_columns,
+            statistics: None,
+        })
     }
 
     /// Builds logical properties for a join operator.
@@ -73,19 +106,54 @@ where
         _join_type: &JoinType,
         left: &RelNode,
         right: &RelNode,
-        _condition: &JoinCondition,
+        condition: &JoinCondition,
+        metadata: MetadataRef,
+        outer_scope: &OuterScope,
     ) -> Result<LogicalProperties, OptimizerError> {
         let mut output_columns = left.props().logical().output_columns().to_vec();
         output_columns.extend_from_slice(right.props().logical().output_columns());
 
-        Ok(LogicalProperties::new(output_columns, None))
+        let mut outer_columns = OuterColumnsBuilder::new(outer_scope, metadata);
+        outer_columns.add_input(left);
+        outer_columns.add_input(right);
+        match condition {
+            JoinCondition::Using(using) => outer_columns.add_expr(&using.get_expr()),
+            JoinCondition::On(on_expr) => outer_columns.add_expr(on_expr.expr()),
+        };
+        let outer_columns = outer_columns.build();
+
+        Ok(LogicalProperties {
+            output_columns,
+            outer_columns,
+            statistics: None,
+        })
     }
 
     /// Builds logical properties for the given aggregate operator.
-    pub fn build_aggregate(&self, _input: &RelNode, columns: &[ColumnId]) -> Result<LogicalProperties, OptimizerError> {
+    pub fn build_aggregate(
+        &self,
+        input: &RelNode,
+        columns: &[ColumnId],
+        group_exprs: &[ScalarNode],
+        metadata: MetadataRef,
+        outer_scope: &OuterScope,
+    ) -> Result<LogicalProperties, OptimizerError> {
         let output_columns = columns.to_vec();
 
-        Ok(LogicalProperties::new(output_columns, None))
+        let mut outer_columns = OuterColumnsBuilder::new(outer_scope, metadata);
+        outer_columns.add_input(input);
+        outer_columns.add_projection(columns);
+        for group_by in group_exprs {
+            outer_columns.add_expr(group_by);
+        }
+
+        let outer_columns = outer_columns.build();
+
+        Ok(LogicalProperties {
+            output_columns,
+            outer_columns,
+            statistics: None,
+        })
     }
 
     /// Builds logical properties for the given set operator (Union, Intersect or Except).
@@ -96,11 +164,13 @@ where
         right: &RelNode,
         all: bool,
         columns: &[ColumnId],
+        metadata: MetadataRef,
+        outer_scope: &OuterScope,
     ) -> Result<LogicalProperties, OptimizerError> {
         match set_op {
-            SetOperator::Union => self.build_union(left, right, all, columns),
-            SetOperator::Intersect => self.build_intersect(left, right, all, columns),
-            SetOperator::Except => self.build_except(left, right, all, columns),
+            SetOperator::Union => self.build_union(left, right, all, columns, metadata, outer_scope),
+            SetOperator::Intersect => self.build_intersect(left, right, all, columns, metadata, outer_scope),
+            SetOperator::Except => self.build_except(left, right, all, columns, metadata, outer_scope),
         }
     }
 
@@ -111,54 +181,105 @@ where
 
     fn build_union(
         &self,
-        _left: &RelNode,
-        _right: &RelNode,
+        left: &RelNode,
+        right: &RelNode,
         _all: bool,
         columns: &[ColumnId],
+        metadata: MetadataRef,
+        outer_scope: &OuterScope,
     ) -> Result<LogicalProperties, OptimizerError> {
         let output_columns = columns.to_vec();
 
-        Ok(LogicalProperties::new(output_columns, None))
+        let mut outer_columns = OuterColumnsBuilder::new(outer_scope, metadata);
+        outer_columns.add_input(left);
+        outer_columns.add_input(right);
+        let outer_columns = outer_columns.build();
+
+        Ok(LogicalProperties {
+            output_columns,
+            outer_columns,
+            statistics: None,
+        })
     }
 
     fn build_intersect(
         &self,
-        _left: &RelNode,
-        _right: &RelNode,
+        left: &RelNode,
+        right: &RelNode,
         _all: bool,
         columns: &[ColumnId],
+        metadata: MetadataRef,
+        outer_scope: &OuterScope,
     ) -> Result<LogicalProperties, OptimizerError> {
         let output_columns = columns.to_vec();
 
-        Ok(LogicalProperties::new(output_columns, None))
+        let mut outer_columns = OuterColumnsBuilder::new(outer_scope, metadata);
+        outer_columns.add_input(left);
+        outer_columns.add_input(right);
+        let outer_columns = outer_columns.build();
+
+        Ok(LogicalProperties {
+            output_columns,
+            outer_columns,
+            statistics: None,
+        })
     }
 
     fn build_except(
         &self,
-        _left: &RelNode,
-        _right: &RelNode,
+        left: &RelNode,
+        right: &RelNode,
         _all: bool,
         columns: &[ColumnId],
+        metadata: MetadataRef,
+        outer_scope: &OuterScope,
     ) -> Result<LogicalProperties, OptimizerError> {
         let output_columns = columns.to_vec();
 
-        Ok(LogicalProperties::new(output_columns, None))
+        let mut outer_columns = OuterColumnsBuilder::new(outer_scope, metadata);
+        outer_columns.add_input(left);
+        outer_columns.add_input(right);
+        let outer_columns = outer_columns.build();
+
+        Ok(LogicalProperties {
+            output_columns,
+            outer_columns,
+            statistics: None,
+        })
     }
 
     fn build_distinct(
         &self,
         input: &RelNode,
-        _on_expr: Option<&ScalarNode>,
+        on_expr: Option<&ScalarNode>,
+        metadata: MetadataRef,
+        outer_scope: &OuterScope,
     ) -> Result<LogicalProperties, OptimizerError> {
         let output_columns = input.props().logical().output_columns.to_vec();
 
-        Ok(LogicalProperties::new(output_columns, None))
+        let mut outer_columns = OuterColumnsBuilder::new(outer_scope, metadata);
+        outer_columns.add_input(input);
+        if let Some(expr) = on_expr {
+            outer_columns.add_expr(expr);
+        }
+        let outer_columns = outer_columns.build();
+
+        Ok(LogicalProperties {
+            output_columns,
+            outer_columns,
+            statistics: None,
+        })
     }
 
     fn build_limit_offset(&self, input: &RelNode) -> Result<LogicalProperties, OptimizerError> {
         let output_columns = input.props().logical().output_columns.to_vec();
+        let outer_columns = input.props().logical.outer_columns.to_vec();
 
-        Ok(LogicalProperties::new(output_columns, None))
+        Ok(LogicalProperties {
+            output_columns,
+            outer_columns,
+            statistics: None,
+        })
     }
 }
 
@@ -178,62 +299,70 @@ where
     fn build_properties(
         &self,
         expr: &OperatorExpr,
-        manual_props: Properties,
+        scope: &OuterScope,
+        props: Properties,
         metadata: MetadataRef,
     ) -> Result<Properties, OptimizerError> {
         match expr {
             OperatorExpr::Relational(RelExpr::Logical(expr)) => {
-                let RelationalProperties {
-                    logical: _logical,
-                    physical,
-                } = manual_props.to_relational();
+                let RelationalProperties { physical, .. } = props.to_relational();
 
                 let LogicalProperties {
                     output_columns,
+                    outer_columns,
                     // build_xxx methods return logical properties without statistics.
-                    statistics: _statistics,
+                    statistics: _,
                 } = match &**expr {
                     LogicalExpr::Projection(LogicalProjection { input, columns, .. }) => {
-                        self.build_projection(input, columns)
+                        self.build_projection(input, columns, metadata.clone(), &scope)
                     }
-                    LogicalExpr::Select(LogicalSelect { input, filter }) => self.build_select(input, filter.as_ref()),
-                    LogicalExpr::Aggregate(LogicalAggregate { input, columns, .. }) => {
-                        self.build_aggregate(input, columns)
+                    LogicalExpr::Select(LogicalSelect { input, filter }) => {
+                        self.build_select(input, filter.as_ref(), metadata.clone(), &scope)
                     }
+                    LogicalExpr::Aggregate(LogicalAggregate {
+                        input,
+                        columns,
+                        group_exprs,
+                        ..
+                    }) => self.build_aggregate(input, columns, group_exprs, metadata.clone(), &scope),
                     LogicalExpr::Join(LogicalJoin {
                         join_type,
                         left,
                         right,
                         condition,
-                    }) => self.build_join(join_type, left, right, condition),
+                    }) => self.build_join(join_type, left, right, condition, metadata.clone(), &scope),
                     LogicalExpr::Get(LogicalGet { source, columns }) => self.build_get(source, columns),
                     LogicalExpr::Union(LogicalUnion {
                         left,
                         right,
                         all,
                         columns,
-                    }) => self.build_union(left, right, *all, columns),
+                    }) => self.build_union(left, right, *all, columns, metadata.clone(), &scope),
                     LogicalExpr::Intersect(LogicalIntersect {
                         left,
                         right,
                         all,
                         columns,
-                    }) => self.build_intersect(left, right, *all, columns),
+                    }) => self.build_intersect(left, right, *all, columns, metadata.clone(), &scope),
                     LogicalExpr::Except(LogicalExcept {
                         left,
                         right,
                         all,
                         columns,
-                    }) => self.build_except(left, right, *all, columns),
+                    }) => self.build_except(left, right, *all, columns, metadata.clone(), &scope),
                     LogicalExpr::Distinct(LogicalDistinct { input, on_expr, .. }) => {
-                        self.build_distinct(input, on_expr.as_ref())
+                        self.build_distinct(input, on_expr.as_ref(), metadata.clone(), &scope)
                     }
                     LogicalExpr::Limit(LogicalLimit { input, .. })
                     | LogicalExpr::Offset(LogicalOffset { input, .. }) => self.build_limit_offset(input),
                     LogicalExpr::Empty(LogicalEmpty { .. }) => self.build_empty(),
                 }?;
-                let logical = LogicalProperties::new(output_columns, None);
-                let statistics = self.statistics.build_statistics(expr, &logical, metadata.clone())?;
+                let logical = LogicalProperties {
+                    output_columns,
+                    outer_columns,
+                    statistics: None,
+                };
+                let statistics = self.statistics.build_statistics(expr, &logical, metadata)?;
                 let logical = if let Some(statistics) = statistics {
                     logical.with_statistics(statistics)
                 } else {
@@ -263,9 +392,90 @@ where
                 }
             }
             OperatorExpr::Scalar(_) => {
-                let scalar = manual_props.to_scalar();
+                let scalar = props.to_scalar();
                 Ok(Properties::Scalar(scalar))
             }
+        }
+    }
+}
+
+struct OuterColumnsBuilder<'a> {
+    scope: &'a OuterScope,
+    metadata: MetadataRef<'a>,
+    input_columns: Vec<ColumnId>,
+    result: Vec<ColumnId>,
+}
+
+impl<'a> OuterColumnsBuilder<'a> {
+    fn new(scope: &'a OuterScope, metadata: MetadataRef<'a>) -> Self {
+        OuterColumnsBuilder {
+            scope,
+            metadata,
+            input_columns: Vec::new(),
+            result: Vec::new(),
+        }
+    }
+
+    /// Adds outer columns used by the input operator.
+    fn add_input(&mut self, input: &RelNode) {
+        let output_columns = &input.props().logical.output_columns;
+        self.input_columns.extend_from_slice(output_columns);
+
+        let input_outer_columns = &input.props().logical.outer_columns;
+        for col_id in input_outer_columns {
+            assert!(
+                self.scope.outer_columns.contains(col_id),
+                "Input operator contains unexpected column in outer columns. Outer scope: {:?}. Input: {:?}",
+                self.scope.outer_columns,
+                input_outer_columns
+            );
+            self.add_outer_column(*col_id);
+        }
+    }
+
+    /// Adds outer columns referenced by projection expressions.
+    fn add_projection(&mut self, columns: &[ColumnId]) {
+        // We can not borrow the metadata and modify the outer columns at the same time.
+        let metadata = self.metadata.clone();
+        columns
+            .iter()
+            .flat_map(|col_id| {
+                let meta = metadata.get_column(col_id);
+                if let Some(expr) = meta.expr() {
+                    exprs::collect_columns(expr).into_iter()
+                } else {
+                    vec![*col_id].into_iter()
+                }
+            })
+            .for_each(|col_id| {
+                self.add_if_outer(col_id);
+            });
+    }
+
+    /// Adds outer columns referenced by the given expressions.
+    fn add_expr(&mut self, expr: &ScalarNode) {
+        let columns = exprs::collect_columns(expr.expr());
+        for col_id in columns {
+            self.add_if_outer(col_id);
+        }
+    }
+
+    fn build(self) -> Vec<ColumnId> {
+        self.result
+    }
+
+    fn add_if_outer(&mut self, id: ColumnId) {
+        if self.scope.outer_columns.contains(&id) {
+            // Do not add an outer column if the same column is provided by the input operator.
+            if !self.input_columns.contains(&id) {
+                self.add_outer_column(id);
+            }
+        }
+    }
+
+    fn add_outer_column(&mut self, id: ColumnId) {
+        if !self.result.contains(&id) {
+            self.result.push(id);
         }
     }
 }
