@@ -7,6 +7,7 @@ use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use itertools::Itertools;
+use triomphe::Arc;
 
 use crate::error::OptimizerError;
 use crate::memo::arc::MemoArc;
@@ -20,7 +21,7 @@ pub struct MemoBuilder<E, T>
 where
     E: MemoExpr,
 {
-    callback: Option<MemoGroupCallbackRef<E::Expr, E::Props, T>>,
+    callback: Option<MemoGroupCallbackRef<E::Expr, E::Props, E::Scope, T>>,
     metadata: T,
 }
 
@@ -37,7 +38,7 @@ where
     }
 
     /// Sets a callback.
-    pub fn set_callback(mut self, callback: MemoGroupCallbackRef<E::Expr, E::Props, T>) -> Self {
+    pub fn set_callback(mut self, callback: MemoGroupCallbackRef<E::Expr, E::Props, E::Scope, T>) -> Self {
         self.callback = Some(callback);
         self
     }
@@ -55,7 +56,7 @@ where
 }
 
 /// The type of [memo group callback][self::MemoGroupCallback] used by [Memo].
-pub type MemoGroupCallbackRef<E, P, T> = Rc<dyn MemoGroupCallback<Expr = E, Props = P, Metadata = T>>;
+pub type MemoGroupCallbackRef<E, P, S, T> = Rc<dyn MemoGroupCallback<Expr = E, Props = P, Scope = S, Metadata = T>>;
 
 /// `Memo` is the primary data structure used by the cost-based optimizer:
 ///  * It stores each expression as a group of logically equivalent expressions.
@@ -76,8 +77,9 @@ where
     /// Copies the given expression `expr` into this memo. if this memo does not contain the given expression
     /// a new memo group is created and this method returns a reference to it. Otherwise returns a reference
     /// to the already existing expression.
-    pub fn insert_group(&mut self, expr: E) -> E {
+    pub fn insert_group(&mut self, expr: E, scope: &E::Scope) -> E {
         let copy_in = CopyIn {
+            scope,
             memo: &mut self.memo_impl,
             parent: None,
         };
@@ -90,8 +92,9 @@ where
     /// # Panics
     ///
     /// This method panics if group with the given id does not exist.
-    pub fn insert_group_member(&mut self, token: MemoGroupToken<E>, expr: E) -> E {
+    pub fn insert_group_member(&mut self, token: MemoGroupToken<E>, expr: E, scope: &E::Scope) -> E {
         let copy_in = CopyIn {
+            scope,
             memo: &mut self.memo_impl,
             parent: Some(token),
         };
@@ -181,6 +184,9 @@ pub trait MemoExpr: Clone {
     type Expr: Expr;
     /// The type of the properties.
     type Props: Props;
+    /// The type of the scope. The scope of a memo expression contains
+    /// external information that can be used to build properties of a memo expression group.
+    type Scope;
 
     /// Returns a reference to the underlying expression (see [MemoExprState::expr]).
     /// This method is a shorthand for `memo_expr.state().expr()`.
@@ -313,6 +319,8 @@ pub trait MemoGroupCallback {
     type Expr: Expr;
     /// The type of properties of the expression.
     type Props: Props;
+    /// The type of scope.
+    type Scope;
     /// The type of metadata stored by a memo.
     type Metadata;
 
@@ -326,7 +334,8 @@ pub trait MemoGroupCallback {
     fn new_group(
         &self,
         expr: &Self::Expr,
-        props: &Self::Props,
+        scope: &Self::Scope,
+        provided_props: Self::Props,
         metadata: &Self::Metadata,
     ) -> Result<Self::Props, OptimizerError>;
 }
@@ -852,6 +861,7 @@ pub struct CopyInExprs<'a, E, T>
 where
     E: MemoExpr,
 {
+    scope: &'a E::Scope,
     pub(crate) memo: &'a mut MemoImpl<E, T>,
     parent: Option<MemoGroupToken<E>>,
     pub(crate) result: Option<E>,
@@ -861,8 +871,9 @@ impl<'a, E, T> CopyInExprs<'a, E, T>
 where
     E: MemoExpr,
 {
-    fn new(memo: &'a mut MemoImpl<E, T>, parent: Option<MemoGroupToken<E>>) -> Self {
+    fn new(scope: &'a E::Scope, memo: &'a mut MemoImpl<E, T>, parent: Option<MemoGroupToken<E>>) -> Self {
         CopyInExprs {
+            scope,
             memo,
             parent,
             result: None,
@@ -882,6 +893,7 @@ where
         let child_expr = match input.state() {
             MemoExprState::Owned(_) => {
                 let copy_in = CopyIn {
+                    scope: self.scope,
                     memo: self.memo,
                     parent: None,
                 };
@@ -935,7 +947,7 @@ where
             } else {
                 let props = if let Some(callback) = &self.memo.callback {
                     callback
-                        .new_group(&expr, &props, &self.memo.metadata)
+                        .new_group(&expr, self.scope, props, &self.memo.metadata)
                         .expect("new group callback has returned an error")
                 } else {
                     props
@@ -997,6 +1009,7 @@ struct CopyIn<'a, E, T>
 where
     E: MemoExpr,
 {
+    scope: &'a E::Scope,
     memo: &'a mut MemoImpl<E, T>,
     parent: Option<MemoGroupToken<E>>,
 }
@@ -1006,7 +1019,7 @@ where
     E: MemoExpr,
 {
     fn execute(mut self, expr: &E) -> E {
-        let mut visitor = CopyInExprs::new(self.memo, self.parent.take());
+        let mut visitor = CopyInExprs::new(self.scope, self.memo, self.parent.take());
         expr.copy_in(&mut visitor);
         visitor.result.unwrap()
     }
@@ -1291,7 +1304,7 @@ where
     expr_cache: HashMap<String, ExprId>,
     expr_to_group: HashMap<ExprId, GroupId>,
     metadata: T,
-    callback: Option<MemoGroupCallbackRef<E::Expr, E::Props, T>>,
+    callback: Option<MemoGroupCallbackRef<E::Expr, E::Props, E::Scope, T>>,
 }
 
 impl<E, T> MemoImpl<E, T>
@@ -1309,7 +1322,7 @@ where
         }
     }
 
-    pub(crate) fn with_callback(metadata: T, callback: MemoGroupCallbackRef<E::Expr, E::Props, T>) -> Self {
+    pub(crate) fn with_callback(metadata: T, callback: MemoGroupCallbackRef<E::Expr, E::Props, E::Scope, T>) -> Self {
         MemoImpl {
             exprs: Vec::new(),
             groups: Vec::new(),
