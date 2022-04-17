@@ -94,7 +94,13 @@ impl OperatorTreeFormatter {
         fn write_properties(buf: &mut String, props: &Properties, padding: &str) {
             if let Properties::Relational(props) = props {
                 let logical = props.logical();
-                buf.push_str(format!("{}output cols: {:?}\n", padding, logical.output_columns()).as_str());
+                let output_columns = logical.output_columns();
+                buf.push_str(format!("{}output cols: {:?}\n", padding, output_columns).as_str());
+
+                let outer_columns = &logical.outer_columns;
+                if !outer_columns.is_empty() {
+                    buf.push_str(format!("{}outer cols: {:?}\n", padding, outer_columns).as_str());
+                }
 
                 let physical = props.physical();
                 let required = physical.required.as_ref();

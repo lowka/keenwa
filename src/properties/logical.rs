@@ -8,6 +8,8 @@ use crate::statistics::Statistics;
 pub struct LogicalProperties {
     // FIXME: use a bit set instead of a vec.
     pub(crate) output_columns: Vec<ColumnId>,
+    /// Columns from the outer scope used by an operator.
+    pub(crate) outer_columns: Vec<ColumnId>,
     //FIXME: Make this non-optional when logical properties builder API becomes stable.
     pub(crate) statistics: Option<Statistics>,
 }
@@ -17,6 +19,7 @@ impl LogicalProperties {
     pub fn new(output_columns: Vec<ColumnId>, statistics: Option<Statistics>) -> Self {
         LogicalProperties {
             output_columns,
+            outer_columns: Vec::with_capacity(0),
             statistics,
         }
     }
@@ -28,6 +31,7 @@ impl LogicalProperties {
     pub fn empty() -> Self {
         LogicalProperties {
             output_columns: Vec::with_capacity(0),
+            outer_columns: Vec::with_capacity(0),
             statistics: None,
         }
     }
@@ -46,10 +50,12 @@ impl LogicalProperties {
     pub fn with_statistics(self, statistics: Statistics) -> Self {
         let LogicalProperties {
             output_columns,
+            outer_columns,
             statistics: _statistics,
         } = self;
         LogicalProperties {
             output_columns,
+            outer_columns,
             statistics: Some(statistics),
         }
     }

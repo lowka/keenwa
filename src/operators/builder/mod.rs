@@ -13,7 +13,7 @@ use scope::{OperatorScope, RelationInScope};
 
 use crate::catalog::CatalogRef;
 use crate::error::OptimizerError;
-use crate::memo::{MemoExprState, Props};
+use crate::memo::MemoExprState;
 use crate::meta::{ColumnId, ColumnMetadata, MutableMetadata};
 use crate::operators::relational::join::{JoinCondition, JoinOn, JoinType, JoinUsing};
 use crate::operators::relational::logical::{
@@ -24,8 +24,8 @@ use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::ExprRewriter;
 use crate::operators::scalar::types::resolve_expr_type;
 use crate::operators::scalar::value::ScalarValue;
-use crate::operators::scalar::{get_subquery, ScalarExpr, ScalarNode};
-use crate::operators::{ExprMemo, ExprScope, Operator, OperatorExpr};
+use crate::operators::scalar::{exprs, get_subquery, ScalarExpr, ScalarNode};
+use crate::operators::{ExprMemo, Operator, OperatorExpr, OuterScope};
 use crate::properties::physical::{PhysicalProperties, RequiredProperties};
 use crate::properties::OrderingChoice;
 
@@ -134,14 +134,19 @@ impl OperatorBuilder {
 
     /// Creates a new builder that shares all properties of the given builder
     /// and uses the given operator as its parent node in an operator tree.
-    fn from_builder(builder: &OperatorBuilder, operator: Operator, columns: Vec<(String, ColumnId)>) -> Self {
+    fn from_builder(
+        builder: &OperatorBuilder,
+        operator: Operator,
+        scope: &OperatorScope,
+        columns: Vec<(String, ColumnId)>,
+    ) -> Self {
         let scope = if let Some(scope) = &builder.scope {
             // Set columns if scope exists.
             scope.with_new_columns(columns)
         } else {
             // If the given builder does not have the scope yet
             // create a new scope from the given columns.
-            OperatorScope::from_columns(columns)
+            OperatorScope::from_columns(columns, scope.outer_columns().to_vec())
         };
         OperatorBuilder {
             callback: builder.callback.clone(),
@@ -496,7 +501,7 @@ impl OperatorBuilder {
             callback: self.callback.clone(),
             catalog: self.catalog.clone(),
             metadata: self.metadata.clone(),
-            scope: self.scope.as_ref().map(|scope| scope.new_child_scope()),
+            scope: self.scope.as_ref().map(|scope| scope.new_child_scope(self.metadata.get_ref())),
             operator: None,
             sub_query_builder: true,
         }
@@ -608,7 +613,6 @@ impl OperatorBuilder {
         });
 
         let relation = RelationInScope::new(relation_id, relation_name, columns);
-
         self.add_input_operator(expr, relation);
         Ok(self)
     }
@@ -625,6 +629,8 @@ impl OperatorBuilder {
         if left_scope.columns().len() != right_scope.columns().len() {
             return Err(OptimizerError::Argument("Union: Number of columns does not match".to_string()));
         }
+
+        let outer_columns = left_scope.outer_columns().to_vec();
 
         let mut columns = Vec::new();
         let mut column_ids = Vec::new();
@@ -672,7 +678,19 @@ impl OperatorBuilder {
             }),
         };
 
-        self.add_input_operator(expr, RelationInScope::from_columns(columns));
+        let operator = Operator::from(OperatorExpr::from(expr));
+        self.operator = Some(operator);
+
+        let relation = RelationInScope::from_columns(columns);
+        let mut scope = if let Some(mut scope) = self.scope.take() {
+            scope.set_relation(relation);
+            scope
+        } else {
+            OperatorScope::new_source(relation)
+        };
+        scope.set_outer_columns(outer_columns);
+        self.scope = Some(scope);
+
         Ok(self)
     }
 
@@ -686,7 +704,8 @@ impl OperatorBuilder {
         let operator = Operator::from(OperatorExpr::from(expr));
         self.operator = Some(operator);
 
-        let mut scope = OperatorScope::from_columns(columns);
+        let outer_columns = input.outer_columns().to_vec();
+        let mut scope = OperatorScope::from_columns(columns, outer_columns);
         if !input_is_projection {
             scope.add_relations(input);
         }
@@ -1021,18 +1040,22 @@ impl MemoizeOperators {
 }
 
 impl OperatorCallback for OperatorCallbackImpl {
-    fn new_rel_expr(&self, expr: Operator, _scope: &OperatorScope) -> RelNode {
+    fn new_rel_expr(&self, expr: Operator, scope: &OperatorScope) -> RelNode {
         assert!(expr.expr().is_relational(), "Expected a relational expression but got {:?}", expr);
         let mut memo = self.memo.borrow_mut();
-        let scope = ExprScope::root();
+        let scope = OuterScope {
+            outer_columns: scope.outer_columns().to_vec(),
+        };
         let expr = memo.insert_group(expr, &scope);
         RelNode::from_mexpr(expr)
     }
 
-    fn new_scalar_expr(&self, expr: Operator, _scope: &OperatorScope) -> ScalarNode {
+    fn new_scalar_expr(&self, expr: Operator, scope: &OperatorScope) -> ScalarNode {
         assert!(expr.expr().is_scalar(), "Expected a scalar expression but got {:?}", expr);
         let mut memo = self.memo.borrow_mut();
-        let scope = ExprScope::root();
+        let scope = OuterScope {
+            outer_columns: scope.outer_columns().to_vec(),
+        };
         let expr = memo.insert_group(expr, &scope);
         ScalarNode::from_mexpr(expr)
     }
@@ -1721,7 +1744,7 @@ Memo:
     fn test_aggregate() {
         let mut tester = OperatorBuilderTester::new();
         tester.build_operator(|builder| {
-            let mut from_a = builder.get("A", vec!["a1", "a2", "a3"])?;
+            let mut from_a = builder.get("A", vec!["a1", "a2"])?;
             let sum = from_a
                 .aggregate_builder()
                 .add_column("a1")?
@@ -1734,34 +1757,33 @@ Memo:
         });
         tester.expect_expr(
             r#"
-LogicalAggregate cols=[1, 4]
+LogicalAggregate cols=[1, 3]
   aggr_exprs: [col:1, sum(col:1)]
   group_exprs: [col:1]
-  input: LogicalGet A cols=[1, 2, 3]
+  input: LogicalGet A cols=[1, 2]
   having: Expr col:1 > 100
-  output cols: [1, 4]
+  output cols: [1, 3]
 Metadata:
   col:1 A.a1 Int32
   col:2 A.a2 Int32
-  col:3 A.a3 Int32
-  col:4 sum Int32, expr: sum(col:1)
+  col:3 sum Int32, expr: sum(col:1)
 Memo:
-  04 LogicalAggregate input=00 aggr_exprs=[01, 02] group_exprs=[01] having=03 cols=[1, 4]
+  04 LogicalAggregate input=00 aggr_exprs=[01, 02] group_exprs=[01] having=03 cols=[1, 3]
   03 Expr col:1 > 100
   02 Expr sum(col:1)
   01 Expr col:1
-  00 LogicalGet A cols=[1, 2, 3]
+  00 LogicalGet A cols=[1, 2]
 "#,
         );
     }
 
     #[test]
-    fn test_outer_columns_in_sub_query() {
+    fn test_outer_columns_in_sub_query_filter_expr() {
         let mut tester = OperatorBuilderTester::new();
         tester.build_operator(|builder| {
-            let filter = col("b1").eq(col("a1"));
+            let filter = col("b1").eq(col("a3"));
 
-            // SELECT a1, (SELECT b1 WHERE B b1=a1) FROM A
+            // SELECT a1, (SELECT b1 FROM B WHERE b1=a3) FROM A
             let from_a = builder.get("A", vec!["a1", "a2", "a3"])?;
             let b1 = from_a.sub_query_builder().get("B", vec!["b1"])?.select(Some(filter))?.build()?;
             let b1 = ScalarExpr::SubQuery(RelNode::from(b1));
@@ -1776,9 +1798,9 @@ LogicalProjection cols=[1, 5] exprs: [col:1, SubQuery 02]
   output cols: [1, 5]
 
 Sub query from column 5:
-LogicalSelect
+LogicalSelect outer_cols=[3]
   input: LogicalGet B cols=[4]
-  filter: Expr col:4 = col:1
+  filter: Expr col:4 = col:3
 Metadata:
   col:1 A.a1 Int32
   col:2 A.a2 Int32
@@ -1790,9 +1812,62 @@ Memo:
   05 Expr SubQuery 02
   04 Expr col:1
   03 LogicalGet A cols=[1, 2, 3]
-  02 LogicalSelect input=00 filter=01
-  01 Expr col:4 = col:1
+  02 LogicalSelect input=00 filter=01 outer_cols=[3]
+  01 Expr col:4 = col:3
   00 LogicalGet B cols=[4]
+"#,
+        )
+    }
+
+    #[test]
+    fn test_outer_columns_in_sub_query_join_condition() {
+        let mut tester = OperatorBuilderTester::new();
+        tester.build_operator(|builder| {
+            // SELECT a1, (SELECT b1 FROM B JOIN C ON b1=c1 AND c1=a3) FROM A
+            let from_a = builder.clone().get("A", vec!["a1", "a2", "a3"])?;
+            let from_c = builder.new_query_builder().get("C", vec!["c1"])?;
+            let join_condition = (col("b1").eq(col("c1"))).and(col("c1").eq(col("a3")));
+
+            let b1 = from_a
+                .sub_query_builder()
+                .get("B", vec!["b1"])?
+                .join_on(from_c, JoinType::Inner, join_condition)?
+                .project(vec![col("b1")])?
+                .build()?;
+            let b1 = ScalarExpr::SubQuery(RelNode::from(b1));
+            let project = from_a.project(vec![col("a1"), b1])?;
+
+            project.build()
+        });
+        tester.expect_expr(
+            r#"
+LogicalProjection cols=[1, 6] exprs: [col:1, SubQuery 05]
+  input: LogicalGet A cols=[1, 2, 3]
+  output cols: [1, 6]
+
+Sub query from column 6:
+LogicalProjection cols=[5] outer_cols=[3] exprs: [col:5]
+  input: LogicalJoin type=Inner on=col:5 = col:4 AND col:4 = col:3 outer_cols=[3]
+    left: LogicalGet B cols=[5]
+    right: LogicalGet C cols=[4]
+Metadata:
+  col:1 A.a1 Int32
+  col:2 A.a2 Int32
+  col:3 A.a3 Int32
+  col:4 C.c1 Int32
+  col:5 B.b1 Int32
+  col:6 ?column? Int32, expr: SubQuery 05
+Memo:
+  09 LogicalProjection input=06 exprs=[07, 08] cols=[1, 6]
+  08 Expr SubQuery 05
+  07 Expr col:1
+  06 LogicalGet A cols=[1, 2, 3]
+  05 LogicalProjection input=03 exprs=[04] cols=[5] outer_cols=[3]
+  04 Expr col:5
+  03 LogicalJoin left=00 right=01 type=Inner on=col:5 = col:4 AND col:4 = col:3 outer_cols=[3]
+  02 Expr col:5 = col:4 AND col:4 = col:3
+  01 LogicalGet C cols=[4]
+  00 LogicalGet B cols=[5]
 "#,
         )
     }
@@ -2040,6 +2115,15 @@ Memo:
                     .add_column("b1", DataType::Int32)
                     .add_column("b2", DataType::Int32)
                     .add_column("b3", DataType::Int32)
+                    .build(),
+            );
+
+            catalog.add_table(
+                DEFAULT_SCHEMA,
+                TableBuilder::new("C")
+                    .add_column("c1", DataType::Int32)
+                    .add_column("c2", DataType::Int32)
+                    .add_column("c3", DataType::Int32)
                     .build(),
             );
 

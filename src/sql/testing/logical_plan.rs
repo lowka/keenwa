@@ -1,6 +1,8 @@
 use crate::catalog::mutable::MutableCatalog;
 use crate::catalog::{TableBuilder, DEFAULT_SCHEMA};
-use crate::operators::format::{OperatorTreeFormatter, SubQueriesFormatter};
+use crate::memo::format_memo;
+use crate::operators::format::{OperatorFormatter, OperatorTreeFormatter, SubQueriesFormatter};
+use crate::operators::{ExprMemo, Operator};
 use crate::sql::testing::parser::parse_test_cases;
 use crate::sql::testing::{
     SqlTestCase, SqlTestCaseRunner, SqlTestCaseSet, TestCaseRunResult, TestCaseRunner, TestCaseRunnerFactory,
@@ -8,6 +10,7 @@ use crate::sql::testing::{
 };
 use crate::sql::OperatorFromSqlBuilder;
 use crate::statistics::{NoStatisticsBuilder, StatisticsBuilder};
+use itertools::Itertools;
 use std::sync::Arc;
 
 /// Runs the given SQL-test cases from the given string using the given catalog definition.

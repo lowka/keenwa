@@ -242,7 +242,7 @@ impl AggregateBuilder<'_> {
         });
         let operator = Operator::from(OperatorExpr::from(aggregate));
 
-        Ok(OperatorBuilder::from_builder(self.builder, operator, output_columns))
+        Ok(OperatorBuilder::from_builder(self.builder, operator, &scope, output_columns))
     }
 }
 

@@ -1,6 +1,7 @@
 use crate::error::OptimizerError;
-use crate::meta::{ColumnId, MutableMetadata, RelationId};
+use crate::meta::{ColumnId, MetadataRef, MutableMetadata, RelationId};
 use crate::operators::builder::TableAlias;
+use crate::operators::scalar::exprs;
 use std::rc::Rc;
 
 /// Stores columns and relations visible to/accessible from the current node of an operator tree.
@@ -10,6 +11,8 @@ pub struct OperatorScope {
     relation: RelationInScope,
     relations: RelationsInScope,
     parent: Option<Rc<OperatorScope>>,
+    // columns from the parent scope.
+    outer_columns: Vec<ColumnId>,
 }
 
 impl OperatorScope {
@@ -20,10 +23,11 @@ impl OperatorScope {
             relation,
             parent: None,
             relations,
+            outer_columns: Vec::new(),
         }
     }
 
-    pub fn from_columns(columns: Vec<(String, ColumnId)>) -> Self {
+    pub fn from_columns(columns: Vec<(String, ColumnId)>, outer_columns: Vec<ColumnId>) -> Self {
         let relation = RelationInScope::from_columns(columns);
         let relations = RelationsInScope::from_relation(relation.clone());
 
@@ -31,10 +35,26 @@ impl OperatorScope {
             relation,
             parent: None,
             relations,
+            outer_columns,
         }
     }
 
-    pub fn new_child_scope(&self) -> Self {
+    pub fn new_child_scope(&self, metadata: MetadataRef) -> Self {
+        // Outer columns of the child scope include:
+        // - the outer columns from this scope.
+        // - the columns returned by the output relation and the columns they reference
+        // (in case when a column is an expression/a synthetic column) .
+        let mut outer_columns = self.outer_columns.to_vec();
+
+        outer_columns.extend(self.columns().iter().flat_map(|(_, id)| {
+            let column = metadata.get_column(id);
+            let mut columns = vec![*id];
+            if let Some(expr) = column.expr() {
+                columns.extend(exprs::collect_columns(expr).into_iter());
+            }
+            columns
+        }));
+
         let mut relations = RelationsInScope::from_relation(self.relation.clone());
         relations.add_all(self.relations.clone());
 
@@ -42,6 +62,7 @@ impl OperatorScope {
             relation: RelationInScope::from_columns(vec![]),
             parent: Some(Rc::new(self.clone())),
             relations,
+            outer_columns,
         }
     }
 
@@ -53,6 +74,7 @@ impl OperatorScope {
             relation,
             parent: self.parent.clone(),
             relations,
+            outer_columns: self.outer_columns.clone(),
         }
     }
 
@@ -68,12 +90,19 @@ impl OperatorScope {
             relation: RelationInScope::from_columns(columns),
             relations,
             parent: self.parent,
+            // Use outer column from the left side of the join
+            // because the right side contain the subset of those columns.
+            outer_columns: self.outer_columns,
         }
     }
 
     pub fn set_relation(&mut self, relation: RelationInScope) {
         // ??? Update relations fields
         self.relation = relation
+    }
+
+    pub fn set_outer_columns(&mut self, outer_columns: Vec<ColumnId>) {
+        self.outer_columns = outer_columns;
     }
 
     pub fn add_relations(&mut self, other: OperatorScope) {
@@ -179,6 +208,10 @@ impl OperatorScope {
 
     pub fn output_relation(&self) -> &RelationInScope {
         &self.relation
+    }
+
+    pub fn outer_columns(&self) -> &[ColumnId] {
+        &self.outer_columns
     }
 
     fn find_in_scope<F>(&self, f: &F) -> Option<ColumnId>
