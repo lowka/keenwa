@@ -16,7 +16,7 @@ use crate::memo::{
     CopyInExprs, CopyInNestedExprs, ExprContext, Memo, MemoBuilder, MemoExpr, MemoExprFormatter, MemoExprRef,
     MemoExprState, MemoGroupCallback, MemoGroupCallbackRef, NewChildExprs, Props,
 };
-use crate::meta::MutableMetadata;
+use crate::meta::{ColumnId, MutableMetadata};
 use crate::operators::properties::{LogicalPropertiesBuilder, PropertiesProvider};
 use crate::operators::scalar::{expr_with_new_inputs, get_subquery};
 use crate::properties::logical::LogicalProperties;
@@ -32,7 +32,7 @@ pub mod scalar;
 pub type OperatorMetadata = Rc<MutableMetadata>;
 pub type ExprMemo = Memo<Operator, OperatorMetadata>;
 pub type ExprRef = MemoExprRef<Operator>;
-pub type ExprCallback = MemoGroupCallbackRef<OperatorExpr, Properties, OperatorMetadata>;
+pub type ExprCallback = MemoGroupCallbackRef<OperatorExpr, Properties, ExprScope, OperatorMetadata>;
 
 /// An operator is an expression (which can be either logical or physical) with a set of properties.
 /// A tree of operators can represent both initial (unoptimized) and optimized query plans.
@@ -259,6 +259,7 @@ impl crate::memo::Expr for OperatorExpr {
 impl MemoExpr for Operator {
     type Expr = OperatorExpr;
     type Props = Properties;
+    type Scope = ExprScope;
 
     fn from_state(state: MemoExprState<Self>) -> Self {
         Operator { state }
@@ -471,6 +472,23 @@ impl From<ScalarExpr> for OperatorExpr {
     }
 }
 
+/// ExprScope stores information that is used to build logical properties of an operator.
+/// See [MemoExpr::Scope].
+//???: Rename OperatorScope to BuildScope, Rename this struct to OperatorScope.
+pub struct ExprScope;
+
+impl ExprScope {
+    /// Creates a scope for the root of an operator tree.
+    pub fn root() -> Self {
+        ExprScope
+    }
+
+    /// Creates a scope from the given properties.
+    pub fn from_properties(_props: &Properties) -> Self {
+        ExprScope
+    }
+}
+
 /// Callback that sets logical properties when expression is added into a [memo](crate::memo::Memo).
 #[derive(Debug)]
 pub struct SetPropertiesCallback<P> {
@@ -493,17 +511,18 @@ where
 {
     type Expr = OperatorExpr;
     type Props = Properties;
+    type Scope = ExprScope;
     type Metadata = OperatorMetadata;
 
     fn new_group(
         &self,
         expr: &Self::Expr,
-        provided_props: &Self::Props,
+        scope: &Self::Scope,
+        provided_props: Self::Props,
         metadata: &Self::Metadata,
     ) -> Result<Self::Props, OptimizerError> {
         // Every time a new expression is added into a memo we need to compute logical properties of that expression.
-        self.properties_provider
-            .build_properties(expr, provided_props.clone(), metadata.get_ref())
+        self.properties_provider.build_properties(expr, provided_props, metadata.get_ref())
     }
 }
 

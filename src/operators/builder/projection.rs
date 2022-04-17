@@ -60,7 +60,7 @@ impl<'a> ProjectionListBuilder<'a> {
     }
 
     pub fn add_column(&mut self, id: ColumnId, name: String) -> Result<(), OptimizerError> {
-        let expr = self.builder.add_scalar_node(ScalarExpr::Column(id));
+        let expr = self.builder.add_scalar_node(ScalarExpr::Column(id), self.scope);
 
         self.projection.add_expr(id, name, expr);
 
@@ -76,7 +76,7 @@ impl<'a> ProjectionListBuilder<'a> {
         let data_type = resolve_expr_type(&expr, &self.builder.metadata)?;
         let column_meta = ColumnMetadata::new_synthetic_column(name.clone(), data_type, Some(column_expr));
         let id = self.builder.metadata.add_column(column_meta);
-        let expr = self.builder.add_scalar_node(expr);
+        let expr = self.builder.add_scalar_node(expr, self.scope);
 
         self.projection.add_expr(id, name, expr);
 

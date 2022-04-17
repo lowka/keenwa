@@ -51,7 +51,7 @@ use crate::meta::MetadataRef;
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::{expr_with_new_inputs, ScalarExpr};
-use crate::operators::{ExprMemo, ExprRef, Operator, OperatorExpr, Properties};
+use crate::operators::{ExprMemo, ExprRef, ExprScope, Operator, OperatorExpr, Properties};
 use crate::properties::physical::RequiredProperties;
 use crate::rules::{EvaluationResponse, RuleContext, RuleId, RuleMatch, RuleResult, RuleSet, RuleType};
 
@@ -84,7 +84,8 @@ where
         log::debug!("Optimizing expression: {:?}", expr);
 
         let required_property = expr.props().relational().physical().required.clone();
-        let root_expr = memo.insert_group(expr);
+        let scope = ExprScope::from_properties(expr.props());
+        let root_expr = memo.insert_group(expr, &scope);
         let root_group_id = root_expr.state().memo_group_id();
 
         let ctx = OptimizationContext {
@@ -488,9 +489,11 @@ fn apply_rule<R>(
         match result {
             RuleResult::Substitute(expr) => {
                 let new_operator = OperatorExpr::from(expr);
+                let new_operator = Operator::from(new_operator);
                 let memo_group = memo.get_group(&ctx.group);
+                let scope = ExprScope::from_properties(memo_group.props());
                 let group_token = memo_group.to_group_token();
-                let new_expr = memo.insert_group_member(group_token, Operator::from(new_operator));
+                let new_expr = memo.insert_group_member(group_token, new_operator, &scope);
                 let new_expr = new_expr.state().memo_expr();
 
                 log::debug!(" + Logical expression: {}", new_expr);
@@ -505,8 +508,9 @@ fn apply_rule<R>(
                 let new_operator = OperatorExpr::from(expr);
                 let new_operator = Operator::from(new_operator);
                 let memo_group = memo.get_group(&ctx.group);
+                let scope = ExprScope::from_properties(memo_group.props());
                 let group_token = memo_group.to_group_token();
-                let new_expr = memo.insert_group_member(group_token, new_operator);
+                let new_expr = memo.insert_group_member(group_token, new_operator, &scope);
                 let new_expr = new_expr.state().memo_expr();
 
                 log::debug!(" + Physical expression: {}", new_expr);
@@ -536,6 +540,7 @@ fn enforce_properties<R>(
 
     let (enforcer_expr, remaining_properties) = {
         let group = memo.get_group(&ctx.group_id());
+        let scope = ExprScope::from_properties(group.props());
         let input = RelNode::from_group(group);
 
         let (enforcer_expr, remaining_properties) =
@@ -547,7 +552,7 @@ fn enforce_properties<R>(
         // optimize_inputs on the enforcer which then calls optimize group on the same group and we have an infinite loop.
         // 2) copy_out_best_expr traverses its child expressions recursively so adding an enforcer to a group which
         // is used as its input results an infinite loop during the traversal.
-        let enforcer_expr = memo.insert_group(Operator::from(enforcer_expr));
+        let enforcer_expr = memo.insert_group(Operator::from(enforcer_expr), &scope);
         let enforcer_expr = enforcer_expr.state().memo_expr();
         let remaining_properties = runtime_state.properties_cache.insert(remaining_properties);
 

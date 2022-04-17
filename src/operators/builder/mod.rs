@@ -13,7 +13,7 @@ use scope::{OperatorScope, RelationInScope};
 
 use crate::catalog::CatalogRef;
 use crate::error::OptimizerError;
-use crate::memo::MemoExprState;
+use crate::memo::{MemoExprState, Props};
 use crate::meta::{ColumnId, ColumnMetadata, MutableMetadata};
 use crate::operators::relational::join::{JoinCondition, JoinOn, JoinType, JoinUsing};
 use crate::operators::relational::logical::{
@@ -25,7 +25,7 @@ use crate::operators::scalar::expr::ExprRewriter;
 use crate::operators::scalar::types::resolve_expr_type;
 use crate::operators::scalar::value::ScalarValue;
 use crate::operators::scalar::{get_subquery, ScalarExpr, ScalarNode};
-use crate::operators::{ExprMemo, Operator, OperatorExpr};
+use crate::operators::{ExprMemo, ExprScope, Operator, OperatorExpr};
 use crate::properties::physical::{PhysicalProperties, RequiredProperties};
 use crate::properties::OrderingChoice;
 
@@ -101,10 +101,10 @@ impl From<OrderingOption> for OrderingOptions {
 /// Callback invoked when a new operator is added to an operator tree by a [operator builder](self::OperatorBuilder).
 pub trait OperatorCallback {
     /// Called when a new relational expression is added to an operator tree.
-    fn new_rel_expr(&self, expr: Operator) -> RelNode;
+    fn new_rel_expr(&self, expr: Operator, scope: &OperatorScope) -> RelNode;
 
     /// Called when a new scalar expression is added to an operator tree.
-    fn new_scalar_expr(&self, expr: Operator) -> ScalarNode;
+    fn new_scalar_expr(&self, expr: Operator, scope: &OperatorScope) -> ScalarNode;
 }
 
 /// Provides API to build a tree of [operator tree](super::Operator).
@@ -177,7 +177,7 @@ impl OperatorBuilder {
         let filter = if let Some(filter) = filter {
             let mut rewriter = RewriteExprs::new(&scope, ValidateFilterExpr::where_clause());
             let filter = filter.rewrite(&mut rewriter)?;
-            let expr = self.add_scalar_node(filter);
+            let expr = self.add_scalar_node(filter, &scope);
             Some(expr)
         } else {
             None
@@ -290,7 +290,7 @@ impl OperatorBuilder {
 
         let mut rewriter = RewriteExprs::new(&scope, ValidateFilterExpr::join_clause());
         let expr = expr.rewrite(&mut rewriter)?;
-        let expr = self.add_scalar_node(expr);
+        let expr = self.add_scalar_node(expr, &scope);
         let condition = JoinCondition::On(JoinOn::new(expr));
         let expr = LogicalExpr::Join(LogicalJoin {
             join_type,
@@ -320,14 +320,14 @@ impl OperatorBuilder {
             }
         }
 
+        let scope = left_scope.join(right_scope);
         let condition = if !column_ids.is_empty() {
             JoinCondition::Using(JoinUsing::new(column_ids))
         } else {
-            let expr = self.add_scalar_node(ScalarExpr::Scalar(ScalarValue::Bool(true)));
+            let expr = self.add_scalar_node(ScalarExpr::Scalar(ScalarValue::Bool(true)), &scope);
             JoinCondition::On(JoinOn::new(expr))
         };
 
-        let scope = left_scope.join(right_scope);
         let expr = LogicalExpr::Join(LogicalJoin {
             join_type,
             left,
@@ -446,7 +446,7 @@ impl OperatorBuilder {
                 },
             );
             let on_expr = on_expr.rewrite(&mut rewriter)?;
-            let expr = self.add_scalar_node(on_expr);
+            let expr = self.add_scalar_node(on_expr, &input_scope);
             Some(expr)
         } else {
             None
@@ -519,12 +519,13 @@ impl OperatorBuilder {
     /// Creates an operator tree and returns its metadata.
     /// If this builder has been created via call to [Self::sub_query_builder()] this method returns an error.
     pub fn build(self) -> Result<Operator, OptimizerError> {
-        match self.operator {
-            Some(operator) => {
-                let rel_node = self.callback.new_rel_expr(operator);
+        match (self.operator, self.scope) {
+            (Some(operator), Some(scope)) => {
+                let rel_node = self.callback.new_rel_expr(operator, &scope);
                 Ok(rel_node.into_inner())
             }
-            None => Err(OptimizerError::Internal("Build: No operator".to_string())),
+            (None, _) => Err(OptimizerError::Internal("Build: No operator".to_string())),
+            (_, _) => Err(OptimizerError::Internal("Build: No scope".to_string())),
         }
     }
 
@@ -718,13 +719,13 @@ impl OperatorBuilder {
 
         let scope = self.scope.take().ok_or_else(|| OptimizerError::Internal("No scope".to_string()))?;
 
-        let rel_node = self.callback.new_rel_expr(operator);
+        let rel_node = self.callback.new_rel_expr(operator, &scope);
         Ok((rel_node, scope))
     }
 
-    fn add_scalar_node(&self, expr: ScalarExpr) -> ScalarNode {
+    fn add_scalar_node(&self, expr: ScalarExpr, scope: &OperatorScope) -> ScalarNode {
         let operator = Operator::from(OperatorExpr::from(expr));
-        self.callback.new_scalar_expr(operator)
+        self.callback.new_scalar_expr(operator, scope)
     }
 }
 
@@ -936,12 +937,12 @@ impl ValidateExpr for ValidateProjectionExpr {
 pub struct NoOpOperatorCallback;
 
 impl OperatorCallback for NoOpOperatorCallback {
-    fn new_rel_expr(&self, expr: Operator) -> RelNode {
+    fn new_rel_expr(&self, expr: Operator, _scope: &OperatorScope) -> RelNode {
         assert!(expr.expr().is_relational(), "Not a relational expression");
         RelNode::from(expr)
     }
 
-    fn new_scalar_expr(&self, expr: Operator) -> ScalarNode {
+    fn new_scalar_expr(&self, expr: Operator, _scope: &OperatorScope) -> ScalarNode {
         assert!(expr.expr().is_scalar(), "Not a scalar expression");
         ScalarNode::from_mexpr(expr)
     }
@@ -1020,17 +1021,19 @@ impl MemoizeOperators {
 }
 
 impl OperatorCallback for OperatorCallbackImpl {
-    fn new_rel_expr(&self, expr: Operator) -> RelNode {
+    fn new_rel_expr(&self, expr: Operator, _scope: &OperatorScope) -> RelNode {
         assert!(expr.expr().is_relational(), "Expected a relational expression but got {:?}", expr);
         let mut memo = self.memo.borrow_mut();
-        let expr = memo.insert_group(expr);
+        let scope = ExprScope::root();
+        let expr = memo.insert_group(expr, &scope);
         RelNode::from_mexpr(expr)
     }
 
-    fn new_scalar_expr(&self, expr: Operator) -> ScalarNode {
+    fn new_scalar_expr(&self, expr: Operator, _scope: &OperatorScope) -> ScalarNode {
         assert!(expr.expr().is_scalar(), "Expected a scalar expression but got {:?}", expr);
         let mut memo = self.memo.borrow_mut();
-        let expr = memo.insert_group(expr);
+        let scope = ExprScope::root();
+        let expr = memo.insert_group(expr, &scope);
         ScalarNode::from_mexpr(expr)
     }
 }

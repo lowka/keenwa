@@ -1,5 +1,11 @@
 use crate::memo::{format_memo, GroupId, Memo, MemoBuilder, MemoExpr, MemoExprRef, MemoGroupRef};
 
+pub trait MemoExprScopeProvider: Sized {
+    type Expr: MemoExpr<Scope = Self>;
+
+    fn build_scope(expr: &Self::Expr) -> Self;
+}
+
 pub fn new_memo<E>() -> Memo<E, ()>
 where
     E: MemoExpr,
@@ -7,24 +13,28 @@ where
     MemoBuilder::new(()).build()
 }
 
-pub fn insert_group<E, T>(memo: &mut Memo<E, T>, expr: E) -> (GroupId, MemoExprRef<E>)
+pub fn insert_group<E, T, S>(memo: &mut Memo<E, T>, expr: E) -> (GroupId, MemoExprRef<E>)
 where
-    E: MemoExpr,
+    E: MemoExpr<Scope = S>,
+    S: MemoExprScopeProvider<Expr = E>,
 {
-    let expr = memo.insert_group(expr);
+    let scope = S::build_scope(&expr);
+    let expr = memo.insert_group(expr, &scope);
     let group_id = expr.state().memo_group_id();
     let expr_ref = expr.state().memo_expr();
 
     (group_id, expr_ref)
 }
 
-pub fn insert_group_member<E, T>(memo: &mut Memo<E, T>, group_id: GroupId, expr: E) -> (GroupId, MemoExprRef<E>)
+pub fn insert_group_member<E, T, S>(memo: &mut Memo<E, T>, group_id: GroupId, expr: E) -> (GroupId, MemoExprRef<E>)
 where
-    E: MemoExpr,
+    E: MemoExpr<Scope = S>,
+    S: MemoExprScopeProvider<Expr = E>,
 {
     let group = memo.get_group(&group_id);
     let token = group.to_group_token();
-    let expr = memo.insert_group_member(token, expr);
+    let scope = S::build_scope(&expr);
+    let expr = memo.insert_group_member(token, expr, &scope);
 
     let expr_ref = expr.state().memo_expr();
 
@@ -250,6 +260,16 @@ mod test {
         }
     }
 
+    struct TestScope;
+
+    impl MemoExprScopeProvider for TestScope {
+        type Expr = TestOperator;
+
+        fn build_scope(expr: &Self::Expr) -> Self {
+            TestScope
+        }
+    }
+
     #[derive(Debug, Clone)]
     enum TestProps {
         Rel(RelProps),
@@ -320,6 +340,7 @@ mod test {
     impl MemoExpr for TestOperator {
         type Expr = TestExpr;
         type Props = TestProps;
+        type Scope = TestScope;
 
         fn from_state(state: MemoExprState<Self>) -> Self {
             TestOperator { state }
@@ -954,20 +975,22 @@ mod test {
         impl MemoGroupCallback for Callback {
             type Expr = TestExpr;
             type Props = TestProps;
+            type Scope = TestScope;
             type Metadata = ();
 
             fn new_group(
                 &self,
                 expr: &Self::Expr,
-                props: &Self::Props,
-                _metadata: &Self::Metadata,
+                _scope: &Self::Scope,
+                provided_props: Self::Props,
+                metadata: &Self::Metadata,
             ) -> Result<Self::Props, OptimizerError> {
                 let mut added = self.added.borrow_mut();
                 let mut buf = String::new();
                 let mut fmt = StringMemoFormatter::new(&mut buf);
-                TestOperator::format_expr(expr, props, &mut fmt);
+                TestOperator::format_expr(expr, &provided_props, &mut fmt);
                 added.push(buf);
-                Ok(props.clone())
+                Ok(provided_props)
             }
         }
 
@@ -1006,17 +1029,17 @@ mod test {
         let mut memo = new_memo();
 
         let node_a = TestOperator::from(TestRelExpr::Leaf("a"));
-        let node_a = memo.insert_group(node_a);
+        let node_a = memo.insert_group(node_a, &TestScope);
 
         let node = TestOperator::from(TestRelExpr::Node {
             input: TestOperator::from(TestRelExpr::Leaf("b")).into(),
         });
-        let node = memo.insert_group(node);
+        let node = memo.insert_group(node, &TestScope);
 
         let nodes = TestOperator::from(TestRelExpr::Nodes {
             inputs: vec![node_a.clone().into(), node.clone().into()],
         });
-        let nodes = memo.insert_group(nodes);
+        let nodes = memo.insert_group(nodes, &TestScope);
 
         fn format_expr(expr: &TestOperator, expected: &str) {
             let mut buf = String::new();

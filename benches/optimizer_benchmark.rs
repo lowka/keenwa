@@ -73,10 +73,11 @@ fn memo_bench(c: &mut Criterion) {
                     let operator_builder = OperatorBuilder::new(memoization.take_callback(), catalog.clone(), metadata);
 
                     let query = f(operator_builder, selectivity_provider.as_ref()).expect("Failed to build a query");
+                    let scope = ExprScope::root();
 
                     let mut memo = memoization.into_memo();
                     // benchmark should not include the time spend in memoization.
-                    let query = memo.insert_group(query);
+                    let query = memo.insert_group(query, &scope);
 
                     let optimizer = create_optimizer(catalog.clone());
                     let start = Instant::now();

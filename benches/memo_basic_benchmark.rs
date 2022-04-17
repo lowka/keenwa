@@ -31,6 +31,8 @@ impl Display for TestScalarExpr {
     }
 }
 
+struct TestScope;
+
 #[derive(Debug, Clone, Default)]
 struct TestProps {
     a: i32,
@@ -98,6 +100,7 @@ struct TestOperator {
 impl MemoExpr for TestOperator {
     type Expr = TestExpr;
     type Props = TestProps;
+    type Scope = TestScope;
 
     fn from_state(state: MemoExprState<Self>) -> Self {
         TestOperator { state }
@@ -215,7 +218,7 @@ fn memo_bench(c: &mut Criterion) {
         b.iter(|| {
             let mut memo = MemoBuilder::new(()).build();
             let query = TestOperator::from(query.clone());
-            let expr = memo.insert_group(query);
+            let expr = memo.insert_group(query, &TestScope);
             black_box(expr);
         });
     });
@@ -226,7 +229,7 @@ fn memo_bench(c: &mut Criterion) {
         b.iter(|| {
             let mut memo = MemoBuilder::new(()).build();
             let query = TestOperator::from(query.clone());
-            let expr = memo.insert_group(query);
+            let expr = memo.insert_group(query, &TestScope);
             black_box(expr);
         });
     });

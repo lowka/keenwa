@@ -10,7 +10,9 @@ use crate::operators::format::format_operator_tree;
 use crate::operators::relational::logical::{LogicalExpr, LogicalGet};
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::relational::{RelExpr, RelNode};
-use crate::operators::{ExprMemo, Operator, OperatorExpr, OperatorMetadata, Properties, RelationalProperties};
+use crate::operators::{
+    ExprMemo, ExprScope, Operator, OperatorExpr, OperatorMetadata, Properties, RelationalProperties,
+};
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::RequiredProperties;
 use crate::rules::{EvaluationResponse, Rule, RuleContext, RuleId, RuleIterator, RuleResult, RuleSet};
@@ -56,12 +58,14 @@ impl RuleTester {
         impl MemoGroupCallback for Callback {
             type Expr = OperatorExpr;
             type Props = Properties;
+            type Scope = ExprScope;
             type Metadata = OperatorMetadata;
 
             fn new_group(
                 &self,
                 _expr: &Self::Expr,
-                provided_props: &Self::Props,
+                _scope: &Self::Scope,
+                provided_props: Self::Props,
                 _metadata: &Self::Metadata,
             ) -> Result<Self::Props, OptimizerError> {
                 Ok(provided_props.clone())
@@ -78,7 +82,9 @@ impl RuleTester {
 
     /// Attempts to apply the rule to the given expression and then compares the result with the expected value.
     pub fn apply(&mut self, expr: &LogicalExpr, expected: &str) {
-        let memo_expr = self.memo.insert_group(Operator::from(OperatorExpr::from(expr.clone())));
+        let operator = Operator::from(OperatorExpr::from(expr.clone()));
+        let scope = ExprScope::root();
+        let memo_expr = self.memo.insert_group(operator, &scope);
 
         let ctx = RuleContext::new(Rc::new(None), self.metadata.get_ref());
         let rule_match = self.rule.matches(&ctx, expr);
@@ -92,7 +98,8 @@ impl RuleTester {
             Ok(None) => panic!("Rule matched but not applied: {:?}", self.rule),
             Err(e) => panic!("Failed to apply a rule. Rule: {:?}. Error: {}", self.rule, e),
         };
-        let new_expr = self.memo.insert_group(expr);
+        let scope = ExprScope::root();
+        let new_expr = self.memo.insert_group(expr, &scope);
         let actual_expr = format_operator_tree(&new_expr);
 
         assert_eq!(actual_expr.trim_end(), expected.trim());
@@ -102,7 +109,9 @@ impl RuleTester {
     /// and `can_apply` is `true` this method then calls [Rule::apply](crate::rules::Rule::apply)
     /// on the given expression. If that call does not return `Ok(None)` this methods fails.
     pub fn no_match(&mut self, expr: &LogicalExpr, can_apply: bool) {
-        let memo_expr = self.memo.insert_group(Operator::from(OperatorExpr::from(expr.clone())));
+        let operator = Operator::from(OperatorExpr::from(expr.clone()));
+        let scope = ExprScope::root();
+        let memo_expr = self.memo.insert_group(operator, &scope);
         let expr_str = format_operator_tree(&memo_expr);
 
         let ctx = RuleContext::new(Rc::new(None), self.metadata.get_ref());

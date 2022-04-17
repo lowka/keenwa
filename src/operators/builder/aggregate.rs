@@ -147,7 +147,7 @@ impl AggregateBuilder<'_> {
                 ScalarExpr::Column(_) | ScalarExpr::ColumnName(_) => {
                     let mut rewriter = RewriteExprs::new(&scope, ValidateProjectionExpr::projection_expr());
                     let expr = expr.rewrite(&mut rewriter)?;
-                    let expr = self.builder.add_scalar_node(expr);
+                    let expr = self.builder.add_scalar_node(expr, &scope);
                     if let ScalarExpr::Column(id) = expr.expr() {
                         group_by_columns.insert(*id);
                     } else {
@@ -228,7 +228,7 @@ impl AggregateBuilder<'_> {
                 }
             }
 
-            Some(self.builder.add_scalar_node(expr))
+            Some(self.builder.add_scalar_node(expr, &scope))
         } else {
             None
         };
