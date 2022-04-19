@@ -9,7 +9,7 @@ use crate::catalog::{Catalog, CatalogRef, TableBuilder, DEFAULT_SCHEMA};
 use crate::cost::simple::SimpleCostEstimator;
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
-use crate::memo::{MemoExpr, MemoExprFormatter, StringMemoFormatter};
+use crate::memo::{MemoExpr, MemoExprFormatter, MemoFormatterFlags, StringMemoFormatter};
 use crate::meta::MutableMetadata;
 use crate::operators::builder::{MemoizeOperators, OperatorBuilder};
 use crate::operators::properties::LogicalPropertiesBuilder;
@@ -256,7 +256,7 @@ impl ResultCallback for TestResultBuilder {
         let group_id = ctx.group_id();
         let mut buf = String::new();
         buf.push_str(format!("{:02} ", group_id).as_str());
-        let fmt = StringMemoFormatter::new(&mut buf);
+        let fmt = StringMemoFormatter::new(&mut buf, MemoFormatterFlags::All);
         let mut fmt = BestExprFormatter::new(fmt, ctx);
         match expr {
             BestExprRef::Relational(expr) => expr.format_expr(&mut fmt),
@@ -378,5 +378,9 @@ where
         D: Display,
     {
         self.fmt.write_values(name, values);
+    }
+
+    fn flags(&self) -> &MemoFormatterFlags {
+        self.fmt.flags()
     }
 }

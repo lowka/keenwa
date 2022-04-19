@@ -1,5 +1,5 @@
 use crate::error::OptimizerError;
-use crate::memo::{MemoExpr, MemoExprFormatter, StringMemoFormatter};
+use crate::memo::{MemoExpr, MemoExprFormatter, MemoFormatterFlags, StringMemoFormatter};
 use crate::meta::MutableMetadata;
 use crate::operators::relational::join::JoinCondition;
 use crate::operators::relational::logical::{
@@ -8,6 +8,8 @@ use crate::operators::relational::logical::{
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::get_subquery;
 use crate::operators::{Operator, OperatorExpr, Properties};
+use crate::properties::logical::LogicalProperties;
+use crate::properties::physical::PhysicalProperties;
 use itertools::Itertools;
 use std::fmt::Display;
 use std::rc::Rc;
@@ -29,18 +31,13 @@ pub fn format_operator_tree(expr: &Operator) -> String {
     // 2. then FormatExprs writes the child expressions and appends expressions buffered by FormatHeader.
 
     let mut buf = String::new();
-    let fmt = StringMemoFormatter::new(&mut buf);
-    let mut header = FormatHeader {
-        fmt,
-        written_exprs: vec![],
-    };
+    let flags = MemoFormatterFlags::All;
+    let fmt = StringMemoFormatter::new(&mut buf, flags);
+    let mut header = FormatHeader::new(fmt, flags);
     Operator::format_expr(expr.expr(), expr.props(), &mut header);
-    let written_exprs = header.written_exprs;
 
-    let mut fmt = FormatExprs {
-        buf: &mut buf,
-        depth: 0,
-    };
+    let written_exprs = header.written_exprs;
+    let mut fmt = FormatExprs::new(&mut buf, flags);
     fmt.write_exprs(written_exprs);
 
     Operator::format_expr(expr.expr(), expr.props(), &mut fmt);
@@ -96,17 +93,6 @@ impl OperatorTreeFormatter {
                 let logical = props.logical();
                 let output_columns = logical.output_columns();
                 buf.push_str(format!("{}output cols: {:?}\n", padding, output_columns).as_str());
-
-                let outer_columns = &logical.outer_columns;
-                if !outer_columns.is_empty() {
-                    buf.push_str(format!("{}outer cols: {:?}\n", padding, outer_columns).as_str());
-                }
-
-                let physical = props.physical();
-                let required = physical.required.as_ref();
-                if let Some(ordering) = required.and_then(|r| r.ordering()) {
-                    buf.push_str(format!("{}ordering: {:?}\n", padding, ordering.columns()).as_str());
-                }
             }
         }
 
@@ -133,9 +119,20 @@ impl OperatorTreeFormatter {
     }
 }
 
-struct FormatHeader<'b> {
-    fmt: StringMemoFormatter<'b>,
+struct FormatHeader<'a> {
+    fmt: StringMemoFormatter<'a>,
     written_exprs: Vec<String>,
+    flags: MemoFormatterFlags,
+}
+
+impl<'a> FormatHeader<'a> {
+    fn new(fmt: StringMemoFormatter<'a>, flags: MemoFormatterFlags) -> Self {
+        FormatHeader {
+            fmt,
+            written_exprs: vec![],
+            flags,
+        }
+    }
 }
 
 impl MemoExprFormatter for FormatHeader<'_> {
@@ -163,7 +160,7 @@ impl MemoExprFormatter for FormatHeader<'_> {
             return;
         }
         let mut buf = String::new();
-        let mut fmt = StringMemoFormatter::new(&mut buf);
+        let mut fmt = StringMemoFormatter::new(&mut buf, self.flags.clone());
 
         fmt.push_str(name);
         fmt.push_str(": [");
@@ -194,14 +191,23 @@ impl MemoExprFormatter for FormatHeader<'_> {
     {
         self.fmt.write_values(name, values);
     }
+
+    fn flags(&self) -> &MemoFormatterFlags {
+        self.fmt.flags()
+    }
 }
 
 struct FormatExprs<'b> {
     buf: &'b mut String,
     depth: usize,
+    flags: MemoFormatterFlags,
 }
 
-impl FormatExprs<'_> {
+impl<'a> FormatExprs<'a> {
+    fn new(buf: &'a mut String, flags: MemoFormatterFlags) -> Self {
+        FormatExprs { buf, depth: 0, flags }
+    }
+
     fn pad_depth(&mut self, c: char) {
         for _ in 1..=self.depth * 2 {
             self.buf.push(c);
@@ -247,10 +253,11 @@ impl MemoExprFormatter for FormatExprs<'_> {
         self.buf.push_str(": ");
 
         let expr = input.as_ref();
-        let fmt = StringMemoFormatter::new(self.buf);
+        let fmt = StringMemoFormatter::new(self.buf, self.flags.clone());
         let mut header = FormatHeader {
             fmt,
             written_exprs: vec![],
+            flags: self.flags.clone(),
         };
 
         T::format_expr(expr.expr(), expr.props(), &mut header);
@@ -282,6 +289,10 @@ impl MemoExprFormatter for FormatExprs<'_> {
         D: Display,
     {
         // values are written by FormatHeader
+    }
+
+    fn flags(&self) -> &MemoFormatterFlags {
+        &MemoFormatterFlags::None
     }
 }
 
@@ -390,6 +401,43 @@ impl OperatorFormatter for SubQueriesFormatter {
             fn post_visit(&mut self, _expr: &LogicalExpr) -> Result<(), OptimizerError> {
                 Ok(())
             }
+        }
+    }
+}
+
+pub(crate) struct PropertiesFormatter<'a, T> {
+    fmt: &'a mut T,
+}
+
+impl<'a, T> PropertiesFormatter<'a, T>
+where
+    T: MemoExprFormatter,
+{
+    pub fn new(fmt: &'a mut T) -> Self {
+        PropertiesFormatter { fmt }
+    }
+
+    pub fn format(mut self, props: &Properties) {
+        match props {
+            Properties::Relational(props) => {
+                self.format_logical(props.logical());
+                self.format_physical(props.physical());
+            }
+            Properties::Scalar(_) => {}
+        }
+    }
+
+    fn format_logical(&mut self, logical: &LogicalProperties) {
+        let outer_columns = &logical.outer_columns;
+        if !outer_columns.is_empty() {
+            self.fmt.write_values("outer_cols", &outer_columns)
+        }
+    }
+
+    fn format_physical(&mut self, physical: &PhysicalProperties) {
+        let required = physical.required.as_ref();
+        if let Some(ordering) = required.and_then(|r| r.ordering()) {
+            self.fmt.write_values("ordering", ordering.columns());
         }
     }
 }
