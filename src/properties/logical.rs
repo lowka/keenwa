@@ -7,11 +7,11 @@ use crate::statistics::Statistics;
 #[derive(Debug, Clone)]
 pub struct LogicalProperties {
     // FIXME: use a bit set instead of a vec.
-    pub(crate) output_columns: Vec<ColumnId>,
+    pub output_columns: Vec<ColumnId>,
     /// Columns from the outer scope used by an operator.
-    pub(crate) outer_columns: Vec<ColumnId>,
+    pub outer_columns: Vec<ColumnId>,
     //FIXME: Make this non-optional when logical properties builder API becomes stable.
-    pub(crate) statistics: Option<Statistics>,
+    pub statistics: Option<Statistics>,
 }
 
 impl LogicalProperties {
