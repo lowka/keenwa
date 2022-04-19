@@ -14,9 +14,10 @@ use scalar::{ScalarExpr, ScalarNode};
 
 use crate::memo::{
     CopyInExprs, CopyInNestedExprs, ExprContext, Memo, MemoBuilder, MemoExpr, MemoExprFormatter, MemoExprRef,
-    MemoExprState, MemoGroupCallback, MemoGroupCallbackRef, NewChildExprs, Props,
+    MemoExprState, MemoFormatterFlags, MemoGroupCallback, MemoGroupCallbackRef, NewChildExprs, Props,
 };
 use crate::meta::{ColumnId, MutableMetadata};
+use crate::operators::format::PropertiesFormatter;
 use crate::operators::properties::{LogicalPropertiesBuilder, PropertiesProvider};
 use crate::operators::scalar::{expr_with_new_inputs, get_subquery};
 use crate::properties::logical::LogicalProperties;
@@ -334,14 +335,12 @@ impl MemoExpr for Operator {
                     }
                     RelExpr::Physical(expr) => expr.format_expr(f),
                 };
-                // FIXME: Add formatting options add move the code below to the formatter.
-                let properties = props.relational().logical();
-                if !properties.outer_columns.is_empty() {
-                    f.write_values("outer_cols", &properties.outer_columns)
-                }
-                //
             }
             OperatorExpr::Scalar(expr) => expr.format_expr(f),
+        }
+        if f.flags().has_flag(&MemoFormatterFlags::IncludeProps) {
+            let mut fmt = PropertiesFormatter::new(f);
+            fmt.format(props)
         }
     }
 }

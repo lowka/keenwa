@@ -1200,9 +1200,8 @@ Memo:
 
         tester.expect_expr(
             r#"
-LogicalGet A cols=[1]
+LogicalGet A cols=[1] ordering=[1]
   output cols: [1]
-  ordering: [1]
 Metadata:
   col:1 A.a1 Int32
 Memo:
@@ -1225,10 +1224,9 @@ Memo:
 
         tester.expect_expr(
             r#"
-LogicalProjection cols=[3, 2] exprs: [col:1 AS x, col:2]
+LogicalProjection cols=[3, 2] ordering=[3] exprs: [col:1 AS x, col:2]
   input: LogicalGet A cols=[1, 2]
   output cols: [3, 2]
-  ordering: [3]
 Metadata:
   col:1 A.a1 Int32
   col:2 A.a2 Int32
@@ -1255,9 +1253,8 @@ Memo:
 
         tester.expect_expr(
             r#"
-LogicalGet A cols=[1, 2, 3]
+LogicalGet A cols=[1, 2, 3] ordering=[2]
   output cols: [1, 2, 3]
-  ordering: [2]
 Metadata:
   col:1 A.a2 Int32
   col:2 A.a1 Int32
@@ -1812,7 +1809,7 @@ Memo:
   05 Expr SubQuery 02
   04 Expr col:1
   03 LogicalGet A cols=[1, 2, 3]
-  02 LogicalSelect input=00 filter=01 outer_cols=[3]
+  02 LogicalSelect input=00 filter=01
   01 Expr col:4 = col:3
   00 LogicalGet B cols=[4]
 "#,
@@ -1862,9 +1859,9 @@ Memo:
   08 Expr SubQuery 05
   07 Expr col:1
   06 LogicalGet A cols=[1, 2, 3]
-  05 LogicalProjection input=03 exprs=[04] cols=[5] outer_cols=[3]
+  05 LogicalProjection input=03 exprs=[04] cols=[5]
   04 Expr col:5
-  03 LogicalJoin left=00 right=01 type=Inner on=col:5 = col:4 AND col:4 = col:3 outer_cols=[3]
+  03 LogicalJoin left=00 right=01 type=Inner on=col:5 = col:4 AND col:4 = col:3
   02 Expr col:5 = col:4 AND col:4 = col:3
   01 LogicalGet C cols=[4]
   00 LogicalGet B cols=[5]
@@ -2077,6 +2074,7 @@ Memo:
             impl OperatorFormatter for AppendMemo {
                 fn write_operator(&self, _operator: &Operator, buf: &mut String) {
                     buf.push_str("Memo:\n");
+                    // TODO: Do not include properties.
                     let memo_as_string = format_memo(&self.memo);
                     let lines = memo_as_string
                         .split('\n')

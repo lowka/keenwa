@@ -468,6 +468,44 @@ pub trait MemoExprFormatter {
     fn write_values<D>(&mut self, name: &str, values: &[D])
     where
         D: Display;
+
+    /// Returns [flags](MemoFormatterFlags) specified for this formatter.
+    fn flags(&self) -> &MemoFormatterFlags;
+}
+
+/// Specifies flags to be used by the [formatter](MemoExprFormatter).
+#[derive(Debug, Eq, PartialEq, Clone, Copy)]
+pub enum MemoFormatterFlags {
+    /// No flags are set.
+    None,
+    /// Instruct a formatter to build a representation of a memo expression
+    /// that uniquely identifies that expression.
+    Digest,
+    /// Instruct a formatter to include properties
+    /// of a memo expression in its output.
+    IncludeProps,
+    /// All flags except for [Digest](Self::Digest) are set.
+    All,
+    //???: Add custom flags
+}
+
+impl MemoFormatterFlags {
+    /// Checks whether the given flag is set.u
+    pub fn has_flag(&self, flag: &MemoFormatterFlags) -> bool {
+        let this_mask = self.get_mask();
+        let flag_mask = flag.get_mask();
+        // None flag is never set.
+        flag_mask != 0 && (this_mask & flag_mask) == flag_mask
+    }
+
+    fn get_mask(&self) -> u32 {
+        match self {
+            MemoFormatterFlags::None => 0,
+            MemoFormatterFlags::Digest => 1,
+            MemoFormatterFlags::IncludeProps => 2,
+            MemoFormatterFlags::All => u32::MAX & (!1),
+        }
+    }
 }
 
 /// A stack-like data structure used by [MemoExpr::expr_with_new_children].
@@ -1090,15 +1128,17 @@ where
 
 pub(crate) struct StringMemoFormatter<'b> {
     buf: &'b mut String,
+    flags: MemoFormatterFlags,
     write_expr_name: bool,
     pos: usize,
 }
 
 impl<'b> StringMemoFormatter<'b> {
-    pub fn new(buf: &'b mut String) -> Self {
+    pub fn new(buf: &'b mut String, flags: MemoFormatterFlags) -> Self {
         let len = buf.len();
         StringMemoFormatter {
             buf,
+            flags,
             write_expr_name: true,
             pos: len,
         }
@@ -1197,10 +1237,14 @@ impl MemoExprFormatter for StringMemoFormatter<'_> {
         self.push_str(values.iter().join(", ").as_str());
         self.buf.push(']');
     }
+
+    fn flags(&self) -> &MemoFormatterFlags {
+        &self.flags
+    }
 }
 
 /// Formats [MemoExprRef](self::MemoExprRef).
-pub(crate) struct DisplayMemoExprFormatter<'f, 'a> {
+struct DisplayMemoExprFormatter<'f, 'a> {
     fmt: &'f mut Formatter<'a>,
 }
 
@@ -1247,6 +1291,10 @@ impl<'f, 'a> MemoExprFormatter for DisplayMemoExprFormatter<'f, 'a> {
     {
         // Do not print values for Display trait
     }
+
+    fn flags(&self) -> &MemoFormatterFlags {
+        &MemoFormatterFlags::None
+    }
 }
 
 fn format_node_ref<T>(input: &T) -> String
@@ -1269,7 +1317,7 @@ where
     E: MemoExpr,
 {
     let mut buf = String::new();
-    let mut fmt = StringMemoFormatter::new(&mut buf);
+    let mut fmt = StringMemoFormatter::new(&mut buf, MemoFormatterFlags::Digest);
     E::format_expr(expr, props, &mut fmt);
     buf
 }
@@ -1280,7 +1328,7 @@ where
     E: MemoExpr,
 {
     let mut buf = String::new();
-    let mut f = StringMemoFormatter::new(&mut buf);
+    let mut f = StringMemoFormatter::new(&mut buf, MemoFormatterFlags::None);
 
     for (exprs, group) in memo.memo_impl.groups.iter().rev() {
         f.push_str(format!("{} ", group.group_id).as_str());

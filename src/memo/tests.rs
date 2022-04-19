@@ -89,7 +89,7 @@ mod test {
 
     use crate::memo::{
         format_memo, CopyInExprs, CopyInNestedExprs, Expr, ExprContext, MemoBuilder, MemoExpr, MemoExprFormatter,
-        MemoExprState, MemoGroupCallback, NewChildExprs, Props, StringMemoFormatter,
+        MemoExprState, MemoFormatterFlags, MemoGroupCallback, NewChildExprs, Props, StringMemoFormatter,
     };
 
     use super::*;
@@ -987,7 +987,7 @@ mod test {
             ) -> Result<Self::Props, OptimizerError> {
                 let mut added = self.added.borrow_mut();
                 let mut buf = String::new();
-                let mut fmt = StringMemoFormatter::new(&mut buf);
+                let mut fmt = StringMemoFormatter::new(&mut buf, MemoFormatterFlags::All);
                 TestOperator::format_expr(expr, &provided_props, &mut fmt);
                 added.push(buf);
                 Ok(provided_props)
@@ -1043,7 +1043,7 @@ mod test {
 
         fn format_expr(expr: &TestOperator, expected: &str) {
             let mut buf = String::new();
-            let mut fmt = StringMemoFormatter::new(&mut buf);
+            let mut fmt = StringMemoFormatter::new(&mut buf, MemoFormatterFlags::All);
             TestOperator::format_expr(expr.expr(), expr.props(), &mut fmt);
             assert_eq!(buf, expected, "expr format")
         }
@@ -1051,5 +1051,28 @@ mod test {
         format_expr(&node_a, "Leaf a");
         format_expr(&node, "Node 01");
         format_expr(&nodes, "Nodes [00, 02]");
+    }
+
+    #[test]
+    fn test_formatter_flags() {
+        assert!(!MemoFormatterFlags::None.has_flag(&MemoFormatterFlags::None));
+        assert!(!MemoFormatterFlags::None.has_flag(&MemoFormatterFlags::IncludeProps));
+        assert!(!MemoFormatterFlags::None.has_flag(&MemoFormatterFlags::Digest));
+        assert!(!MemoFormatterFlags::None.has_flag(&MemoFormatterFlags::All));
+
+        assert!(!MemoFormatterFlags::Digest.has_flag(&MemoFormatterFlags::None));
+        assert!(MemoFormatterFlags::Digest.has_flag(&MemoFormatterFlags::Digest));
+        assert!(!MemoFormatterFlags::Digest.has_flag(&MemoFormatterFlags::IncludeProps));
+        assert!(!MemoFormatterFlags::Digest.has_flag(&MemoFormatterFlags::All));
+
+        assert!(!MemoFormatterFlags::IncludeProps.has_flag(&MemoFormatterFlags::None));
+        assert!(!MemoFormatterFlags::IncludeProps.has_flag(&MemoFormatterFlags::Digest));
+        assert!(MemoFormatterFlags::IncludeProps.has_flag(&MemoFormatterFlags::IncludeProps));
+        assert!(!MemoFormatterFlags::IncludeProps.has_flag(&MemoFormatterFlags::All));
+
+        assert!(!MemoFormatterFlags::All.has_flag(&MemoFormatterFlags::None));
+        assert!(!MemoFormatterFlags::All.has_flag(&MemoFormatterFlags::Digest));
+        assert!(MemoFormatterFlags::All.has_flag(&MemoFormatterFlags::IncludeProps));
+        assert!(MemoFormatterFlags::All.has_flag(&MemoFormatterFlags::All));
     }
 }
