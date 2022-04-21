@@ -150,8 +150,9 @@ ok: |
 
 ---
 
-query: |
-  SELECT DISTINCT ON (a1) a1, a2, a3 FROM a
+queries:
+  - SELECT DISTINCT ON (a1) a1, a2, a3 FROM a
+  - SELECT DISTINCT on (a1) a1, a2, a3 FROM a
 ok: |
   LogicalDistinct cols=[1, 2, 3]
     input: LogicalProjection cols=[1, 2, 3] exprs: [col:1, col:2, col:3]

@@ -693,7 +693,7 @@ fn build_function_expr(func: Function, builder: OperatorBuilder) -> Result<Scala
         }),
         // DISTINCT ON (expr) workaround:
         // Convert function ON (expr1, expr2, ..) into its first argument.
-        Err(_) if name == "ON" => Ok(args.swap_remove(0)),
+        Err(_) if name.eq_ignore_ascii_case("ON") => Ok(args.swap_remove(0)),
         Err(_) => {
             let msg = format!("FUNCTION: non aggregate function: {}", name);
             not_implemented!(msg);
