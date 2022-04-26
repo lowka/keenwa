@@ -20,7 +20,7 @@ pub struct MemoBuilder<E, T>
 where
     E: MemoExpr,
 {
-    callback: Option<MemoGroupCallbackRef<E::Expr, E::Props, E::Scope, T>>,
+    callback: Option<MemoGroupCallbackRef<E, T>>,
     metadata: T,
 }
 
@@ -37,7 +37,7 @@ where
     }
 
     /// Sets a callback.
-    pub fn set_callback(mut self, callback: MemoGroupCallbackRef<E::Expr, E::Props, E::Scope, T>) -> Self {
+    pub fn set_callback(mut self, callback: MemoGroupCallbackRef<E, T>) -> Self {
         self.callback = Some(callback);
         self
     }
@@ -55,7 +55,20 @@ where
 }
 
 /// The type of [memo group callback][self::MemoGroupCallback] used by [Memo].
-pub type MemoGroupCallbackRef<E, P, S, T> = Rc<dyn MemoGroupCallback<Expr = E, Props = P, Scope = S, Metadata = T>>;
+// Use trait bounds here to simplify the type signature.
+// Turn off the type alias bounds are not enforced by default warning for this type.
+#[allow(type_alias_bounds)]
+pub type MemoGroupCallbackRef<E, T>
+where
+    E: MemoExpr,
+= Rc<
+    dyn MemoGroupCallback<
+        Expr = <E as MemoExpr>::Expr,
+        Props = <E as MemoExpr>::Props,
+        Scope = <E as MemoExpr>::Scope,
+        Metadata = T,
+    >,
+>;
 
 /// `Memo` is the primary data structure used by the cost-based optimizer:
 ///  * It stores each expression as a group of logically equivalent expressions.
@@ -218,10 +231,6 @@ pub trait MemoExpr: Clone {
         props: Self::Props,
         sub_queries: impl Iterator<Item = Self>,
     ) -> Self::Props;
-
-    fn new_properties(props: Self::Props) -> Self::Props {
-        props.clone()
-    }
 
     /// Returns the number of child expressions of this memo expression.
     fn num_children(&self) -> usize;
@@ -1355,7 +1364,7 @@ where
     expr_cache: HashMap<String, ExprId>,
     expr_to_group: HashMap<ExprId, GroupId>,
     metadata: T,
-    callback: Option<MemoGroupCallbackRef<E::Expr, E::Props, E::Scope, T>>,
+    callback: Option<MemoGroupCallbackRef<E, T>>,
 }
 
 impl<E, T> MemoImpl<E, T>
@@ -1373,7 +1382,7 @@ where
         }
     }
 
-    pub(crate) fn with_callback(metadata: T, callback: MemoGroupCallbackRef<E::Expr, E::Props, E::Scope, T>) -> Self {
+    pub(crate) fn with_callback(metadata: T, callback: MemoGroupCallbackRef<E, T>) -> Self {
         MemoImpl {
             exprs: Vec::new(),
             groups: Vec::new(),

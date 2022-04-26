@@ -160,7 +160,7 @@ impl MemoExprFormatter for FormatHeader<'_> {
             return;
         }
         let mut buf = String::new();
-        let mut fmt = StringMemoFormatter::new(&mut buf, self.flags.clone());
+        let mut fmt = StringMemoFormatter::new(&mut buf, self.flags);
 
         fmt.push_str(name);
         fmt.push_str(": [");
@@ -253,11 +253,11 @@ impl MemoExprFormatter for FormatExprs<'_> {
         self.buf.push_str(": ");
 
         let expr = input.as_ref();
-        let fmt = StringMemoFormatter::new(self.buf, self.flags.clone());
+        let fmt = StringMemoFormatter::new(self.buf, self.flags);
         let mut header = FormatHeader {
             fmt,
             written_exprs: vec![],
-            flags: self.flags.clone(),
+            flags: self.flags,
         };
 
         T::format_expr(expr.expr(), expr.props(), &mut header);
@@ -430,7 +430,7 @@ where
     fn format_logical(&mut self, logical: &LogicalProperties) {
         let outer_columns = &logical.outer_columns;
         if !outer_columns.is_empty() {
-            self.fmt.write_values("outer_cols", &outer_columns)
+            self.fmt.write_values("outer_cols", outer_columns)
         }
     }
 

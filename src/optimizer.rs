@@ -818,8 +818,8 @@ impl RuntimeState {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub(crate) struct Stats {
+#[derive(Debug, Default)]
+struct Stats {
     number_of_tasks: usize,
     max_stack_depth: usize,
     optimization_time: Duration,
@@ -827,8 +827,8 @@ pub(crate) struct Stats {
     tasks: TaskStats,
 }
 
-#[derive(Debug, Clone, Default)]
-pub(crate) struct TaskStats {
+#[derive(Debug, Default)]
+struct TaskStats {
     optimize_group: usize,
     optimize_expr: usize,
     apply_rule: usize,
@@ -923,7 +923,7 @@ impl Display for BestExpr {
 }
 
 #[derive(Debug)]
-pub struct RuleBinding {
+struct RuleBinding {
     rule_id: RuleId,
     expr: ExprRef,
     group: Option<GroupId>,
