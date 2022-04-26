@@ -90,4 +90,4 @@ ok: |
 query: |
   SELECT sum(a1) as x FROM a GROUP BY a1 HAVING x > 100
 error: |
-  Internal error: Unexpected column: x. Input columns: [("a1", 1), ("a2", 2), ("a3", 3), ("a4", 4)], Outer columns: []
+  Internal error: Unexpected column: x. Input columns: [(a1, 1), (a2, 2), (a3, 3), (a4, 4)], Outer columns: []

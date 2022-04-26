@@ -91,8 +91,8 @@ impl OperatorTreeFormatter {
         fn write_properties(buf: &mut String, props: &Properties, padding: &str) {
             if let Properties::Relational(props) = props {
                 let logical = props.logical();
-                let output_columns = logical.output_columns();
-                buf.push_str(format!("{}output cols: {:?}\n", padding, output_columns).as_str());
+                let output_columns = logical.output_columns().iter().map(|id| format!("{}", id)).join(", ");
+                buf.push_str(format!("{}output cols: [{}]\n", padding, output_columns).as_str());
             }
         }
 
@@ -445,6 +445,7 @@ where
 #[cfg(test)]
 mod test {
     use crate::memo::ScalarNode;
+    use crate::meta::testing::TestMetadata;
     use crate::operators::format::format_operator_tree;
     use crate::operators::relational::logical::{LogicalAggregate, LogicalExpr, LogicalGet, LogicalProjection};
     use crate::operators::relational::RelNode;
@@ -454,19 +455,25 @@ mod test {
 
     #[test]
     fn test_single_line_fmt() {
+        let mut metadata = TestMetadata::with_tables(vec!["A"]);
+
+        let col1 = metadata.column("A").build();
+        let col2 = metadata.column("A").build();
+        let col3 = metadata.column("A").build();
+
         let from_a = LogicalExpr::Get(LogicalGet {
             source: "A".to_string(),
-            columns: vec![1, 2, 3],
+            columns: vec![col1, col2, col3],
         });
         let p1 = LogicalProjection {
             input: RelNode::from(from_a),
-            exprs: vec![ScalarNode::from(ScalarExpr::Column(1)), ScalarNode::from(ScalarExpr::Column(2))],
-            columns: vec![1, 2],
+            exprs: vec![ScalarNode::from(ScalarExpr::Column(col1)), ScalarNode::from(ScalarExpr::Column(col2))],
+            columns: vec![col1, col2],
         };
         let p2 = LogicalProjection {
             input: RelNode::from(LogicalExpr::Projection(p1)),
-            exprs: vec![ScalarNode::from(ScalarExpr::Column(1))],
-            columns: vec![1],
+            exprs: vec![ScalarNode::from(ScalarExpr::Column(col1))],
+            columns: vec![col1],
         };
         let projection = LogicalExpr::Projection(p2);
         expect_formatted(
@@ -481,16 +488,23 @@ LogicalProjection cols=[1] exprs: [col:1]
 
     #[test]
     fn test_multiline_fmt() {
+        let mut metadata = TestMetadata::with_tables(vec!["A"]);
+
+        let col1 = metadata.column("A").build();
+        let col2 = metadata.column("A").build();
+        let col3 = metadata.synthetic_column().build();
+        let col4 = metadata.synthetic_column().build();
+
         let from_a = LogicalExpr::Get(LogicalGet {
             source: "A".to_string(),
-            columns: vec![1, 2],
+            columns: vec![col1, col2],
         });
         let aggr = LogicalExpr::Aggregate(LogicalAggregate {
             input: Operator::from(OperatorExpr::from(from_a)).into(),
             aggr_exprs: vec![ScalarNode::from(ScalarExpr::Scalar(ScalarValue::Int32(10)))],
-            group_exprs: vec![ScalarNode::from(ScalarExpr::Column(1))],
+            group_exprs: vec![ScalarNode::from(ScalarExpr::Column(col1))],
             having: None,
-            columns: vec![3, 4],
+            columns: vec![col3, col4],
         });
 
         expect_formatted(

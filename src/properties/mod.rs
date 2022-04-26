@@ -4,6 +4,7 @@
 //! Physical properties are describe physical characteristics of the data (such as ordering).
 //! These properties are required by some operators. For example MergeSortJoin requires its inputs to be ordered.
 
+use itertools::Itertools;
 use std::fmt::{Display, Formatter};
 
 use crate::meta::ColumnId;
@@ -30,6 +31,6 @@ impl OrderingChoice {
 
 impl Display for OrderingChoice {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{{ columns={:?} }}", self.columns)
+        write!(f, "[{}]", self.columns().iter().map(|id| format!("{}", id)).join(", "))
     }
 }

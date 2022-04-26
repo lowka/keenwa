@@ -193,11 +193,11 @@ where
 #[cfg(test)]
 mod test {
     use crate::datatypes::DataType;
+    use crate::meta::testing::TestMetadata;
     use crate::meta::ColumnId;
     use crate::operators::scalar::expr::{AggregateFunction, BinaryOp, NestedExpr};
     use crate::operators::scalar::types::{resolve_expr_type, ColumnTypeRegistry};
     use crate::operators::scalar::value::ScalarValue;
-    use std::collections::HashMap;
     use std::convert::TryFrom;
     use std::fmt::Formatter;
     use std::hash::{Hash, Hasher};
@@ -256,22 +256,25 @@ mod test {
         Expr::ColumnName(name.into())
     }
 
-    #[derive(Default)]
     struct MockColumnTypeRegistry {
-        columns: HashMap<ColumnId, DataType>,
+        metadata: TestMetadata,
     }
 
     impl MockColumnTypeRegistry {
+        fn new() -> Self {
+            MockColumnTypeRegistry {
+                metadata: TestMetadata::new(),
+            }
+        }
+
         fn add_column(&mut self, data_type: DataType) -> ColumnId {
-            let col_id = self.columns.len();
-            self.columns.insert(col_id, data_type);
-            col_id
+            self.metadata.synthetic_column().data_type(data_type).build()
         }
     }
 
     impl ColumnTypeRegistry for MockColumnTypeRegistry {
         fn get_column_type(&self, col_id: &ColumnId) -> DataType {
-            self.columns.get(col_id).unwrap().clone()
+            self.metadata.get_column(col_id).data_type().clone()
         }
     }
 
@@ -289,7 +292,7 @@ mod test {
     #[test]
     fn column_id_type() {
         fn expect_column_type(col_type: DataType) {
-            let mut registry = MockColumnTypeRegistry::default();
+            let mut registry = MockColumnTypeRegistry::new();
             let id = registry.add_column(col_type.clone());
             let expr = Expr::Column(id);
 
@@ -311,7 +314,7 @@ mod test {
     #[test]
     fn subquery_type() {
         fn expect_subquery_type(col_type: DataType) {
-            let mut registry = MockColumnTypeRegistry::default();
+            let mut registry = MockColumnTypeRegistry::new();
             let subquery = new_subquery_from_column(&mut registry, col_type.clone());
             let expr = Expr::SubQuery(subquery);
 
@@ -325,7 +328,7 @@ mod test {
 
     #[test]
     fn exists_subquery() {
-        let mut registry = MockColumnTypeRegistry::default();
+        let mut registry = MockColumnTypeRegistry::new();
         let query = new_subquery_from_column(&mut registry, DataType::Int32);
         let expr = Expr::Exists { not: false, query };
 
@@ -334,7 +337,7 @@ mod test {
 
     #[test]
     fn in_subquery() {
-        let mut registry = MockColumnTypeRegistry::default();
+        let mut registry = MockColumnTypeRegistry::new();
         let query = new_subquery_from_column(&mut registry, DataType::Int32);
         let expr = Expr::InSubQuery {
             expr: Box::new(col_name("a")),
@@ -595,9 +598,7 @@ mod test {
     }
 
     fn expect_type(expr: &Expr, expected_type: &DataType) {
-        let registry = MockColumnTypeRegistry {
-            columns: HashMap::new(),
-        };
+        let registry = MockColumnTypeRegistry::new();
         expect_resolved(expr, &registry, expected_type)
     }
 
@@ -609,7 +610,7 @@ mod test {
     }
 
     fn expect_not_resolved(expr: &Expr) {
-        let registry = MockColumnTypeRegistry::default();
+        let registry = MockColumnTypeRegistry::new();
         resolve_expr_type(expr, &registry).unwrap_err();
     }
 

@@ -667,7 +667,7 @@ impl Sort {
     {
         f.write_name("Sort");
         f.write_expr("input", &self.input);
-        f.write_value("ord", format!("{:?}", self.ordering.columns()).as_str())
+        f.write_values("ord", self.ordering.columns())
     }
 }
 
