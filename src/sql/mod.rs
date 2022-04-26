@@ -538,9 +538,9 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
                 None => None,
             };
             ScalarExpr::Case {
-                expr: base_expr.map(|e| Box::new(e)),
+                expr: base_expr.map(Box::new),
                 when_then_exprs: when_then_exprs?,
-                else_expr: else_expr.map(|e| Box::new(e)),
+                else_expr: else_expr.map(Box::new),
             }
         }
         Expr::Exists(query) => {

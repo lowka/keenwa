@@ -24,7 +24,7 @@ use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::ExprRewriter;
 use crate::operators::scalar::types::resolve_expr_type;
 use crate::operators::scalar::value::ScalarValue;
-use crate::operators::scalar::{exprs, get_subquery, ScalarExpr, ScalarNode};
+use crate::operators::scalar::{get_subquery, ScalarExpr, ScalarNode};
 use crate::operators::{ExprMemo, Operator, OperatorExpr, OuterScope};
 use crate::properties::physical::{PhysicalProperties, RequiredProperties};
 use crate::properties::OrderingChoice;

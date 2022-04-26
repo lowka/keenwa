@@ -33,7 +33,7 @@ pub mod scalar;
 pub type OperatorMetadata = Rc<MutableMetadata>;
 pub type ExprMemo = Memo<Operator, OperatorMetadata>;
 pub type ExprRef = MemoExprRef<Operator>;
-pub type ExprCallback = MemoGroupCallbackRef<OperatorExpr, Properties, OuterScope, OperatorMetadata>;
+pub type ExprCallback = MemoGroupCallbackRef<Operator, OperatorMetadata>;
 
 /// An operator is an expression (which can be either logical or physical) with a set of properties.
 /// A tree of operators can represent both initial (unoptimized) and optimized query plans.
@@ -339,7 +339,7 @@ impl MemoExpr for Operator {
             OperatorExpr::Scalar(expr) => expr.format_expr(f),
         }
         if f.flags().has_flag(&MemoFormatterFlags::IncludeProps) {
-            let mut fmt = PropertiesFormatter::new(f);
+            let fmt = PropertiesFormatter::new(f);
             fmt.format(props)
         }
     }

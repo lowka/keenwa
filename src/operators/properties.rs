@@ -157,6 +157,7 @@ where
     }
 
     /// Builds logical properties for the given set operator (Union, Intersect or Except).
+    #[allow(clippy::too_many_arguments)]
     pub fn build_set_op(
         &self,
         set_op: SetOperator,
@@ -314,44 +315,44 @@ where
                     statistics: _,
                 } = match &**expr {
                     LogicalExpr::Projection(LogicalProjection { input, columns, .. }) => {
-                        self.build_projection(input, columns, metadata.clone(), &scope)
+                        self.build_projection(input, columns, metadata.clone(), scope)
                     }
                     LogicalExpr::Select(LogicalSelect { input, filter }) => {
-                        self.build_select(input, filter.as_ref(), metadata.clone(), &scope)
+                        self.build_select(input, filter.as_ref(), metadata.clone(), scope)
                     }
                     LogicalExpr::Aggregate(LogicalAggregate {
                         input,
                         columns,
                         group_exprs,
                         ..
-                    }) => self.build_aggregate(input, columns, group_exprs, metadata.clone(), &scope),
+                    }) => self.build_aggregate(input, columns, group_exprs, metadata.clone(), scope),
                     LogicalExpr::Join(LogicalJoin {
                         join_type,
                         left,
                         right,
                         condition,
-                    }) => self.build_join(join_type, left, right, condition, metadata.clone(), &scope),
+                    }) => self.build_join(join_type, left, right, condition, metadata.clone(), scope),
                     LogicalExpr::Get(LogicalGet { source, columns }) => self.build_get(source, columns),
                     LogicalExpr::Union(LogicalUnion {
                         left,
                         right,
                         all,
                         columns,
-                    }) => self.build_union(left, right, *all, columns, metadata.clone(), &scope),
+                    }) => self.build_union(left, right, *all, columns, metadata.clone(), scope),
                     LogicalExpr::Intersect(LogicalIntersect {
                         left,
                         right,
                         all,
                         columns,
-                    }) => self.build_intersect(left, right, *all, columns, metadata.clone(), &scope),
+                    }) => self.build_intersect(left, right, *all, columns, metadata.clone(), scope),
                     LogicalExpr::Except(LogicalExcept {
                         left,
                         right,
                         all,
                         columns,
-                    }) => self.build_except(left, right, *all, columns, metadata.clone(), &scope),
+                    }) => self.build_except(left, right, *all, columns, metadata.clone(), scope),
                     LogicalExpr::Distinct(LogicalDistinct { input, on_expr, .. }) => {
-                        self.build_distinct(input, on_expr.as_ref(), metadata.clone(), &scope)
+                        self.build_distinct(input, on_expr.as_ref(), metadata.clone(), scope)
                     }
                     LogicalExpr::Limit(LogicalLimit { input, .. })
                     | LogicalExpr::Offset(LogicalOffset { input, .. }) => self.build_limit_offset(input),
