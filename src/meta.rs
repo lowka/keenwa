@@ -11,7 +11,7 @@ use crate::operators::scalar::ScalarExpr;
 
 /// Uniquely identifies a column within a query.
 #[derive(Debug, Eq, PartialEq, Copy, Clone, Hash, Ord, PartialOrd)]
-pub struct ColumnId(pub(crate) usize);
+pub struct ColumnId(usize);
 
 impl Display for ColumnId {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
