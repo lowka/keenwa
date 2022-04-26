@@ -1,5 +1,6 @@
 //! Joins-related code.
 
+use itertools::Itertools;
 use std::fmt::{Display, Formatter};
 
 use crate::meta::ColumnId;
@@ -88,7 +89,7 @@ impl JoinUsing {
 
 impl Display for JoinUsing {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self.columns)
+        write!(f, "[{}]", self.columns.iter().map(|(l, r)| format!("({}, {})", l, r)).join(", "))
     }
 }
 

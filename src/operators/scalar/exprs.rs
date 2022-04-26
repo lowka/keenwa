@@ -43,6 +43,7 @@ mod test {
     use std::fmt::{Debug, Formatter};
     use std::hash::Hash;
 
+    use crate::meta::testing::TestMetadata;
     use crate::meta::ColumnId;
     use crate::operators::scalar::expr::NestedExpr;
     use crate::operators::scalar::exprs::collect_columns;
@@ -72,13 +73,17 @@ mod test {
 
     #[test]
     fn test_collect_columns() {
-        let expr = Expr::Column(1);
-        let columns = collect_columns(&expr);
-        assert_eq!(columns, vec![1], "one column");
+        let mut metadata = TestMetadata::new();
+        let col1 = metadata.synthetic_column().build();
+        let col2 = metadata.synthetic_column().build();
 
-        let expr = !Expr::Column(1).and(Expr::Column(2));
+        let expr = Expr::Column(col1);
         let columns = collect_columns(&expr);
-        assert_eq!(columns, vec![1, 2], "nested columns");
+        assert_eq!(columns, vec![col1], "one column");
+
+        let expr = !Expr::Column(col1).and(Expr::Column(col2));
+        let columns = collect_columns(&expr);
+        assert_eq!(columns, vec![col1, col2], "nested columns");
 
         let expr = Expr::Scalar(ScalarValue::Int32(1));
         let columns = collect_columns(&expr);
@@ -88,9 +93,12 @@ mod test {
 
     #[test]
     fn test_collect_columns_from_nested_query() {
+        let mut metadata = TestMetadata::new();
+        let col1 = metadata.synthetic_column().build();
+
         test_subqueries(
             &DummyExpr {
-                output_columns: vec![1],
+                output_columns: vec![col1],
                 outer_columns: vec![],
             },
             vec![],
@@ -100,9 +108,9 @@ mod test {
         test_subqueries(
             &DummyExpr {
                 output_columns: vec![],
-                outer_columns: vec![1],
+                outer_columns: vec![col1],
             },
-            vec![1],
+            vec![col1],
             "outer columns must be included",
         );
     }

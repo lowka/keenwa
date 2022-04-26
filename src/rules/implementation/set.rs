@@ -106,20 +106,31 @@ impl Rule for HashSetOpRule {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::meta::testing::TestMetadata;
     use crate::rules::testing::{new_src, RuleTester};
 
     #[test]
     fn test_sorted_inputs_union() {
         let mut tester = RuleTester::new(UnionRule);
+        let mut metadata = TestMetadata::with_tables(vec!["A", "B"]);
 
-        fn union_expr(all: bool) -> LogicalExpr {
+        let col1 = metadata.column("A").build();
+        let col2 = metadata.column("A").build();
+
+        let col3 = metadata.column("B").build();
+        let col4 = metadata.column("B").build();
+
+        let col5 = metadata.synthetic_column().build();
+        let col6 = metadata.synthetic_column().build();
+
+        let union_expr = |all: bool| {
             LogicalExpr::Union(LogicalUnion {
-                left: new_src("A", vec![1, 2]),
-                right: new_src("B", vec![3, 4]),
+                left: new_src("A", vec![col1, col2]),
+                right: new_src("B", vec![col3, col4]),
                 all,
-                columns: vec![5, 6],
+                columns: vec![col5, col6],
             })
-        }
+        };
 
         let union = union_expr(false);
         tester.apply(
@@ -145,15 +156,25 @@ Append cols=[5, 6]
     #[test]
     fn test_intercept_hashset_op() {
         let mut tester = RuleTester::new(HashSetOpRule);
+        let mut metadata = TestMetadata::with_tables(vec!["A", "B"]);
 
-        fn intersect_expr(all: bool) -> LogicalExpr {
+        let col1 = metadata.column("A").build();
+        let col2 = metadata.column("A").build();
+
+        let col3 = metadata.column("B").build();
+        let col4 = metadata.column("B").build();
+
+        let col5 = metadata.synthetic_column().build();
+        let col6 = metadata.synthetic_column().build();
+
+        let intersect_expr = |all: bool| {
             LogicalExpr::Intersect(LogicalIntersect {
-                left: new_src("A", vec![1, 2]),
-                right: new_src("B", vec![3, 4]),
+                left: new_src("A", vec![col1, col2]),
+                right: new_src("B", vec![col3, col4]),
                 all,
-                columns: vec![5, 6],
+                columns: vec![col5, col6],
             })
-        }
+        };
 
         let intersect = intersect_expr(false);
         tester.apply(
@@ -179,15 +200,25 @@ HashedSetOp intersect=true all=true cols=[5, 6]
     #[test]
     fn test_except_hashset_op() {
         let mut tester = RuleTester::new(HashSetOpRule);
+        let mut metadata = TestMetadata::with_tables(vec!["A", "B"]);
 
-        fn except_expr(all: bool) -> LogicalExpr {
+        let col1 = metadata.column("A").build();
+        let col2 = metadata.column("A").build();
+
+        let col3 = metadata.column("B").build();
+        let col4 = metadata.column("B").build();
+
+        let col5 = metadata.synthetic_column().build();
+        let col6 = metadata.synthetic_column().build();
+
+        let except_expr = |all: bool| {
             LogicalExpr::Except(LogicalExcept {
-                left: new_src("A", vec![1, 2]),
-                right: new_src("B", vec![3, 4]),
+                left: new_src("A", vec![col1, col2]),
+                right: new_src("B", vec![col3, col4]),
                 all,
-                columns: vec![5, 6],
+                columns: vec![col5, col6],
             })
-        }
+        };
 
         let expect = except_expr(false);
         tester.apply(

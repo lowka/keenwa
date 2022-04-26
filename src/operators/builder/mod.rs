@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::hash_map::RandomState;
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::iter::FromIterator;
 use std::rc::Rc;
 
@@ -798,9 +798,9 @@ where
                 let exists = self.scope.find_column_by_id(column_id).is_some();
                 if !exists {
                     return Err(OptimizerError::Internal(format!(
-                        "Unexpected column id: {}. Input columns: {:?}",
+                        "Unexpected column id: {}. Input columns: {}",
                         column_id,
-                        self.scope.columns()
+                        DisplayColumns(self.scope.columns()),
                     )));
                 }
                 Ok(expr)
@@ -811,11 +811,12 @@ where
                 match column_id {
                     Some(column_id) => Ok(ScalarExpr::Column(column_id)),
                     None => {
+                        let outer_columns = self.scope.parent().map(|s| s.columns().to_vec()).unwrap_or_default();
                         return Err(OptimizerError::Internal(format!(
-                            "Unexpected column: {}. Input columns: {:?}, Outer columns: {:?}",
+                            "Unexpected column: {}. Input columns: {}, Outer columns: {}",
                             column_name,
-                            self.scope.columns(),
-                            self.scope.parent().map(|s| s.columns().to_vec()).unwrap_or_default(),
+                            DisplayColumns(self.scope.columns()),
+                            DisplayColumns(&outer_columns),
                         )));
                     }
                 }
@@ -849,6 +850,14 @@ where
     fn post_rewrite(&mut self, expr: ScalarExpr) -> Result<ScalarExpr, Self::Error> {
         self.validator.after_expr(&expr);
         Ok(expr)
+    }
+}
+
+struct DisplayColumns<'a>(&'a [(String, ColumnId)]);
+
+impl Display for DisplayColumns<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}]", self.0.iter().map(|(name, id)| format!("({}, {})", name, id)).join(", "))
     }
 }
 
@@ -1702,11 +1711,14 @@ Memo:
         tester.build_operator(|builder| {
             let from_a = builder.get("A", vec!["a1", "a2"])?;
 
+            let col_a1 = &from_a.metadata.get_columns()[0];
+            assert_eq!("a1", col_a1.name(), "a1 must be the fist column");
+
             let Operator { state } =
                 from_a.new_query_builder().empty(false)?.project(vec![scalar(true)])?.operator.unwrap();
 
             let subquery_props = Properties::Relational(RelationalProperties {
-                logical: LogicalProperties::new(vec![1], None),
+                logical: LogicalProperties::new(vec![*col_a1.id()], None),
                 physical: PhysicalProperties::none(),
             });
             let subquery = Operator::new(state.expr().clone(), subquery_props);

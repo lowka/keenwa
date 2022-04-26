@@ -266,28 +266,64 @@ impl<'a> ExprVisitor<RelNode> for ResolveExprOpType<'a> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::meta::testing::TestMetadata;
     use crate::operators::relational::join::JoinOn;
+    use crate::operators::scalar::col;
+    use crate::operators::scalar::expr::ExprRewriter;
     use crate::rules::testing::{expect_apply, expect_no_match, new_src};
 
-    fn join_expr(join_type: JoinType) -> LogicalExpr {
-        let condition = JoinCondition::using(vec![(1, 3)]);
-        join_expr_on(join_type, condition)
+    fn test_metadata() -> TestMetadata {
+        let mut metadata = TestMetadata::with_tables(vec!["A", "B", "C"]);
+        // a1, a2
+        let _ = metadata.column("A").build();
+        let _ = metadata.column("A").build();
+        // b1, b2
+        let _ = metadata.column("B").build();
+        let _ = metadata.column("B").build();
+        // c1, c2
+        let _ = metadata.column("C").build();
+        let _ = metadata.column("C").build();
+        //
+        metadata
     }
 
-    fn join_expr_on(join_type: JoinType, condition: JoinCondition) -> LogicalExpr {
+    fn join_expr(metadata: &TestMetadata, join_type: JoinType) -> LogicalExpr {
+        let col1 = metadata.find_column("A", "a1");
+        let col3 = metadata.find_column("B", "b1");
+
+        let condition = JoinCondition::using(vec![(col1, col3)]);
+        join_expr_on(metadata, join_type, condition)
+    }
+
+    fn join_expr_on(metadata: &TestMetadata, join_type: JoinType, condition: JoinCondition) -> LogicalExpr {
+        let col1 = metadata.find_column("A", "a1");
+        let col2 = metadata.find_column("A", "a2");
+
+        let col3 = metadata.find_column("B", "b1");
+        let col4 = metadata.find_column("B", "b2");
+
         let join = LogicalJoin {
             join_type,
-            left: new_src("A", vec![1, 2]),
-            right: new_src("B", vec![3, 4]),
+            left: new_src("A", vec![col1, col2]),
+            right: new_src("B", vec![col3, col4]),
             condition,
         };
         LogicalExpr::Join(join)
     }
 
-    fn expect_condition_type(on_expr: ScalarExpr, expected: JoinExprOpType) {
+    fn expect_condition_type(metadata: &TestMetadata, on_expr: ScalarExpr, expected: JoinExprOpType) {
+        let col1 = metadata.find_column("A", "a1");
+        let col2 = metadata.find_column("A", "a2");
+
+        let col3 = metadata.find_column("B", "b1");
+        let col4 = metadata.find_column("B", "b2");
+
+        let mut rewriter = ReplaceColumnNames { metadata };
+        let on_expr = on_expr.rewrite(&mut rewriter).unwrap();
         let condition = JoinCondition::On(JoinOn::new(on_expr.clone().into()));
-        let left = new_src("A", vec![1, 2]);
-        let right = new_src("B", vec![3, 4]);
+
+        let left = new_src("A", vec![col1, col2]);
+        let right = new_src("B", vec![col3, col4]);
 
         let cond_type = resolve_join_expr_type(&left, &right, &condition);
         assert_eq!(expected, cond_type, "expr: {}", on_expr)
@@ -295,162 +331,198 @@ mod test {
 
     #[test]
     fn test_join_expr_eq_type() {
-        let expr = col_id(1).eq(col_id(3));
-        expect_condition_type(expr, JoinExprOpType::Equality);
+        let metadata = test_metadata();
 
-        let expr = col_id(3).eq(col_id(1));
-        expect_condition_type(expr, JoinExprOpType::Equality);
+        let expr = col("A:a1").eq(col("B:b1"));
+        expect_condition_type(&metadata, expr, JoinExprOpType::Equality);
 
-        let expr = col_id(3).eq(col_id(1));
-        let expr1 = col_id(2).eq(col_id(4));
-        expect_condition_type(expr.and(expr1), JoinExprOpType::Equality);
+        let expr = col("B:b1").eq(col("A:a1"));
+        expect_condition_type(&metadata, expr, JoinExprOpType::Equality);
 
-        let expr = col_id(3).eq(col_id(1));
-        let expr1 = col_id(4).eq(col_id(1));
-        let expr2 = col_id(1).eq(col_id(3));
-        expect_condition_type(expr.and(expr1).and(expr2), JoinExprOpType::Equality);
+        let expr = col("B:b1").eq(col("A:a1"));
+        let expr1 = col("A:a2").eq(col("B:b2"));
+        expect_condition_type(&metadata, expr.and(expr1), JoinExprOpType::Equality);
+
+        let expr = col("B:b1").eq(col("A:a1"));
+        let expr1 = col("B:b2").eq(col("A:a1"));
+        let expr2 = col("A:a1").eq(col("B:b1"));
+        expect_condition_type(&metadata, expr.and(expr1).and(expr2), JoinExprOpType::Equality);
     }
 
     #[test]
     fn test_join_expr_comparison_type() {
+        let metadata = test_metadata();
+
         for op in vec![BinaryOp::Gt, BinaryOp::Lt, BinaryOp::GtEq, BinaryOp::LtEq] {
-            let expr = col_id(1).binary_expr(op, col_id(3));
-            expect_condition_type(expr, JoinExprOpType::Comparison);
+            let expr = col("A:a1").binary_expr(op, col("B:b1"));
+            expect_condition_type(&metadata, expr, JoinExprOpType::Comparison);
         }
 
-        // col:3 = col: 1 AND col:4 > col:1 AND col:1 = col:3 => Compare
-        let expr = col_id(3).eq(col_id(1));
-        let expr1 = col_id(4).gt(col_id(1));
-        let expr2 = col_id(1).eq(col_id(3));
-        expect_condition_type(expr.and(expr1).and(expr2), JoinExprOpType::Comparison);
+        // col:b1 = col:a1 AND col:b2 > col:a1 AND col:a1 = col:b1 => Compare
+        let expr = col("B:b1").eq(col("A:a1"));
+        let expr1 = col("B:b2").gt(col("A:a1"));
+        let expr2 = col("A:a1").eq(col("B:b1"));
+        expect_condition_type(&metadata, expr.and(expr1).and(expr2), JoinExprOpType::Comparison);
 
-        // col:3 > col: 1 AND col:4 > col:1 AND col:1 = col:3 => Compare
-        let expr = col_id(3).gt(col_id(1));
-        let expr1 = col_id(4).gt(col_id(1));
-        let expr2 = col_id(1).eq(col_id(3));
-        expect_condition_type(expr.and(expr1).and(expr2), JoinExprOpType::Comparison);
+        // col:b1 > col:a1 AND col:b2 > col:a1 AND col:a1 = col:b1 => Compare
+        let expr = col("B:b1").gt(col("A:a1"));
+        let expr1 = col("B:b2").gt(col("A:a1"));
+        let expr2 = col("A:a1").eq(col("B:b1"));
+        expect_condition_type(&metadata, expr.and(expr1).and(expr2), JoinExprOpType::Comparison);
     }
 
     #[test]
     fn test_join_expr_other_type() {
-        let expr = col_id(1).or(col_id(3));
-        expect_condition_type(expr, JoinExprOpType::Other);
+        let metadata = test_metadata();
 
-        let expr = col_id(1).eq(col_id(1));
-        expect_condition_type(expr, JoinExprOpType::Other);
+        let expr = col("A:a1").or(col("B:b1"));
+        expect_condition_type(&metadata, expr, JoinExprOpType::Other);
 
-        let expr = col_id(100).eq(col_id(200));
-        expect_condition_type(expr, JoinExprOpType::Other);
+        let expr = col("A:a1").eq(col("A:a1"));
+        expect_condition_type(&metadata, expr, JoinExprOpType::Other);
 
-        let expr = col_id(2).gt(col_id(1));
-        expect_condition_type(expr, JoinExprOpType::Other);
+        let expr = col("C:c1").eq(col("C:c2"));
+        expect_condition_type(&metadata, expr, JoinExprOpType::Other);
+
+        let expr = col("A:a2").gt(col("A:a1"));
+        expect_condition_type(&metadata, expr, JoinExprOpType::Other);
     }
 
     #[test]
     fn test_nested_loop_join() {
+        let metadata = test_metadata();
+
         let expr = r#"
 NestedLoopJoin type=:type
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
   condition: Expr col:1 = col:3
 "#;
-        expect_apply(NestedLoopJoinRule, &join_expr(JoinType::Inner), expr.replace(":type", "Inner"));
-        expect_apply(NestedLoopJoinRule, &join_expr(JoinType::Cross), expr.replace(":type", "Cross"));
-        expect_apply(NestedLoopJoinRule, &join_expr(JoinType::Left), expr.replace(":type", "Left"));
-        expect_apply(NestedLoopJoinRule, &join_expr(JoinType::Right), expr.replace(":type", "Right"));
-        expect_apply(NestedLoopJoinRule, &join_expr(JoinType::Full), expr.replace(":type", "Full"));
+        expect_apply(NestedLoopJoinRule, &join_expr(&metadata, JoinType::Inner), expr.replace(":type", "Inner"));
+        expect_apply(NestedLoopJoinRule, &join_expr(&metadata, JoinType::Cross), expr.replace(":type", "Cross"));
+        expect_apply(NestedLoopJoinRule, &join_expr(&metadata, JoinType::Left), expr.replace(":type", "Left"));
+        expect_apply(NestedLoopJoinRule, &join_expr(&metadata, JoinType::Right), expr.replace(":type", "Right"));
+        expect_apply(NestedLoopJoinRule, &join_expr(&metadata, JoinType::Full), expr.replace(":type", "Full"));
     }
 
     #[test]
     fn test_hash_join_using() {
+        let metadata = test_metadata();
+
         let expr = r#"
 HashJoin type=:type using=[(1, 3)]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
 "#;
-        expect_apply(HashJoinRule, &join_expr(JoinType::Inner), expr.replace(":type", "Inner"));
-        expect_no_match(HashJoinRule, &join_expr(JoinType::Cross));
-        expect_apply(HashJoinRule, &join_expr(JoinType::Left), expr.replace(":type", "Left"));
-        expect_apply(HashJoinRule, &join_expr(JoinType::Right), expr.replace(":type", "Right"));
-        expect_apply(HashJoinRule, &join_expr(JoinType::Full), expr.replace(":type", "Full"));
+        expect_apply(HashJoinRule, &join_expr(&metadata, JoinType::Inner), expr.replace(":type", "Inner"));
+        expect_no_match(HashJoinRule, &join_expr(&metadata, JoinType::Cross));
+        expect_apply(HashJoinRule, &join_expr(&metadata, JoinType::Left), expr.replace(":type", "Left"));
+        expect_apply(HashJoinRule, &join_expr(&metadata, JoinType::Right), expr.replace(":type", "Right"));
+        expect_apply(HashJoinRule, &join_expr(&metadata, JoinType::Full), expr.replace(":type", "Full"));
     }
 
     #[test]
     fn test_hash_join_on_expr() {
-        fn condition_matches(on_expr: ScalarExpr) {
+        fn condition_matches(metadata: &TestMetadata, on_expr: ScalarExpr) {
             let expr = r#"
 HashJoin type=Inner on=:expr
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
 "#;
+            let mut rewriter = ReplaceColumnNames { metadata };
+            let on_expr = on_expr.rewrite(&mut rewriter).unwrap();
             let cond_str = format!("{}", on_expr);
             let condition = JoinCondition::On(JoinOn::new(on_expr.into()));
             expect_apply(
                 HashJoinRule,
-                &join_expr_on(JoinType::Inner, condition),
+                &join_expr_on(metadata, JoinType::Inner, condition),
                 expr.replace(":expr", cond_str.as_str()),
             );
         }
 
-        let on_expr = col_id(1).eq(col_id(3));
-        condition_matches(on_expr);
+        let metadata = test_metadata();
 
-        let on_expr = col_id(3).eq(col_id(1));
-        condition_matches(on_expr);
+        let on_expr = col("A:a1").eq(col("B:b1"));
+        condition_matches(&metadata, on_expr);
 
-        let on_expr = (col_id(1).eq(col_id(3))).and(col_id(2).eq(col_id(4)));
-        condition_matches(on_expr);
+        let on_expr = col("B:b1").eq(col("A:a1"));
+        condition_matches(&metadata, on_expr);
+
+        let on_expr = col("A:a1").eq(col("B:b1")).and(col("A:a2").eq(col("B:b2")));
+        condition_matches(&metadata, on_expr);
     }
 
     #[test]
     fn test_hash_join_can_not_be_used_with_non_eq_conditions() {
+        let metadata = test_metadata();
+
         for op in vec![BinaryOp::Or, BinaryOp::Gt, BinaryOp::Lt, BinaryOp::GtEq, BinaryOp::LtEq] {
-            let on_expr = col_id(1).binary_expr(op, col_id(3));
+            let on_expr = col("A:a1").binary_expr(op, col("B:b2"));
             let condition = JoinCondition::On(JoinOn::new(on_expr.into()));
 
-            expect_no_match(HashJoinRule, &join_expr_on(JoinType::Inner, condition));
+            expect_no_match(HashJoinRule, &join_expr_on(&metadata, JoinType::Inner, condition));
         }
     }
 
     #[test]
     fn test_merge_join() {
+        let metadata = test_metadata();
+
         let expr = r#"
 MergeSortJoin type=:type using=[(1, 3)]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
 "#;
-        expect_apply(MergeSortJoinRule, &join_expr(JoinType::Inner), expr.replace(":type", "Inner"));
-        expect_no_match(MergeSortJoinRule, &join_expr(JoinType::Cross));
-        expect_apply(MergeSortJoinRule, &join_expr(JoinType::Left), expr.replace(":type", "Left"));
-        expect_apply(MergeSortJoinRule, &join_expr(JoinType::Right), expr.replace(":type", "Right"));
-        expect_apply(MergeSortJoinRule, &join_expr(JoinType::Full), expr.replace(":type", "Full"));
+        expect_apply(MergeSortJoinRule, &join_expr(&metadata, JoinType::Inner), expr.replace(":type", "Inner"));
+        expect_no_match(MergeSortJoinRule, &join_expr(&metadata, JoinType::Cross));
+        expect_apply(MergeSortJoinRule, &join_expr(&metadata, JoinType::Left), expr.replace(":type", "Left"));
+        expect_apply(MergeSortJoinRule, &join_expr(&metadata, JoinType::Right), expr.replace(":type", "Right"));
+        expect_apply(MergeSortJoinRule, &join_expr(&metadata, JoinType::Full), expr.replace(":type", "Full"));
     }
 
     #[test]
     fn test_merge_join_on_expr() {
-        fn condition_matches(on_expr: ScalarExpr) {
+        fn condition_matches(metadata: &TestMetadata, on_expr: ScalarExpr) {
             let expr = r#"
 MergeSortJoin type=Inner on=:expr
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
 "#;
+            let mut rewriter = ReplaceColumnNames { metadata };
+            let on_expr = on_expr.rewrite(&mut rewriter).unwrap();
             let condition = JoinCondition::On(JoinOn::new(on_expr.clone().into()));
             let on_expr_str = format!("{}", on_expr);
 
             expect_apply(
                 MergeSortJoinRule,
-                &join_expr_on(JoinType::Inner, condition),
+                &join_expr_on(metadata, JoinType::Inner, condition),
                 expr.replace(":expr", on_expr_str.as_str()),
             );
         }
 
+        let metadata = test_metadata();
+
         for op in vec![BinaryOp::Eq, BinaryOp::Gt, BinaryOp::Lt, BinaryOp::GtEq, BinaryOp::LtEq] {
-            let on_expr = col_id(1).binary_expr(op, col_id(3));
-            condition_matches(on_expr);
+            let on_expr = col("A:a1").binary_expr(op, col("B:b1"));
+            condition_matches(&metadata, on_expr);
         }
     }
 
-    fn col_id(id: ColumnId) -> ScalarExpr {
-        ScalarExpr::Column(id)
+    struct ReplaceColumnNames<'a> {
+        metadata: &'a TestMetadata,
+    }
+
+    impl ExprRewriter<RelNode> for ReplaceColumnNames<'_> {
+        type Error = Infallible;
+
+        fn rewrite(&mut self, expr: ScalarExpr) -> Result<ScalarExpr, Self::Error> {
+            if let ScalarExpr::ColumnName(name) = expr {
+                let (table, col) = name.split_once(":").expect("Name should be the table:col format");
+                let col_id = self.metadata.find_column(table, col);
+                Ok(ScalarExpr::Column(col_id))
+            } else {
+                Ok(expr)
+            }
+        }
     }
 }

@@ -213,6 +213,7 @@ impl Rule for JoinAssociativityRule {
 
 #[cfg(test)]
 mod tests {
+    use crate::meta::testing::TestMetadata;
     use crate::operators::relational::logical::LogicalGet;
     use crate::rules::testing::RuleTester;
 
@@ -220,19 +221,27 @@ mod tests {
 
     #[test]
     fn test_join_commutativity_rule() {
+        let mut metadata = TestMetadata::with_tables(vec!["A", "B"]);
+
+        let col1 = metadata.column("A").build();
+        let col2 = metadata.column("A").build();
+
+        let col3 = metadata.column("B").build();
+        let col4 = metadata.column("B").build();
+
         let expr = LogicalExpr::Join(LogicalJoin {
             join_type: JoinType::Inner,
             left: LogicalExpr::Get(LogicalGet {
                 source: "A".into(),
-                columns: vec![1, 2],
+                columns: vec![col1, col2],
             })
             .into(),
             right: LogicalExpr::Get(LogicalGet {
                 source: "B".into(),
-                columns: vec![3, 4],
+                columns: vec![col3, col4],
             })
             .into(),
-            condition: JoinCondition::using(vec![(1, 3)]),
+            condition: JoinCondition::using(vec![(col1, col3)]),
         });
 
         let mut tester = RuleTester::new(JoinCommutativityRule);
@@ -248,29 +257,40 @@ LogicalJoin type=Inner using=[(3, 1)]
 
     #[test]
     fn test_join_associativity_rule1() {
+        let mut metadata = TestMetadata::with_tables(vec!["A", "B", "C"]);
+
+        let col1 = metadata.column("A").build();
+        let col2 = metadata.column("A").build();
+
+        let col3 = metadata.column("B").build();
+        let col4 = metadata.column("B").build();
+
+        let col5 = metadata.column("C").build();
+        let col6 = metadata.column("C").build();
+
         let expr = LogicalExpr::Join(LogicalJoin {
             join_type: JoinType::Inner,
             left: LogicalExpr::Join(LogicalJoin {
                 join_type: JoinType::Inner,
                 left: LogicalExpr::Get(LogicalGet {
                     source: "A".into(),
-                    columns: vec![1, 2],
+                    columns: vec![col1, col2],
                 })
                 .into(),
                 right: LogicalExpr::Get(LogicalGet {
                     source: "B".into(),
-                    columns: vec![3, 4],
+                    columns: vec![col3, col4],
                 })
                 .into(),
-                condition: JoinCondition::using(vec![(1, 4)]),
+                condition: JoinCondition::using(vec![(col1, col4)]),
             })
             .into(),
             right: LogicalExpr::Get(LogicalGet {
                 source: "C".into(),
-                columns: vec![5, 6],
+                columns: vec![col5, col6],
             })
             .into(),
-            condition: JoinCondition::using(vec![(1, 6)]),
+            condition: JoinCondition::using(vec![(col1, col6)]),
         });
         // [AxB(1,4)]xC(1,6) => A(1,6)x[BxC(4,6)]
 
@@ -289,29 +309,40 @@ LogicalJoin type=Inner using=[(1, 4)]
 
     #[test]
     fn test_join_associativity_rule2() {
+        let mut metadata = TestMetadata::with_tables(vec!["A", "B", "C"]);
+
+        let col1 = metadata.column("A").build();
+        let col2 = metadata.column("A").build();
+
+        let col3 = metadata.column("B").build();
+        let col4 = metadata.column("B").build();
+
+        let col5 = metadata.column("C").build();
+        let col6 = metadata.column("C").build();
+
         let expr = LogicalExpr::Join(LogicalJoin {
             join_type: JoinType::Inner,
             left: LogicalExpr::Get(LogicalGet {
                 source: "A".into(),
-                columns: vec![1, 2],
+                columns: vec![col1, col2],
             })
             .into(),
             right: LogicalExpr::Join(LogicalJoin {
                 join_type: JoinType::Inner,
                 left: LogicalExpr::Get(LogicalGet {
                     source: "B".into(),
-                    columns: vec![3, 4],
+                    columns: vec![col3, col4],
                 })
                 .into(),
                 right: LogicalExpr::Get(LogicalGet {
                     source: "C".into(),
-                    columns: vec![5, 6],
+                    columns: vec![col5, col6],
                 })
                 .into(),
-                condition: JoinCondition::using(vec![(3, 6)]),
+                condition: JoinCondition::using(vec![(col3, col6)]),
             })
             .into(),
-            condition: JoinCondition::using(vec![(1, 3)]),
+            condition: JoinCondition::using(vec![(col1, col3)]),
         });
         // A(1,3)x[BxC(3,6)] => [AxB(1,3)]xC(1,6)
 

@@ -319,7 +319,7 @@ where
             None => {}
             Some(required) => {
                 if let Some(ordering) = required.ordering() {
-                    self.fmt.push_str(format!("ord:{:?}=", ordering.columns()).as_str());
+                    self.fmt.push_str(format!("ord:{}=", ordering).as_str());
                 } else {
                     panic!("Unexpected required property!: {:?}", required)
                 }

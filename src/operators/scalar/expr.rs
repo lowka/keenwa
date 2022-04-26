@@ -984,6 +984,10 @@ mod test {
 
     type Expr = super::Expr<DummyRelExpr>;
 
+    fn col(name: &str) -> Expr {
+        Expr::ColumnName(String::from(name))
+    }
+
     #[test]
     fn expr_methods() {
         let expr = Expr::Scalar(ScalarValue::Int32(1));
@@ -1014,8 +1018,8 @@ mod test {
 
     #[test]
     fn column_traversal() {
-        let expr = Expr::Column(1);
-        expect_traversal_order(&expr, vec!["pre:col:1", "post:col:1"]);
+        let expr = col("a1");
+        expect_traversal_order(&expr, vec!["pre:col:a1", "post:col:a1"]);
     }
 
     #[test]
@@ -1073,10 +1077,10 @@ mod test {
         let expr = Expr::Aggregate {
             func: AggregateFunction::Avg,
             distinct: false,
-            args: vec![Expr::Column(1)],
+            args: vec![col("a1")],
             filter: None,
         };
-        expect_traversal_order(&expr, vec!["pre:avg(col:1)", "pre:col:1", "post:col:1", "post:avg(col:1)"])
+        expect_traversal_order(&expr, vec!["pre:avg(col:a1)", "pre:col:a1", "post:col:a1", "post:avg(col:a1)"])
     }
 
     #[test]
@@ -1084,18 +1088,18 @@ mod test {
         let expr = Expr::Aggregate {
             func: AggregateFunction::Avg,
             distinct: false,
-            args: vec![Expr::Column(1)],
+            args: vec![col("a1")],
             filter: Some(Box::new(Expr::Scalar(ScalarValue::Bool(true)))),
         };
         expect_traversal_order(
             &expr,
             vec![
-                "pre:avg(col:1) filter (where true)",
-                "pre:col:1",
-                "post:col:1",
+                "pre:avg(col:a1) filter (where true)",
+                "pre:col:a1",
+                "post:col:a1",
                 "pre:true",
                 "post:true",
-                "post:avg(col:1) filter (where true)",
+                "post:avg(col:a1) filter (where true)",
             ],
         )
     }
@@ -1106,7 +1110,7 @@ mod test {
             Expr::Scalar(ScalarValue::Int32(i))
         }
 
-        let col1 = Expr::Column(1);
+        let col1 = col("a1");
 
         let expr = Expr::Case {
             expr: Some(Box::new(col1.clone().gt(val(10)))),
@@ -1120,20 +1124,20 @@ mod test {
             &expr,
             1,
             vec![
-                "pre:CASE col:1 > 10 WHEN col:1 = 11 THEN 10 + 1 WHEN col:1 = 12 THEN 10 + 2 ELSE col:1",
+                "pre:CASE col:a1 > 10 WHEN col:a1 = 11 THEN 10 + 1 WHEN col:a1 = 12 THEN 10 + 2 ELSE col:a1",
                 // EXPR
-                "col:1 > 10",
+                "col:a1 > 10",
                 // WHEN
-                "col:1 = 11",
+                "col:a1 = 11",
                 // THEN
                 "10 + 1",
                 // WHEN
-                "col:1 = 12",
+                "col:a1 = 12",
                 // THEN
                 "10 + 2",
                 // ELSE
-                "col:1",
-                "post:CASE col:1 > 10 WHEN col:1 = 11 THEN 10 + 1 WHEN col:1 = 12 THEN 10 + 2 ELSE col:1",
+                "col:a1",
+                "post:CASE col:a1 > 10 WHEN col:a1 = 11 THEN 10 + 1 WHEN col:a1 = 12 THEN 10 + 2 ELSE col:a1",
             ],
         )
     }
@@ -1147,25 +1151,23 @@ mod test {
     #[test]
     fn rewriter() {
         struct ColumnRewriter {
-            skip_column: ColumnId,
+            skip_column: &'static str,
             post_rewrites: Rc<Cell<usize>>,
         }
         impl ExprRewriter<DummyRelExpr> for ColumnRewriter {
             type Error = Infallible;
 
             fn pre_rewrite(&mut self, expr: &Expr) -> Result<bool, Self::Error> {
-                if let Expr::Column(column) = expr {
-                    Ok(*column != self.skip_column)
-                } else {
-                    Ok(true)
+                match expr {
+                    Expr::ColumnName(name) => Ok(name != self.skip_column),
+                    _ => Ok(true),
                 }
             }
 
             fn rewrite(&mut self, expr: Expr) -> Result<Expr, Self::Error> {
-                if let Expr::Column(1) = expr {
-                    Ok(Expr::Column(2))
-                } else {
-                    Ok(expr)
+                match expr {
+                    Expr::ColumnName(name) if name == "a1" => Ok(col("a2")),
+                    _ => Ok(expr),
                 }
             }
 
@@ -1176,21 +1178,22 @@ mod test {
             }
         }
 
-        let expr = Expr::Column(1).or(Expr::Column(3).and(Expr::Column(1)));
+        let expr = col("a1").or(col("a3")).and(col("a1"));
+
         let post_rewrites = Rc::new(Cell::new(0));
         let rewriter = ColumnRewriter {
-            skip_column: 0,
+            skip_column: "-",
             post_rewrites: post_rewrites.clone(),
         };
-        expect_rewritten(expr.clone(), rewriter, "col:2 OR col:3 AND col:2");
+        expect_rewritten(expr.clone(), rewriter, "col:a2 OR col:a3 AND col:a2");
         assert_eq!(post_rewrites.get(), 5, "post rewrite calls");
 
         let post_rewrites = Rc::new(Cell::new(0));
         let rewriter = ColumnRewriter {
-            skip_column: 1,
+            skip_column: "a1",
             post_rewrites: post_rewrites.clone(),
         };
-        expect_rewritten(expr, rewriter, "col:1 OR col:3 AND col:1");
+        expect_rewritten(expr, rewriter, "col:a1 OR col:a3 AND col:a1");
         assert_eq!(post_rewrites.get(), 3, "post rewrite calls");
     }
 
@@ -1212,15 +1215,14 @@ mod test {
 
             fn rewrite(&mut self, expr: Expr) -> Result<Expr, Self::Error> {
                 self.rewritten += 1;
-                if let Expr::Column(1) = expr {
-                    Err(())
-                } else {
-                    Ok(expr)
+                match expr {
+                    Expr::ColumnName(name) if name == "a1" => Err(()),
+                    _ => Ok(expr),
                 }
             }
         }
 
-        let expr = Expr::Column(1).or(Expr::Column(3).and(Expr::Column(1)));
+        let expr = col("a1").or(col("a2").and(col("1a")));
 
         let mut rewriter = FailingRewriter::default();
         let result = expr.rewrite(&mut rewriter);
