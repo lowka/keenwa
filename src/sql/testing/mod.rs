@@ -25,7 +25,7 @@ use std::fmt::{Display, Formatter};
 /// query: |
 ///   Multiline
 ///     Query 1  
-/// Ok: |
+/// ok: |
 ///   Result
 ///```
 ///
@@ -94,8 +94,9 @@ where
         let (test_cases, run_results) = self.run_and_collect_results(tables);
         let error_report = self.build_error_report(test_cases, run_results);
 
-        if let Some(error_report) = error_report {
-            panic!("There are test failures:\n{}", error_report);
+        if let Some((expected, actual)) = error_report {
+            // IDEs can display a nice diff.
+            assert_eq!(expected, actual);
         }
     }
 
@@ -129,11 +130,17 @@ where
                         let test_result = match test_result {
                             Ok(r) => r.to_result(),
                             Err(error) => {
-                                let message = format!("Error: test case returned an error.\n{}", error);
+                                let message = format!("Test case returned an error. {}", error);
+                                let unexpected_result = Err(TestCaseFailure::new(message));
+                                let mismatch = create_mismatch(&test_case.expected_result, &unexpected_result, false);
+
                                 let error = TestCaseResult {
                                     test_case_id,
                                     query_id,
-                                    result: Err(message),
+                                    result: Ok(TestCaseResultData {
+                                        result: Err(()),
+                                        mismatch,
+                                    }),
                                 };
                                 run_results.push(error);
                                 continue;
@@ -143,11 +150,17 @@ where
                         self.add_test_case_result(test_case, test_case_id, query_id, test_result, &mut run_results);
                     }
                     Err(error) => {
-                        let message = format!("Error: failed to create a test case.\n{}", error);
+                        let message = format!("Failed to create a test case. {}", error);
+                        let unexpected_result = Err(TestCaseFailure::new(message.clone()));
+                        let mismatch = create_mismatch(&test_case.expected_result, &unexpected_result, true);
+
                         let error = TestCaseResult {
                             test_case_id,
                             query_id,
-                            result: Err(message),
+                            result: Err(NewTestError {
+                                mismatch: mismatch.expect("Test creation error must produce a mismatch"),
+                                error: message,
+                            }),
                         };
                         run_results.push(error)
                     }
@@ -158,15 +171,24 @@ where
         (test_cases, run_results)
     }
 
-    fn build_error_report(self, test_cases: Vec<SqlTestCase>, run_results: Vec<TestCaseResult>) -> Option<String> {
+    fn build_error_report(
+        self,
+        test_cases: Vec<SqlTestCase>,
+        run_results: Vec<TestCaseResult>,
+    ) -> Option<(String, String)> {
         let mut errors = vec![];
 
         struct TestErrorInfo<'a> {
             test_case_id: usize,
             query: &'a str,
-            message: &'a str,
+            expected: &'a str,
             actual: Option<&'a str>,
         }
+
+        // Contains queries and their expected results separated by ---.
+        let mut expected_buf = String::new();
+        // Contains queries and their actual results separated by ---.
+        let mut actual_buf = String::new();
 
         for (i, test_case) in test_cases.iter().enumerate() {
             for test_case_result in run_results.iter().filter(|r| r.test_case_id == i) {
@@ -174,7 +196,7 @@ where
                 let query_id = test_case_result.query_id;
                 let query = test_case.queries[query_id].trim();
 
-                match &test_case_result.result {
+                let mismatch = match &test_case_result.result {
                     Ok(result) => {
                         log::debug!(
                             "Test case: {}. Expected result: {:?}. Actual result: {:?}",
@@ -187,33 +209,57 @@ where
                             println!("Test case#{} query#{}:\n{}", test_case_id, query_id, query);
                         }
 
-                        if let Some(Mismatch { message, actual }) = &result.mismatch {
+                        if let Some(mismatch) = &result.mismatch {
                             if self.print_runs {
                                 println!("Test case#{} query#{} failed.", test_case_id, query_id);
                                 println!();
                             }
 
-                            errors.push(TestErrorInfo {
-                                test_case_id,
-                                query,
-                                message,
-                                actual: Some(actual),
-                            });
+                            Some(mismatch)
                         } else if self.print_runs {
                             println!("Test case#{} query#{} passed.", test_case_id, query_id);
                             println!();
+                            continue;
+                        } else {
+                            continue;
                         }
                     }
-                    Err(error) => {
-                        let error_info = TestErrorInfo {
+                    Err(NewTestError { mismatch, error }) => {
+                        log::debug!(
+                            "Test case: {}. Expected result: {:?}. Run error: {}",
                             test_case_id,
-                            query,
-                            message: error,
-                            actual: None,
-                        };
+                            test_case.expected_result,
+                            error
+                        );
 
-                        errors.push(error_info);
+                        Some(mismatch)
                     }
+                };
+                if let Some(Mismatch { expected, actual }) = mismatch {
+                    if !errors.is_empty() {
+                        expected_buf.push('\n');
+                        expected_buf.push_str("---");
+                        expected_buf.push('\n');
+
+                        actual_buf.push('\n');
+                        actual_buf.push_str("---");
+                        actual_buf.push('\n');
+                    }
+
+                    let query_string = format!("query:\n  {}\n", query.trim_end());
+
+                    expected_buf.push_str(query_string.as_str());
+                    expected_buf.push_str(expected.trim_end());
+
+                    actual_buf.push_str(query_string.as_str());
+                    actual_buf.push_str(actual.trim_end());
+
+                    errors.push(TestErrorInfo {
+                        test_case_id,
+                        query,
+                        expected,
+                        actual: Some(actual),
+                    });
                 }
             }
         }
@@ -222,33 +268,7 @@ where
             return None;
         }
 
-        let mut error_report = String::new();
-        error_report.push('\n');
-
-        let error_num = errors.len();
-        for (i, error) in errors.into_iter().enumerate() {
-            error_report.push_str(format!("Test case#{} failed:", error.test_case_id).as_str());
-            error_report.push('\n');
-            error_report.push_str("Query:\n");
-            error_report.push_str(error.query);
-            error_report.push('\n');
-            error_report.push('\n');
-
-            error_report.push_str(error.message.trim_end());
-            error_report.push('\n');
-
-            if let Some(actual) = error.actual {
-                error_report.push_str(actual.trim_end());
-                error_report.push('\n');
-            }
-
-            if i < error_num - 1 {
-                error_report.push_str("------------");
-                error_report.push('\n');
-            }
-        }
-
-        Some(error_report)
+        Some((expected_buf, actual_buf))
     }
 
     fn add_test_case_result(
@@ -259,24 +279,10 @@ where
         test_case_result: Result<String, TestCaseFailure>,
         run_results: &mut Vec<TestCaseResult>,
     ) {
-        let mismatch = match (&test_case.expected_result, &test_case_result) {
-            (Ok(expected), Ok(actual)) if expected.trim_end() == actual.trim_end() => None,
-            (Ok(expected), Ok(actual)) => {
-                Some((format!("Expected:\n\"{}\"", expected), format!("But got:\n\"{}\"", actual)))
-            }
-            (Err(expected), Err(actual)) if expected.matches(actual) => None,
-            (Err(expected), Err(actual)) => {
-                Some((format!("Expected error:\n\"{}\"", expected), format!("But got another error:\n\"{}\"", actual)))
-            }
-            (Ok(expected), Err(actual)) => {
-                Some((format!("Expected OK:\n{}", expected), format!("But got a test failure:\n{}", actual)))
-            }
-            (Err(_), Ok(actual)) => Some(("Expected a test failure but got:".to_string(), format!("\n{}", actual))),
-        };
-
+        let mismatch = create_mismatch(&test_case.expected_result, &test_case_result, false);
         let result = Ok(TestCaseResultData {
             result: test_case_result.map_err(|_| ()),
-            mismatch: mismatch.map(|(msg, actual)| Mismatch { message: msg, actual }),
+            mismatch,
         });
         run_results.push(TestCaseResult {
             test_case_id,
@@ -284,6 +290,32 @@ where
             result,
         })
     }
+}
+
+fn create_mismatch(
+    expected: &Result<String, TestCaseFailure>,
+    actual: &Result<String, TestCaseFailure>,
+    exact_error_match: bool,
+) -> Option<Mismatch> {
+    let mismatch = match (expected, actual) {
+        (Ok(expected), Ok(actual)) if expected.trim_end() == actual.trim_end() => None,
+        (Ok(expected), Ok(actual)) => Some((format!("ok:\n{}", expected), format!("ok:\n{}", actual))),
+        // exact_error_match says to not to use the match method because
+        // that method always returns `true` if the caller expects any error.
+        (Err(expected), Err(actual)) if !exact_error_match && expected.matches(actual) => None,
+        (Err(expected), Err(actual)) => {
+            let error = format!("{}", expected);
+            if !error.is_empty() {
+                Some((format!("error:\n  {}", expected), format!("error:\n  {}", actual)))
+            } else {
+                Some(("error".to_string(), format!("error:\n  {}", actual)))
+            }
+        }
+        (Ok(expected), Err(actual)) => Some((format!("ok:\n{}", expected), format!("error:\n  {}", actual))),
+        (Err(_), Ok(actual)) => Some(("error".to_string(), format!("ok:\n{}", actual))),
+    };
+
+    mismatch.map(|(expected, actual)| Mismatch { expected, actual })
 }
 
 /// Factory that creates execution environments to run [SqlTestCase]s.
@@ -444,7 +476,7 @@ impl Error for TestCaseFailure {}
 struct TestCaseResult {
     test_case_id: usize,
     query_id: usize,
-    result: Result<TestCaseResultData, String>,
+    result: Result<TestCaseResultData, NewTestError>,
 }
 
 #[derive(Debug)]
@@ -454,8 +486,14 @@ struct TestCaseResultData {
 }
 
 #[derive(Debug)]
+struct NewTestError {
+    mismatch: Mismatch,
+    error: String,
+}
+
+#[derive(Debug)]
 struct Mismatch {
-    message: String,
+    expected: String,
     actual: String,
 }
 
@@ -491,13 +529,16 @@ mod test {
             report,
             Some(
                 r#"
-Test case#1 failed:
-Query:
-SELECT 2
-
-Error: failed to create a test case.
-TestRunner error: Can't run
+query:
+  SELECT 2
+error
+---
+query:
+  SELECT 2
+error:
+  Failed to create a test case. TestRunner error: Can't run
 "#
+                .trim()
                 .to_owned()
             ),
         );
@@ -518,16 +559,18 @@ TestRunner error: Can't run
             report,
             Some(
                 r#"
-Test case#2 failed:
-Query:
-SELECT 3
-
-Expected OK:
+query:
+  SELECT 3
+ok:
 Step3
 Step4
-But got a test failure:
-Test case failed
+---
+query:
+  SELECT 3
+error:
+  Test case failed
 "#
+                .trim()
                 .to_owned()
             )
         );
@@ -548,15 +591,17 @@ Test case failed
             report,
             Some(
                 r#"
-Test case#1 failed:
-Query:
-SELECT 2
-
-Expected a test failure but got:
-
+query:
+  SELECT 2
+error
+---
+query:
+  SELECT 2
+ok:
 Valid
     plan
 "#
+                .trim()
                 .to_owned()
             )
         );
@@ -591,16 +636,17 @@ Valid
             report,
             Some(
                 r#"
-Test case#3 failed:
-Query:
-SELECT 4
-
-Expected error:
-"Some error
-"
-But got another error:
-"Can't do"
+query:
+  SELECT 4
+error:
+  Some error
+---
+query:
+  SELECT 4
+error:
+  Can't do
 "#
+                .trim()
                 .to_owned()
             )
         );
@@ -609,7 +655,7 @@ But got another error:
     #[test]
     fn test_case_from_files_test_case_mismatch() {
         let mut errors = HashMap::new();
-        errors.insert(0, Ok(TestCaseRunResult::Success("Invalid\n  plan".to_string())));
+        errors.insert(0, Ok(TestCaseRunResult::Success("Wrong\n  plan".to_string())));
 
         let mut factory = DummyRunnerFactory::default();
         factory.responses = Some(errors);
@@ -621,18 +667,19 @@ But got another error:
             report,
             Some(
                 r#"
-Test case#0 failed:
-Query:
-SELECT 1
-
-Expected:
-"Step1
+query:
+  SELECT 1
+ok:
+Step1
 Step2
-"
-But got:
-"Invalid
-  plan"
+---
+query:
+  SELECT 1
+ok:
+Wrong
+  plan
 "#
+                .trim()
                 .to_owned()
             )
         );
@@ -653,13 +700,18 @@ But got:
             report,
             Some(
                 r#"
-Test case#0 failed:
-Query:
-SELECT 1
-
-Error: test case returned an error.
-TestRunner error: Dummy runner error!
+query:
+  SELECT 1
+ok:
+Step1
+Step2
+---
+query:
+  SELECT 1
+error:
+  Test case returned an error. TestRunner error: Dummy runner error!
 "#
+                .trim()
                 .to_owned()
             )
         );
@@ -690,7 +742,9 @@ TestRunner error: Dummy runner error!
     fn run_tests(mut runner: SqlTestCaseRunner<DummyRunnerFactory>) -> Option<String> {
         let tables = runner.prepare_catalog();
         let (cases, results) = runner.run_and_collect_results(tables);
-        runner.build_error_report(cases, results)
+        runner
+            .build_error_report(cases, results)
+            .map(|(expected, actual)| format!("{}\n---\n{}", expected, actual))
     }
 
     #[derive(Default)]
