@@ -292,32 +292,6 @@ where
     }
 }
 
-fn create_mismatch(
-    expected: &Result<String, TestCaseFailure>,
-    actual: &Result<String, TestCaseFailure>,
-    exact_error_match: bool,
-) -> Option<Mismatch> {
-    let mismatch = match (expected, actual) {
-        (Ok(expected), Ok(actual)) if expected.trim_end() == actual.trim_end() => None,
-        (Ok(expected), Ok(actual)) => Some((format!("ok:\n{}", expected), format!("ok:\n{}", actual))),
-        // exact_error_match says to not to use the match method because
-        // that method always returns `true` if the caller expects any error.
-        (Err(expected), Err(actual)) if !exact_error_match && expected.matches(actual) => None,
-        (Err(expected), Err(actual)) => {
-            let error = format!("{}", expected);
-            if !error.is_empty() {
-                Some((format!("error:\n  {}", expected), format!("error:\n  {}", actual)))
-            } else {
-                Some(("error".to_string(), format!("error:\n  {}", actual)))
-            }
-        }
-        (Ok(expected), Err(actual)) => Some((format!("ok:\n{}", expected), format!("error:\n  {}", actual))),
-        (Err(_), Ok(actual)) => Some(("error".to_string(), format!("ok:\n{}", actual))),
-    };
-
-    mismatch.map(|(expected, actual)| Mismatch { expected, actual })
-}
-
 /// Factory that creates execution environments to run [SqlTestCase]s.
 pub trait TestCaseRunnerFactory {
     /// The type of a test case runner.
@@ -452,9 +426,12 @@ impl TestCaseFailure {
         TestCaseFailure { message: None }
     }
 
-    fn matches(&self, other: &TestCaseFailure) -> bool {
+    fn matches(&self, other: &TestCaseFailure, exact: bool) -> bool {
         match &self.message {
-            None => true,
+            None => {
+                // any error never matches another error if the match is exact.
+                !exact
+            }
             Some(_) => self.to_string().trim_end() == other.to_string().trim_end(),
         }
     }
@@ -495,6 +472,50 @@ struct NewTestError {
 struct Mismatch {
     expected: String,
     actual: String,
+}
+
+impl Mismatch {
+    fn new(expected: Result<String, String>, actual: Result<String, String>) -> Self {
+        fn format_result(r: Result<String, String>) -> String {
+            match r {
+                Ok(ok) => format!("ok:\n{}", ok),
+                Err(err) if !err.is_empty() => format!("error:\n  {}", err),
+                Err(_) => format!("error"),
+            }
+        }
+
+        Mismatch {
+            expected: format_result(expected),
+            actual: format_result(actual),
+        }
+    }
+}
+
+fn create_mismatch(
+    expected: &Result<String, TestCaseFailure>,
+    actual: &Result<String, TestCaseFailure>,
+    exact_error_match: bool,
+) -> Option<Mismatch> {
+    match (expected, actual) {
+        (Ok(expected), Ok(actual)) if expected.trim_end() == actual.trim_end() => None,
+        (Ok(expected), Ok(actual)) => Some(Mismatch::new(Ok(expected.clone()), Ok(actual.clone()))),
+        (Err(expected), Err(actual)) => {
+            // exact_error_match says to not to use the match method because
+            // that method always returns `true` if the caller expects any error.
+            if expected.matches(actual, exact_error_match) {
+                return None;
+            } else {
+                let error = format!("{}", expected);
+                if !error.is_empty() {
+                    Some(Mismatch::new(Err(format!("{}", expected)), Err(format!("{}", actual))))
+                } else {
+                    Some(Mismatch::new(Err(String::new()), Err(format!("{}", actual))))
+                }
+            }
+        }
+        (Ok(expected), Err(actual)) => Some(Mismatch::new(Ok(expected.clone()), Err(format!("{}", actual)))),
+        (Err(_), Ok(actual)) => Some(Mismatch::new(Err(String::new()), Ok(actual.clone()))),
+    }
 }
 
 #[cfg(test)]
