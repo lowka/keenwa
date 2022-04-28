@@ -95,3 +95,24 @@ ok: |
   LogicalProjection cols=[1] exprs: [1 NOT IN (1, 2, 3)]
     input: LogicalEmpty return_one_row=true
 ---
+# function expressions
+query:
+  SELECT lower('aBc')
+ok: |
+  LogicalProjection cols=[1] exprs: [lower(aBc)]
+    input: LogicalEmpty return_one_row=true
+---
+catalog:
+  - table: test
+    columns: i:int32, b:bool, s:string
+query:
+  SELECT lower(s) FROM test
+ok: |
+  LogicalProjection cols=[4] exprs: [lower(col:3)]
+    input: LogicalGet test cols=[1, 2, 3]
+---
+query:
+  SELECT lower(a1) FROM a
+error: |
+  Internal error: No function lower(Int32)
+---

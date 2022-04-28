@@ -320,7 +320,7 @@ mod test {
     use crate::operators::relational::logical::{
         LogicalAggregate, LogicalEmpty, LogicalExpr, LogicalGet, LogicalUnion,
     };
-    use crate::operators::scalar::expr::AggregateFunction;
+    use crate::operators::scalar::aggregates::AggregateFunction;
     use crate::operators::scalar::{ScalarExpr, ScalarNode};
     use crate::operators::{Operator, OperatorExpr, Properties, RelationalProperties};
     use crate::properties::logical::LogicalProperties;

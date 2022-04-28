@@ -1,4 +1,3 @@
-use std::convert::TryFrom;
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;
 use std::ops::{Add, Div, Mul, Not, Rem, Sub};
@@ -8,6 +7,8 @@ use itertools::Itertools;
 use crate::datatypes::DataType;
 use crate::memo::MemoExprFormatter;
 use crate::meta::ColumnId;
+use crate::operators::scalar::aggregates::AggregateFunction;
+use crate::operators::scalar::funcs::ScalarFunction;
 use crate::operators::scalar::value::ScalarValue;
 
 /// Expressions supported by the optimizer.
@@ -64,6 +65,8 @@ where
         /// ELSE <expr>.
         else_expr: Option<Box<Expr<T>>>,
     },
+    /// A scalar function expression.
+    ScalarFunction { func: ScalarFunction, args: Vec<Expr<T>> },
     /// An aggregate expression.
     Aggregate {
         /// The aggregate function.
@@ -160,6 +163,11 @@ where
                     expr.accept(visitor)?;
                 }
             }
+            Expr::ScalarFunction { args, .. } => {
+                for arg in args {
+                    arg.accept(visitor)?;
+                }
+            }
             Expr::Aggregate { args, filter, .. } => {
                 for arg in args {
                     arg.accept(visitor)?;
@@ -236,6 +244,10 @@ where
                 when_then_exprs: rewrite_pairs_vec(when_then_exprs, rewriter)?,
                 else_expr: rewrite_boxed_option(else_expr, rewriter)?,
             },
+            Expr::ScalarFunction { func, args } => Expr::ScalarFunction {
+                func,
+                args: rewrite_vec(args, rewriter)?,
+            },
             Expr::Aggregate {
                 func,
                 distinct,
@@ -303,6 +315,7 @@ where
                 result
             }
             Expr::IsNull { expr, .. } => vec![expr.as_ref().clone()],
+            Expr::ScalarFunction { args, .. } => args.clone(),
             Expr::Aggregate { args, filter, .. } => {
                 let mut children: Vec<_> = args.to_vec();
                 if let Some(filter) = filter.clone() {
@@ -418,6 +431,13 @@ where
                     expr,
                     when_then_exprs,
                     else_expr,
+                }
+            }
+            Expr::ScalarFunction { func, args } => {
+                expect_children("ScalarFunction", children.len(), args.len());
+                Expr::ScalarFunction {
+                    func: func.clone(),
+                    args: children,
                 }
             }
             Expr::Aggregate {
@@ -677,6 +697,10 @@ where
             Expr::Scalar(value) => write!(f, "{}", value),
             Expr::BinaryExpr { lhs, op, rhs } => write!(f, "{} {} {}", lhs, op, rhs),
             Expr::Cast { expr, data_type } => write!(f, "CAST({} as {})", expr, data_type),
+            Expr::ScalarFunction { func, args } => {
+                write!(f, "{}(", func)?;
+                write!(f, "{})", DisplayArgs(args))
+            }
             Expr::Aggregate {
                 func,
                 distinct,
@@ -855,43 +879,6 @@ where
 
     fn not(self) -> Self::Output {
         Expr::Not(Box::new(self))
-    }
-}
-
-/// Supported aggregate functions.
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
-pub enum AggregateFunction {
-    Avg,
-    Count,
-    Max,
-    Min,
-    Sum,
-}
-
-impl TryFrom<&str> for AggregateFunction {
-    type Error = ();
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        match value {
-            _ if value.eq_ignore_ascii_case("avg") => Ok(AggregateFunction::Avg),
-            _ if value.eq_ignore_ascii_case("count") => Ok(AggregateFunction::Count),
-            _ if value.eq_ignore_ascii_case("max") => Ok(AggregateFunction::Max),
-            _ if value.eq_ignore_ascii_case("min") => Ok(AggregateFunction::Min),
-            _ if value.eq_ignore_ascii_case("sum") => Ok(AggregateFunction::Sum),
-            _ => Err(()),
-        }
-    }
-}
-
-impl Display for AggregateFunction {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AggregateFunction::Avg => write!(f, "avg"),
-            AggregateFunction::Count => write!(f, "count"),
-            AggregateFunction::Max => write!(f, "max"),
-            AggregateFunction::Min => write!(f, "min"),
-            AggregateFunction::Sum => write!(f, "sum"),
-        }
     }
 }
 
@@ -1084,6 +1071,18 @@ mod test {
     }
 
     #[test]
+    fn function_expr_traversal() {
+        let expr = Expr::ScalarFunction {
+            func: ScalarFunction::BitLength,
+            args: vec![col("a1")],
+        };
+        expect_traversal_order(
+            &expr,
+            vec!["pre:bit_length(col:a1)", "pre:col:a1", "post:col:a1", "post:bit_length(col:a1)"],
+        )
+    }
+
+    #[test]
     fn aggr_expr_traversal_with_filter() {
         let expr = Expr::Aggregate {
             func: AggregateFunction::Avg,
@@ -1230,22 +1229,6 @@ mod test {
 
         assert_eq!(rewriter.visited, 2);
         assert_eq!(rewriter.rewritten, 1);
-    }
-
-    #[test]
-    fn aggr_func_try_from_is_case_insensitive() {
-        fn expect_parsed(s: &str, expected: AggregateFunction) {
-            let f = AggregateFunction::try_from(s)
-                .ok()
-                .unwrap_or_else(|| panic!("Failed to parse string: {}", s));
-            assert_eq!(f, expected);
-        }
-
-        expect_parsed("Avg", AggregateFunction::Avg);
-        expect_parsed("CoUNT", AggregateFunction::Count);
-        expect_parsed("MAX", AggregateFunction::Max);
-        expect_parsed("min", AggregateFunction::Min);
-        expect_parsed("Sum", AggregateFunction::Sum);
     }
 
     fn expect_traversal_order(expr: &Expr, expected: Vec<&str>) {

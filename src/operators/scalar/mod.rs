@@ -11,8 +11,11 @@ use crate::operators::scalar::expr::{ExprRewriter, Scalar};
 use crate::operators::scalar::types::ColumnTypeRegistry;
 use crate::operators::Operator;
 
+pub mod aggregates;
 pub mod expr;
 pub mod exprs;
+pub mod func;
+pub mod funcs;
 pub mod types;
 pub mod value;
 
@@ -88,6 +91,7 @@ pub fn get_subquery(expr: &ScalarExpr) -> Option<&RelNode> {
         ScalarExpr::IsNull { .. } => None,
         ScalarExpr::Alias(_, _) => None,
         ScalarExpr::Case { .. } => None,
+        ScalarExpr::ScalarFunction { .. } => None,
         ScalarExpr::Aggregate { .. } => None,
         ScalarExpr::SubQuery(query) => Some(query),
         ScalarExpr::Exists { query, .. } => Some(query),
