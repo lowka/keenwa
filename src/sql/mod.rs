@@ -10,7 +10,9 @@ use crate::operators::builder::{MemoizeOperators, OperatorBuilder, OrderingOptio
 use crate::operators::properties::LogicalPropertiesBuilder;
 use crate::operators::relational::join::JoinType;
 use crate::operators::relational::RelNode;
-use crate::operators::scalar::expr::{AggregateFunction, BinaryOp, ExprVisitor};
+use crate::operators::scalar::aggregates::AggregateFunction;
+use crate::operators::scalar::expr::{BinaryOp, ExprVisitor};
+use crate::operators::scalar::funcs::ScalarFunction;
 use crate::operators::scalar::value::ScalarValue;
 use crate::operators::scalar::{scalar, ScalarExpr};
 use crate::operators::{ExprMemo, Operator, OperatorMemoBuilder, OperatorMetadata};
@@ -657,14 +659,8 @@ fn build_value_expr(value: Value) -> Result<ScalarExpr, OptimizerError> {
 fn build_function_expr(func: Function, builder: OperatorBuilder) -> Result<ScalarExpr, OptimizerError> {
     not_implemented!(func.over.is_some(), "FUNCTION: window specification");
 
-    let name = func.name.to_string();
-    let aggr_func = AggregateFunction::try_from(name.as_str());
+    let name = func.name.to_string().to_lowercase();
     let distinct = func.distinct;
-
-    if distinct && aggr_func.is_err() {
-        let message = format!("FUNCTION: non-aggregate function {} with DISTINCT option set", name);
-        return Err(OptimizerError::Argument(message));
-    }
 
     let mut args = vec![];
     for arg in func.args {
@@ -684,6 +680,13 @@ fn build_function_expr(func: Function, builder: OperatorBuilder) -> Result<Scala
             }
         }
     }
+
+    let aggr_func = AggregateFunction::try_from(name.as_str());
+    if distinct && aggr_func.is_err() {
+        let message = format!("FUNCTION: non-aggregate function {} with DISTINCT option set", name);
+        return Err(OptimizerError::Argument(message));
+    }
+
     match aggr_func {
         Ok(func) => Ok(ScalarExpr::Aggregate {
             func,
@@ -694,10 +697,13 @@ fn build_function_expr(func: Function, builder: OperatorBuilder) -> Result<Scala
         // DISTINCT ON (expr) workaround:
         // Convert function ON (expr1, expr2, ..) into its first argument.
         Err(_) if name.eq_ignore_ascii_case("ON") => Ok(args.swap_remove(0)),
-        Err(_) => {
-            let msg = format!("FUNCTION: non aggregate function: {}", name);
-            not_implemented!(msg);
-        }
+        Err(_) => match ScalarFunction::try_from(name.as_str()) {
+            Ok(func) => Ok(ScalarExpr::ScalarFunction { func, args }),
+            Err(_) => {
+                let msg = format!("FUNCTION: non aggregate function: {}", name);
+                not_implemented!(msg)
+            }
+        },
     }
 }
 

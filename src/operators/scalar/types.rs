@@ -1,7 +1,7 @@
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
 use crate::meta::ColumnId;
-use crate::operators::scalar::expr::{AggregateFunction, BinaryOp, Expr, NestedExpr};
+use crate::operators::scalar::expr::{BinaryOp, Expr, NestedExpr};
 
 /// A helper trait that provides the type of the given column.
 pub trait ColumnTypeRegistry {
@@ -18,7 +18,7 @@ pub trait ColumnTypeRegistry {
 pub fn resolve_expr_type<T, R>(expr: &Expr<T>, column_registry: &R) -> Result<DataType, OptimizerError>
 where
     T: NestedExpr,
-    R: ColumnTypeRegistry,
+    R: ColumnTypeRegistry + ?Sized,
 {
     match expr {
         Expr::Column(column_id) => Ok(column_registry.get_column_type(column_id)),
@@ -98,23 +98,19 @@ where
 
             Ok(expr_result_type.expect("Invalid case expression"))
         }
+        Expr::ScalarFunction { func, args } => {
+            let arg_types: Result<Vec<DataType>, _> =
+                args.iter().map(|arg| resolve_expr_type(arg, column_registry)).collect();
+
+            let arg_types = arg_types?;
+            func.get_return_type(&arg_types)
+        }
         Expr::Aggregate { func, args, .. } => {
-            for (i, arg) in args.iter().enumerate() {
-                let arg_tpe = resolve_expr_type(arg, column_registry)?;
-                let expected_tpe = match func {
-                    AggregateFunction::Avg
-                    | AggregateFunction::Max
-                    | AggregateFunction::Min
-                    | AggregateFunction::Sum => DataType::Int32,
-                    // count accepts any type.
-                    AggregateFunction::Count => arg_tpe.clone(),
-                };
-                if arg_tpe != expected_tpe {
-                    let msg = format!("Invalid argument type for aggregate function {}. Argument#{} {}", func, i, arg);
-                    return Err(OptimizerError::Internal(msg));
-                }
-            }
-            Ok(DataType::Int32)
+            let arg_types: Result<Vec<DataType>, _> =
+                args.iter().map(|arg| resolve_expr_type(arg, column_registry)).collect();
+
+            let arg_types = arg_types?;
+            func.get_return_type(&arg_types)
         }
         Expr::Exists { .. } | Expr::InSubQuery { .. } => {
             // query must be a valid subquery.
@@ -195,7 +191,8 @@ mod test {
     use crate::datatypes::DataType;
     use crate::meta::testing::TestMetadata;
     use crate::meta::ColumnId;
-    use crate::operators::scalar::expr::{AggregateFunction, BinaryOp, NestedExpr};
+    use crate::operators::scalar::aggregates::AggregateFunction;
+    use crate::operators::scalar::expr::{BinaryOp, NestedExpr};
     use crate::operators::scalar::types::{resolve_expr_type, ColumnTypeRegistry};
     use crate::operators::scalar::value::ScalarValue;
     use std::convert::TryFrom;
@@ -418,12 +415,11 @@ mod test {
             }
         }
 
-        fn expect_aggr_args(expr: Expr) {
+        fn expect_aggr_invalid_args(expr: Expr) {
             expect_not_resolved(&aggr("min", vec![expr.clone()]));
             expect_not_resolved(&aggr("max", vec![expr.clone()]));
             expect_not_resolved(&aggr("avg", vec![expr.clone()]));
             expect_not_resolved(&aggr("sum", vec![expr.clone()]));
-            expect_type(&aggr("count", vec![expr]), &DataType::Int32);
         }
 
         expect_type(&aggr("min", vec![int_value()]), &DataType::Int32);
@@ -432,8 +428,8 @@ mod test {
         expect_type(&aggr("sum", vec![int_value()]), &DataType::Int32);
         expect_type(&aggr("count", vec![int_value()]), &DataType::Int32);
 
-        expect_aggr_args(str_value());
-        expect_aggr_args(bool_value());
+        expect_aggr_invalid_args(str_value());
+        expect_aggr_invalid_args(bool_value());
     }
 
     // binary expressions
@@ -611,7 +607,9 @@ mod test {
 
     fn expect_not_resolved(expr: &Expr) {
         let registry = MockColumnTypeRegistry::new();
-        resolve_expr_type(expr, &registry).unwrap_err();
+        let expr_str = format!("{}", expr);
+        let result = resolve_expr_type(expr, &registry);
+        assert!(result.is_err(), "Expected an error. Expr: {}. Result: {:?}", expr_str, result)
     }
 
     fn expect_expr(expr: &Expr, expected_str: &str) {

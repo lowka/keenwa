@@ -4,7 +4,8 @@ use crate::operators::builder::projection::{ProjectionList, ProjectionListBuilde
 use crate::operators::builder::{OperatorBuilder, RewriteExprs, ValidateFilterExpr, ValidateProjectionExpr};
 use crate::operators::relational::logical::{LogicalAggregate, LogicalExpr};
 use crate::operators::relational::RelNode;
-use crate::operators::scalar::expr::{AggregateFunction, ExprVisitor};
+use crate::operators::scalar::aggregates::AggregateFunction;
+use crate::operators::scalar::expr::ExprVisitor;
 use crate::operators::scalar::exprs::collect_columns;
 use crate::operators::scalar::value::ScalarValue;
 use crate::operators::scalar::{get_subquery, ScalarExpr, ScalarNode};
