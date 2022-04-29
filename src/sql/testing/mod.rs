@@ -96,7 +96,7 @@ where
 
         if let Some((expected, actual)) = error_report {
             // IDEs can display a nice diff.
-            assert_eq!(expected, actual);
+            assert_eq!(actual, expected);
         }
     }
 
