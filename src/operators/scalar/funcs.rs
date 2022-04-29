@@ -9,6 +9,7 @@ use std::fmt::{Display, Formatter};
 pub enum ScalarFunction {
     BitLength,
     CharacterLength,
+    Concat,
     Lower,
     Position,
     ToHex,
@@ -30,10 +31,14 @@ impl ScalarFunction {
         fn args(args: Vec<DataType>) -> FunctionSignatureBuilder {
             FunctionSignatureBuilder::exact(args)
         }
+        fn varargs(args: Vec<DataType>) -> FunctionSignatureBuilder {
+            FunctionSignatureBuilder::varargs(args)
+        }
 
         match self {
             ScalarFunction::BitLength => arg(DataType::String).return_type(DataType::Int32),
             ScalarFunction::CharacterLength => arg(DataType::String).return_type(DataType::Int32),
+            ScalarFunction::Concat => varargs(vec![]).return_type(DataType::String),
             ScalarFunction::Lower => arg(DataType::String).return_type(DataType::String),
             ScalarFunction::Position => args(vec![DataType::String, DataType::String]).return_type(DataType::Int32),
             ScalarFunction::ToHex => arg(DataType::Int32).return_type(DataType::String),
@@ -50,6 +55,7 @@ impl TryFrom<&str> for ScalarFunction {
         match value {
             "bit_length" => Ok(ScalarFunction::BitLength),
             "character_length" => Ok(ScalarFunction::CharacterLength),
+            "concat" => Ok(ScalarFunction::Concat),
             "lower" => Ok(ScalarFunction::Lower),
             "position" => Ok(ScalarFunction::Position),
             "to_hex" => Ok(ScalarFunction::ToHex),
@@ -65,6 +71,7 @@ impl Display for ScalarFunction {
         match self {
             ScalarFunction::BitLength => write!(f, "bit_length"),
             ScalarFunction::CharacterLength => write!(f, "character_length"),
+            ScalarFunction::Concat => write!(f, "concat"),
             ScalarFunction::Lower => write!(f, "lower"),
             ScalarFunction::Position => write!(f, "position"),
             ScalarFunction::ToHex => write!(f, "to_hex"),
@@ -124,6 +131,7 @@ pub mod testing {
                             ArgumentList::Exact(args) => format!("[{}]", args.iter().join(", ").to_lowercase()),
                             ArgumentList::OneOf(_) => panic!("Nested argument lists of type OneOf are not supported"),
                             ArgumentList::Any(num) => format!("[any <{}>]", num),
+                            ArgumentList::Varargs(args) => format!("[{}, ...]", args.iter().join(", ").to_lowercase()),
                         })
                         .join(", ")
                         .as_str(),
@@ -131,6 +139,9 @@ pub mod testing {
             }
             ArgumentList::Any(num) => {
                 buf.push_str(format!("any <{}>", num).as_str());
+            }
+            ArgumentList::Varargs(args) => {
+                buf.push_str(format!("[{}, ...]", args.iter().join(", ").to_lowercase()).as_str());
             }
         }
         buf.push_str(" -> ");

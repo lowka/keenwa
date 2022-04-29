@@ -171,6 +171,12 @@ where
                 Err(OptimizerError::Internal(message))
             }
         }
+        // String operators
+        BinaryOp::Concat | BinaryOp::Like | BinaryOp::NotLike => {
+            expect_type_or_null(&lhs, &DataType::String, expr)?;
+            expect_type_or_null(&rhs, &DataType::String, expr)?;
+            Ok(DataType::String)
+        }
     }
 }
 
@@ -531,6 +537,21 @@ mod test {
         expect_expr(&expr, "col:a % col:b");
     }
 
+    #[test]
+    fn string_concat() {
+        expect_string_expr_type(BinaryOp::Concat);
+    }
+
+    #[test]
+    fn string_like() {
+        expect_string_expr_type(BinaryOp::Like);
+    }
+
+    #[test]
+    fn string_not_like() {
+        expect_string_expr_type(BinaryOp::NotLike);
+    }
+
     // =, !=
     fn expect_equality_expr_type(op: BinaryOp) {
         expect_type(&bool_value().binary_expr(op.clone(), bool_value()), &DataType::Bool);
@@ -591,6 +612,14 @@ mod test {
         expect_not_resolved(&str_value().binary_expr(op.clone(), str_value()));
         expect_not_resolved(&str_value().binary_expr(op.clone(), int_value()));
         expect_not_resolved(&int_value().binary_expr(op, str_value()));
+    }
+
+    fn expect_string_expr_type(op: BinaryOp) {
+        expect_type(&str_value().binary_expr(op.clone(), str_value()), &DataType::String);
+
+        expect_not_resolved(&str_value().binary_expr(op.clone(), int_value()));
+        expect_not_resolved(&int_value().binary_expr(op.clone(), str_value()));
+        expect_not_resolved(&bool_value().binary_expr(op.clone(), int_value()));
     }
 
     fn expect_type(expr: &Expr, expected_type: &DataType) {

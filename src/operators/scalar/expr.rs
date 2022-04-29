@@ -678,6 +678,12 @@ pub enum BinaryOp {
     Divide,
     /// Modulo/Remainder.
     Modulo,
+    /// String concatenation.
+    Concat,
+    /// Match operator.
+    Like,
+    /// Not match operator.
+    NotLike,
 }
 
 impl BinaryOp {
@@ -812,6 +818,9 @@ impl Display for BinaryOp {
             BinaryOp::Multiply => write!(f, "*"),
             BinaryOp::Divide => write!(f, "/"),
             BinaryOp::Modulo => write!(f, "%"),
+            BinaryOp::Concat => write!(f, "||"),
+            BinaryOp::Like => write!(f, "LIKE"),
+            BinaryOp::NotLike => write!(f, "NOT LIKE"),
         }
     }
 }
@@ -975,6 +984,10 @@ mod test {
         Expr::ColumnName(String::from(name))
     }
 
+    fn str_val(val: &str) -> Expr {
+        Expr::Scalar(ScalarValue::String(String::from(val)))
+    }
+
     #[test]
     fn expr_methods() {
         let expr = Expr::Scalar(ScalarValue::Int32(1));
@@ -1001,6 +1014,27 @@ mod test {
         expect_expr(expr.clone().rem(rhs), "1 % 10");
 
         expect_expr(expr.negate(), "-1")
+    }
+
+    #[test]
+    fn string_concat() {
+        let expr = str_val("hello");
+        let rhs = str_val("world");
+        expect_expr(expr.binary_expr(BinaryOp::Concat, rhs), "hello || world");
+    }
+
+    #[test]
+    fn string_like() {
+        let expr = str_val("hello");
+        let rhs = str_val("h*");
+        expect_expr(expr.binary_expr(BinaryOp::Like, rhs), "hello LIKE h*");
+    }
+
+    #[test]
+    fn string_not_like() {
+        let expr = str_val("hello");
+        let rhs = str_val("w*");
+        expect_expr(expr.binary_expr(BinaryOp::NotLike, rhs), "hello NOT LIKE w*");
     }
 
     #[test]

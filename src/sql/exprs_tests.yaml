@@ -116,3 +116,27 @@ query:
 error: |
   Internal error: No function lower(Int32)
 ---
+query:
+  SELECT concat('a', 1, true)
+ok: |
+  LogicalProjection cols=[1] exprs: [concat([a, 1, true])]
+    input: LogicalEmpty return_one_row=true
+---
+query:
+  SELECT 'a' || 'b'
+ok: |
+  LogicalProjection cols=[1] exprs: [a || b]
+    input: LogicalEmpty return_one_row=true
+---
+query:
+  SELECT 'a' LIKE 'b'
+ok: |
+  LogicalProjection cols=[1] exprs: [a LIKE b]
+    input: LogicalEmpty return_one_row=true
+---
+query:
+  SELECT 'a' NOT LIKE 'b'
+ok: |
+  LogicalProjection cols=[1] exprs: [a NOT LIKE b]
+    input: LogicalEmpty return_one_row=true
+---
