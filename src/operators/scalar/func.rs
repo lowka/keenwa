@@ -25,6 +25,8 @@ pub enum ArgumentList {
     OneOf(Vec<ArgumentList>),
     /// A function with `n` arguments where each argument can be of an arbitrary type.
     Any(NonZeroUsize),
+    /// A function can be called with arguments of the given types and any number of additional arguments of an arbitrary type.
+    Varargs(Vec<DataType>),
 }
 
 /// Volatility describes whether evaluation of a function is dependent only on functions arguments
@@ -95,6 +97,14 @@ impl FunctionSignatureBuilder {
         }
     }
 
+    /// Creates a builder for a function with variable number of arguments. See [ArgumentList::Varargs].
+    pub fn varargs(args: Vec<DataType>) -> FunctionSignatureBuilder {
+        FunctionSignatureBuilder {
+            args: ArgumentList::Varargs(args),
+            volatility: Volatility::Immutable,
+        }
+    }
+
     /// Set volatility of this function to [stable](Volatility::Stable).
     pub fn stable(mut self) -> FunctionSignatureBuilder {
         self.volatility = Volatility::Stable;
@@ -146,6 +156,7 @@ pub fn verify_function_arguments(
         ArgumentList::Exact(exact) => exact == arg_types,
         ArgumentList::OneOf(args) => args.iter().any(|a| matches!(a, ArgumentList::Exact(exact) if exact == arg_types)),
         ArgumentList::Any(num) => num.get() == arg_types.len(),
+        ArgumentList::Varargs(args) => args.len() <= arg_types.len() && args == &arg_types[0..args.len()],
     };
 
     Ok(matches)
@@ -175,9 +186,11 @@ where
 #[cfg(test)]
 mod test {
     use crate::datatypes::DataType;
+    use crate::error::OptimizerError;
     use crate::operators::scalar::func::{
         get_return_type, verify_function_arguments, FunctionSignature, FunctionSignatureBuilder,
     };
+    use crate::operators::scalar::funcs::testing::signature_to_test_string;
     use itertools::Itertools;
     use std::num::NonZeroUsize;
     use std::sync::Arc;
@@ -235,6 +248,29 @@ mod test {
     }
 
     #[test]
+    fn test_verify_vararg_signature_no_args() {
+        let signature = FunctionSignatureBuilder::varargs(vec![]).return_type(DataType::Int32);
+
+        expect_signature_accepts_args(&signature, &[]);
+        expect_signature_accepts_args(&signature, &[DataType::String]);
+        expect_signature_accepts_args(&signature, &[DataType::String, DataType::Int32]);
+    }
+
+    #[test]
+    fn test_verify_vararg_signature_some_args() {
+        let signature =
+            FunctionSignatureBuilder::varargs(vec![DataType::String, DataType::Bool]).return_type(DataType::Int32);
+
+        expect_signature_does_not_accept_args(&signature, &[DataType::Int32]);
+        expect_signature_does_not_accept_args(&signature, &[DataType::String]);
+        expect_signature_does_not_accept_args(&signature, &[DataType::Int32, DataType::Bool]);
+        expect_signature_does_not_accept_args(&signature, &[DataType::String, DataType::String]);
+
+        expect_signature_accepts_args(&signature, &[DataType::String, DataType::Bool]);
+        expect_signature_accepts_args(&signature, &[DataType::String, DataType::Bool, DataType::Int32]);
+    }
+
+    #[test]
     fn test_return_type_fails_when_arguments_do_not_match() {
         let signature = FunctionSignatureBuilder::exact(vec![]).return_type(DataType::Int32);
         let result = get_return_type("test_func", &signature, &[DataType::String])
@@ -263,7 +299,7 @@ mod test {
     #[test]
     fn test_return_type_for_a_function_with_return_type_expr() {
         for tpe in vec![DataType::Bool, DataType::Int32, DataType::String] {
-            let ret_expr = |args: &[DataType]| Ok(DataType::Null);
+            let ret_expr = |_args: &[DataType]| Ok(DataType::Null);
             let signature = FunctionSignatureBuilder::exact(vec![tpe.clone()]).return_expr(Arc::new(ret_expr));
             let result = get_return_type("test_func", &signature, &[tpe.clone()]).unwrap();
             assert_eq!(result, DataType::Null, "return type");
@@ -273,24 +309,30 @@ mod test {
     fn expect_signature_accepts_args(signature: &FunctionSignature, args: &[DataType]) {
         let r = verify_function_arguments(&signature, args);
 
-        assert_eq!(
-            Some(&true),
-            r.as_ref().ok(),
-            "Signature must accept the arguments: [{}]. Error: {:?}",
-            args.iter().join(", "),
-            r.as_ref().err()
-        )
+        assert_signature_matches(signature, args, true, r);
     }
 
     fn expect_signature_does_not_accept_args(signature: &FunctionSignature, args: &[DataType]) {
         let r = verify_function_arguments(&signature, args);
 
+        assert_signature_matches(signature, args, false, r);
+    }
+
+    fn assert_signature_matches(
+        signature: &FunctionSignature,
+        args: &[DataType],
+        matches: bool,
+        result: Result<bool, OptimizerError>,
+    ) {
+        let message = if matches { "must accept" } else { "must not accept" };
         assert_eq!(
-            Some(&false),
-            r.as_ref().ok(),
-            "Signature must not accept the arguments: [{}]. Error: {:?}",
+            Some(&matches),
+            result.as_ref().ok(),
+            "<{}> {} the arguments: [{}]. Result: {:?}",
+            signature_to_test_string(signature),
+            message,
             args.iter().join(", "),
-            r.as_ref().err()
+            result
         )
     }
 }
