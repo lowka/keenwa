@@ -176,15 +176,6 @@ where
         test_cases: Vec<SqlTestCase>,
         run_results: Vec<TestCaseResult>,
     ) -> Option<(String, String)> {
-        let mut errors = vec![];
-
-        struct TestErrorInfo<'a> {
-            test_case_id: usize,
-            query: &'a str,
-            expected: &'a str,
-            actual: Option<&'a str>,
-        }
-
         // Contains queries and their expected results separated by ---.
         let mut expected_buf = String::new();
         // Contains queries and their actual results separated by ---.
@@ -235,8 +226,9 @@ where
                         Some(mismatch)
                     }
                 };
+
                 if let Some(Mismatch { expected, actual }) = mismatch {
-                    if !errors.is_empty() {
+                    if !expected_buf.is_empty() {
                         expected_buf.push('\n');
                         expected_buf.push_str("---");
                         expected_buf.push('\n');
@@ -253,18 +245,11 @@ where
 
                     actual_buf.push_str(query_string.as_str());
                     actual_buf.push_str(actual.trim_end());
-
-                    errors.push(TestErrorInfo {
-                        test_case_id,
-                        query,
-                        expected,
-                        actual: Some(actual),
-                    });
                 }
             }
         }
 
-        if errors.is_empty() {
+        if expected_buf.is_empty() {
             return None;
         }
 
