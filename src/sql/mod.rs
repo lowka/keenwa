@@ -118,6 +118,8 @@ fn build_statement(builder: OperatorBuilder, stmt: Statement) -> Result<Operator
         Statement::Prepare { .. } => not_supported!("PREPARE"),
         Statement::ExplainTable { .. } => not_supported!("EXPLAIN TABLE"),
         Statement::Explain { .. } => not_implemented!("EXPLAIN"),
+        Statement::Savepoint { .. } => not_implemented!("SAVEPOINT"),
+        Statement::Merge { .. } => not_implemented!("MERGE"),
     }
 }
 
@@ -566,6 +568,9 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
         Expr::Cube(_) => not_supported!("CUBE expression"),
         Expr::Rollup(_) => not_supported!("ROLLUP expression"),
         Expr::Tuple(_) => not_supported!("Tuple expression"),
+        Expr::InUnnest { .. } => not_supported!("InUnnest expression"),
+        Expr::ArrayIndex { .. } => not_supported!("ArrayIndex expression"),
+        Expr::Array(_) => not_supported!("Array expression"),
     };
     Ok(expr)
 }
@@ -670,6 +675,7 @@ fn build_value_expr(value: Value) -> Result<ScalarExpr, OptimizerError> {
             }
         }
         Value::Null => ScalarValue::Null,
+        Value::Placeholder(_) => not_implemented!("Placeholder"),
     };
     Ok(ScalarExpr::Scalar(value))
 }
@@ -892,6 +898,10 @@ fn convert_data_type(input: SqlDataType) -> Result<DataType, OptimizerError> {
         SqlDataType::Array(_) => not_implemented!("Data type: Array"),
         SqlDataType::Enum(_) => not_implemented!("Data type: Enum"),
         SqlDataType::Set(_) => not_implemented!("Data type: Set"),
+        SqlDataType::UnsignedTinyInt(_) => not_implemented!("Data type: Unsigned TinyInt"),
+        SqlDataType::UnsignedSmallInt(_) => not_implemented!("Data type: Unsigned SmallInt"),
+        SqlDataType::UnsignedInt(_) => not_implemented!("Data type: Unsigned Int"),
+        SqlDataType::UnsignedBigInt(_) => not_implemented!("Data type: Unsigned BigiInt"),
     }
 }
 
