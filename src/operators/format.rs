@@ -92,7 +92,13 @@ impl OperatorTreeFormatter {
             if let Properties::Relational(props) = props {
                 let logical = props.logical();
                 let output_columns = logical.output_columns().iter().map(|id| format!("{}", id)).join(", ");
-                buf.push_str(format!("{}output cols: [{}]\n", padding, output_columns).as_str());
+                buf.push_str(format!("{}output cols: [{}]", padding, output_columns).as_str());
+            }
+        }
+
+        fn add_new_line(buf: &mut String, condition: bool) {
+            if condition {
+                buf.push('\n');
             }
         }
 
@@ -101,15 +107,18 @@ impl OperatorTreeFormatter {
         // properties first
         if let Some(true) = &self.write_properties {
             write_properties(&mut buf, operator.props(), "");
+            add_new_line(&mut buf, true);
         }
 
         buf.push_str(format_operator_tree(operator).as_str());
-        buf.push('\n');
 
         // properties last
         if let Some(false) = self.write_properties {
+            add_new_line(&mut buf, true);
             write_properties(&mut buf, operator.props(), "  ");
         }
+
+        add_new_line(&mut buf, !self.formatters.is_empty());
 
         for formatter in self.formatters {
             formatter.write_operator(operator, &mut buf);
@@ -247,7 +256,9 @@ impl MemoExprFormatter for FormatExprs<'_> {
         T: MemoExpr,
     {
         self.depth += 1;
-        self.buf.push('\n');
+        if self.depth >= 1 {
+            self.buf.push('\n');
+        }
         self.pad_depth(' ');
         self.buf.push_str(name);
         self.buf.push_str(": ");
@@ -310,6 +321,11 @@ impl SubQueriesFormatter {
 
 impl OperatorFormatter for SubQueriesFormatter {
     fn write_operator(&self, operator: &Operator, buf: &mut String) {
+        fn add_subquery(buf: &mut String, subquery: &RelNode, description: &str) {
+            let operator_str = format_operator_tree(subquery.mexpr());
+            buf.push_str(format!("Sub query from {}:\n{}\n", description, operator_str).as_str());
+        }
+
         let mut new_line = true;
         // Sub queries from columns:
         for column in self.metadata.get_columns() {
@@ -318,9 +334,7 @@ impl OperatorFormatter for SubQueriesFormatter {
                     new_line = false;
                     buf.push('\n');
                 }
-                buf.push_str(format!("Sub query from column {}:\n", column.id()).as_str());
-                buf.push_str(format_operator_tree(query.mexpr()).as_str());
-                buf.push('\n');
+                add_subquery(buf, query, format!("column {}", column.id()).as_str());
             }
         }
 
@@ -336,9 +350,7 @@ impl OperatorFormatter for SubQueriesFormatter {
             }
             OperatorExpr::Scalar(expr) => {
                 if let Some(query) = get_subquery(expr) {
-                    buf.push_str("Sub query from scalar operator:\n".to_string().as_str());
-                    buf.push_str(format_operator_tree(query.mexpr()).as_str());
-                    buf.push('\n');
+                    add_subquery(buf, query, "scalar operator");
                 }
             }
             _ => {}
@@ -356,12 +368,6 @@ impl OperatorFormatter for SubQueriesFormatter {
                     *self.new_line = false;
                 }
             }
-
-            fn write_subquery(&mut self, description: &str, subquery: &RelNode) {
-                self.buf.push_str(format!("Sub query from {}:\n", description).as_str());
-                self.buf.push_str(format_operator_tree(subquery.mexpr()).as_str());
-                self.buf.push('\n');
-            }
         }
 
         impl<'a> LogicalExprVisitor for CollectSubQueries<'a> {
@@ -370,7 +376,7 @@ impl OperatorFormatter for SubQueriesFormatter {
                     LogicalExpr::Select(LogicalSelect { filter, .. }) => {
                         if let Some(filter) = filter {
                             self.add_new_line();
-                            self.write_subquery(format!("filter {}", filter.expr()).as_str(), subquery);
+                            add_subquery(self.buf, subquery, format!("filter {}", filter.expr()).as_str());
                             Ok(true)
                         } else {
                             Ok(false)
@@ -381,7 +387,7 @@ impl OperatorFormatter for SubQueriesFormatter {
                         // Because aggregate exprs has already been written from the metadata.
                         self.add_new_line();
                         let aggr_str: String = aggr_exprs.iter().map(|s| s.expr()).join(", ");
-                        self.write_subquery(format!("aggregate {}", aggr_str).as_str(), subquery);
+                        add_subquery(self.buf, subquery, format!("aggregate {}", aggr_str).as_str());
 
                         Ok(true)
                     }
@@ -390,7 +396,7 @@ impl OperatorFormatter for SubQueriesFormatter {
                         ..
                     }) => {
                         self.add_new_line();
-                        self.write_subquery(format!("join condition: {}", expr.expr().expr()).as_str(), subquery);
+                        add_subquery(self.buf, subquery, format!("join condition: {}", expr.expr().expr()).as_str());
                         Ok(true)
                     }
                     // subqueries from projection list are taken from the metadata.
@@ -446,12 +452,17 @@ where
 mod test {
     use crate::memo::ScalarNode;
     use crate::meta::testing::TestMetadata;
-    use crate::operators::format::format_operator_tree;
-    use crate::operators::relational::logical::{LogicalAggregate, LogicalExpr, LogicalGet, LogicalProjection};
+    use crate::operators::format::{format_operator_tree, OperatorTreeFormatter};
+    use crate::operators::relational::logical::{
+        LogicalAggregate, LogicalEmpty, LogicalExpr, LogicalGet, LogicalProjection,
+    };
     use crate::operators::relational::RelNode;
     use crate::operators::scalar::value::ScalarValue;
     use crate::operators::scalar::ScalarExpr;
-    use crate::operators::{Operator, OperatorExpr};
+    use crate::operators::{Operator, OperatorExpr, Properties, RelationalProperties};
+    use crate::properties::logical::LogicalProperties;
+    use crate::properties::physical::{PhysicalProperties, RequiredProperties};
+    use crate::properties::OrderingChoice;
 
     #[test]
     fn test_single_line_fmt() {
@@ -518,10 +529,53 @@ LogicalAggregate cols=[3, 4]
         )
     }
 
+    #[test]
+    fn test_format_expr_with_properties() {
+        let mut metadata = TestMetadata::with_tables(vec!["A"]);
+
+        let col1 = metadata.column("A").build();
+        let col2 = metadata.synthetic_column().build();
+
+        let empty = LogicalExpr::Empty(LogicalEmpty { return_one_row: true });
+
+        let project_expr = LogicalExpr::Projection(LogicalProjection {
+            input: RelNode::from(empty),
+            exprs: vec![ScalarNode::from(ScalarExpr::Column(col1)), ScalarNode::from(ScalarExpr::Column(col2))],
+            columns: vec![col1, col2],
+        });
+
+        let project_props = Properties::Relational(RelationalProperties {
+            logical: LogicalProperties {
+                output_columns: vec![col1, col2],
+                outer_columns: vec![col1],
+                statistics: None,
+            },
+            physical: PhysicalProperties {
+                required: Some(RequiredProperties::new_with_ordering(OrderingChoice::new(vec![col1]))),
+                presentation: None,
+            },
+        });
+
+        let fmt = OperatorTreeFormatter::new().properties_last();
+        let str = fmt.format(&Operator::new(OperatorExpr::from(project_expr), project_props));
+
+        expect_formatted_tree(
+            r#"
+LogicalProjection cols=[1, 2] outer_cols=[1] ordering=[1] exprs: [col:1, col:2]
+  input: LogicalEmpty return_one_row=true
+  output cols: [1, 2]
+"#,
+            str.as_str(),
+        );
+    }
+
     fn expect_formatted(expr: &LogicalExpr, expected: &str) {
         let expr = Operator::from(OperatorExpr::from(expr.clone()));
         let str = format_operator_tree(&expr);
-        let str = format!("\n{}\n", str);
-        assert_eq!(str, expected, "expected format");
+        expect_formatted_tree(expected, str.as_str())
+    }
+
+    fn expect_formatted_tree(expected: &str, actual: &str) {
+        assert_eq!(actual, expected.trim(), "expected format");
     }
 }
