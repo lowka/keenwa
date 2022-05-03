@@ -768,9 +768,9 @@ where
             }
             Expr::IsNull { not, expr } => {
                 if *not {
-                    write!(f, "IS NOT NULL {}", &*expr)
+                    write!(f, "{} IS NOT NULL", &*expr)
                 } else {
-                    write!(f, "IS NULL {}", &*expr)
+                    write!(f, "{} IS NULL", &*expr)
                 }
             }
             Expr::SubQuery(query) => {
@@ -1067,7 +1067,7 @@ mod test {
             not: false,
             expr: Box::new(Expr::Scalar(ScalarValue::Bool(true))),
         };
-        expect_traversal_order(&expr, vec!["pre:IS NULL true", "pre:true", "post:true", "post:IS NULL true"])
+        expect_traversal_order(&expr, vec!["pre:true IS NULL", "pre:true", "post:true", "post:true IS NULL"])
     }
 
     #[test]
@@ -1090,7 +1090,7 @@ mod test {
             not: true,
             expr: Box::new(Expr::Scalar(ScalarValue::Bool(true))),
         };
-        expect_traversal_order(&expr, vec!["pre:IS NOT NULL true", "pre:true", "post:true", "post:IS NOT NULL true"])
+        expect_traversal_order(&expr, vec!["pre:true IS NOT NULL", "pre:true", "post:true", "post:true IS NOT NULL"])
     }
 
     #[test]
