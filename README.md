@@ -121,7 +121,7 @@ Cost-based query optimizer (WIP).
 - [ ] Byte arrays.
 - [x] Date (Days), Time (Hours, Minutes, Seconds, Millis)
 - [x] Timestamp with timezone, Timestamp without time zone.
-- [x] Time intervals: Year, Year to Month, Day, Day to Hour, Day to Minute, Day to Second.
+- [x] Time intervals: Year, Year to Month, Month, Day, Day to Hour, Day to Minute, Day to Second.
 - [ ] Arrays.
 - [ ] Tuples.
 
