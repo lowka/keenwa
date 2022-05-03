@@ -78,3 +78,16 @@ query: |
   'a' NOT LIKE 'b'
 ok: a NOT LIKE b
 ---
+query: 5 BETWEEN 0 AND 10
+ok: 5 BETWEEN 0 AND 10
+---
+query: 11 NOT BETWEEN 0 AND 10
+ok: 11 NOT BETWEEN 0 AND 10
+---
+# As of 0.16.0 version of sqlparser-rs ASYMMETRIC/SYMMETRIC option is not supported.
+#query: 5 BETWEEN SYMMETRIC 0 AND 10
+#ok: 5 BETWEEN 0 AND 10
+#---
+#query: 5 BETWEEN ASYMMETRIC 0 AND 10
+#ok: 5 BETWEEN ASYMMETRIC 0 AND 10
+#---

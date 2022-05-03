@@ -55,6 +55,14 @@ where
             let _ = resolve_expr_type(expr, column_registry)?;
             Ok(DataType::Bool)
         }
+        Expr::Between { expr, low, high, .. } => {
+            let tpe = resolve_expr_type(expr, column_registry)?;
+            let low_type = resolve_expr_type(low, column_registry)?;
+            let high_type = resolve_expr_type(high, column_registry)?;
+            expect_type_or_null(&low_type, &tpe, low)?;
+            expect_type_or_null(&high_type, &tpe, high)?;
+            Ok(tpe)
+        }
         Expr::Case {
             expr: base_expr,
             when_then_exprs,

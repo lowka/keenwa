@@ -53,6 +53,17 @@ where
     },
     /// IS NULL/ IS NOT NULL expression.
     IsNull { not: bool, expr: Box<Expr<T>> },
+    /// An expression that checks whether the given value is within the specified range.
+    Between {
+        /// Negated or not.
+        not: bool,
+        /// The expression.
+        expr: Box<Expr<T>>,
+        /// The lower bound.
+        low: Box<Expr<T>>,
+        /// The upper bound.
+        high: Box<Expr<T>>,
+    },
     /// An expression with the given name (eg. 1 + 1 as two).
     // TODO: Move to projection builder.
     Alias(Box<Expr<T>>, String),
@@ -147,6 +158,11 @@ where
             Expr::IsNull { expr, .. } => {
                 expr.accept(visitor)?;
             }
+            Expr::Between { expr, low, high, .. } => {
+                expr.accept(visitor)?;
+                low.accept(visitor)?;
+                high.accept(visitor)?;
+            }
             Expr::Case {
                 expr,
                 when_then_exprs,
@@ -235,6 +251,12 @@ where
                 let expr = rewrite_boxed(*expr, rewriter)?;
                 Expr::IsNull { not, expr }
             }
+            Expr::Between { not, expr, low, high } => Expr::Between {
+                not,
+                expr: rewrite_boxed(*expr, rewriter)?,
+                low: rewrite_boxed(*low, rewriter)?,
+                high: rewrite_boxed(*high, rewriter)?,
+            },
             Expr::Case {
                 expr,
                 when_then_exprs,
@@ -315,6 +337,9 @@ where
                 result
             }
             Expr::IsNull { expr, .. } => vec![expr.as_ref().clone()],
+            Expr::Between { expr, low, high, .. } => {
+                vec![expr.as_ref().clone(), low.as_ref().clone(), high.as_ref().clone()]
+            }
             Expr::ScalarFunction { args, .. } => args.clone(),
             Expr::Aggregate { args, filter, .. } => {
                 let mut children: Vec<_> = args.to_vec();
@@ -394,6 +419,15 @@ where
                 Expr::IsNull {
                     not: *not,
                     expr: Box::new(children.swap_remove(0)),
+                }
+            }
+            Expr::Between { not, .. } => {
+                expect_children("Between", children.len(), 3);
+                Expr::Between {
+                    not: *not,
+                    expr: Box::new(children.swap_remove(0)),
+                    low: Box::new(children.swap_remove(0)),
+                    high: Box::new(children.swap_remove(0)),
                 }
             }
             Expr::Case {
@@ -771,6 +805,13 @@ where
                     write!(f, "{} IS NOT NULL", &*expr)
                 } else {
                     write!(f, "{} IS NULL", &*expr)
+                }
+            }
+            Expr::Between { not, expr, low, high } => {
+                if *not {
+                    write!(f, "{} NOT BETWEEN {} AND {}", &*expr, &*low, &*high)
+                } else {
+                    write!(f, "{} BETWEEN {} AND {}", &*expr, &*low, &*high)
                 }
             }
             Expr::SubQuery(query) => {
@@ -1179,6 +1220,52 @@ mod test {
     fn sub_query_traversal() {
         let expr = Expr::SubQuery(DummyRelExpr);
         expect_traversal_order(&expr, vec!["pre:SubQuery DummyRelExpr", "post:SubQuery DummyRelExpr"]);
+    }
+
+    #[test]
+    fn between_expr_traversal() {
+        let expr = Expr::Between {
+            not: false,
+            expr: Box::new(col("a1")),
+            low: Box::new(Expr::Scalar(ScalarValue::Int32(2))),
+            high: Box::new(Expr::Scalar(ScalarValue::Int32(4))),
+        };
+        expect_traversal_order(
+            &expr,
+            vec![
+                "pre:col:a1 BETWEEN 2 AND 4",
+                "pre:col:a1",
+                "post:col:a1",
+                "pre:2",
+                "post:2",
+                "pre:4",
+                "post:4",
+                "post:col:a1 BETWEEN 2 AND 4",
+            ],
+        )
+    }
+
+    #[test]
+    fn not_between_expr_traversal() {
+        let expr = Expr::Between {
+            not: true,
+            expr: Box::new(col("a1")),
+            low: Box::new(Expr::Scalar(ScalarValue::Int32(2))),
+            high: Box::new(Expr::Scalar(ScalarValue::Int32(4))),
+        };
+        expect_traversal_order(
+            &expr,
+            vec![
+                "pre:col:a1 NOT BETWEEN 2 AND 4",
+                "pre:col:a1",
+                "post:col:a1",
+                "pre:2",
+                "post:2",
+                "pre:4",
+                "post:4",
+                "post:col:a1 NOT BETWEEN 2 AND 4",
+            ],
+        )
     }
 
     #[test]
