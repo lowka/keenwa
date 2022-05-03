@@ -91,6 +91,7 @@ Cost-based query optimizer (WIP).
 - [x] Basic scalar expressions.
 - [x] Basic aggregate functions.
 - [x] Basic sub queries.
+- [x] Basic scalar functions. 
 - [x] Basic identifiers (`table.column`, etc)
 - [ ] Compound identifiers (`schema.object.whatever`, etc)
 - [ ] Functions expressions.
@@ -101,10 +102,9 @@ Cost-based query optimizer (WIP).
 - [ ] ANY/ALL `<subquery>`.
 - [ ] BETWEEN.
 - [x] CASE expression.
-- [ ] LIKE/NOT LIKE
+- [x] LIKE/NOT LIKE
 - [ ] Tuples.
 - [ ] Array access.
-- [ ] String functions/operators (concat, trim, etc.)
 - [ ] Window functions.
 - [ ] User-defined aggregate functions.
 - TODO
@@ -120,10 +120,19 @@ Cost-based query optimizer (WIP).
 - [ ] Floating point types.
 - [ ] Decimal types.
 - [ ] Byte arrays.
-- [ ] Date, Time, Timestamp, etc.
-- [ ] Time intervals.
+- [x] Date (Days), Time (Hours, Minutes, Seconds, Millis)
+- [x] Timestamp with timezone, Timestamp without time zone.
+- [x] Time intervals: Year, Year to Month, Day, Day to Hour, Day to Minute, Day to Second.
 - [ ] Arrays.
 - [ ] Tuples.
+
+#### Functions
+
+- [ ] Additional String functions.
+- [ ] Additional numeric functions.
+- [ ] Additional date/time functions.
+- [ ] Additional interval functions.
+- [ ] Additional array functions.
 
 ---
 
