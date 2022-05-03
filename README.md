@@ -99,7 +99,7 @@ Cost-based query optimizer (WIP).
 - [x] IN/NOT IN `<subquery>`.
 - [x] EXISTS/NOT EXISTS `<subquery>`.
 - [ ] ANY/ALL `<subquery>`.
-- [ ] BETWEEN.
+- [x] BETWEEN.
 - [x] CASE expression.
 - [x] LIKE/NOT LIKE
 - [ ] Tuples.

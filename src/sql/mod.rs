@@ -497,7 +497,22 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
                 query: RelNode::from(subquery),
             }
         }
-        Expr::Between { .. } => not_implemented!("[NOT] BETWEEN ... expression"),
+        Expr::Between {
+            expr,
+            negated,
+            low,
+            high,
+        } => {
+            let expr = build_scalar_expr(*expr, builder.clone())?;
+            let low = build_scalar_expr(*low, builder.clone())?;
+            let high = build_scalar_expr(*high, builder)?;
+            ScalarExpr::Between {
+                not: negated,
+                expr: Box::new(expr),
+                low: Box::new(low),
+                high: Box::new(high),
+            }
+        }
         Expr::BinaryOp { op, left, right } => build_binary_expr(op, *left, *right, builder)?,
         Expr::UnaryOp { op, expr } => build_unary_expr(op, *expr, builder)?,
         Expr::Cast { expr, data_type } => {
