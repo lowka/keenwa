@@ -27,16 +27,7 @@ use std::sync::Arc;
 /// ```
 ///
 pub fn run_sql_tests(sql_test_cases_str: &str, catalog_str: &str) {
-    let mut buf = String::from(catalog_str);
-    if !catalog_str.is_empty() {
-        buf.push_str("---\n");
-    }
-    buf.push_str(sql_test_cases_str);
-
-    let SqlTestCaseSet { catalog, test_cases } = parse_test_cases(&buf).unwrap();
-    let runner = SqlTestCaseRunner::new(RelExprTestCaseRunnerFactory, catalog, test_cases);
-
-    runner.run()
+    parse_and_run(sql_test_cases_str, catalog_str, RelExprTestCaseRunnerFactory)
 }
 
 /// Runs SQL-test cases from the given string using the given catalog definition.
@@ -63,16 +54,26 @@ pub fn run_sql_tests(sql_test_cases_str: &str, catalog_str: &str) {
 /// Variants with multiple queries and error matching are also supported.
 ///
 pub fn run_sql_expression_tests(sql_test_cases_str: &str, catalog_str: &str) {
+    parse_and_run(sql_test_cases_str, catalog_str, ScalarExprTestCaseRunnerFactory)
+}
+
+fn parse_and_run<T>(sql_test_cases_str: &str, catalog_str: &str, test_case_runner_factory: T)
+where
+    T: TestCaseRunnerFactory,
+{
     let mut buf = String::from(catalog_str);
     if !catalog_str.is_empty() {
         buf.push_str("---\n");
     }
     buf.push_str(sql_test_cases_str);
 
-    let SqlTestCaseSet { catalog, test_cases } = parse_test_cases(&buf).unwrap();
-    let runner = SqlTestCaseRunner::new(ScalarExprTestCaseRunnerFactory, catalog, test_cases);
-
-    runner.run()
+    match parse_test_cases(buf.as_str()) {
+        Ok(SqlTestCaseSet { catalog, test_cases }) => {
+            let runner = SqlTestCaseRunner::new(test_case_runner_factory, catalog, test_cases);
+            runner.run()
+        }
+        Err(error) => panic!("Failed to parse test cases: {}", error),
+    }
 }
 
 /// Creates instances of [RelExprTestCaseRunner].

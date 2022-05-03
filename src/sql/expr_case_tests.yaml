@@ -1,0 +1,23 @@
+query: |
+  SELECT CASE WHEN a1 = 11 THEN 11
+         WHEN a1 = 12 THEN 12
+         ELSE 13
+         END
+  FROM (SELECT 1 as a1)
+ok: |
+  LogicalProjection cols=[2] exprs: [CASE WHEN col:1 = 11 THEN 11 WHEN col:1 = 12 THEN 12 ELSE 13]
+    input: LogicalProjection cols=[1] exprs: [1 AS a1]
+      input: LogicalEmpty return_one_row=true
+---
+query: |
+  SELECT CASE a1 > 0
+         WHEN a1 = 11 THEN 11
+         WHEN a1 = 12 THEN 12
+         ELSE 13
+         END
+  FROM (SELECT 1 as a1)
+ok: |
+  LogicalProjection cols=[2] exprs: [CASE col:1 > 0 WHEN col:1 = 11 THEN 11 WHEN col:1 = 12 THEN 12 ELSE 13]
+    input: LogicalProjection cols=[1] exprs: [1 AS a1]
+      input: LogicalEmpty return_one_row=true
+---

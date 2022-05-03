@@ -94,7 +94,7 @@ fn parse_test_case(str: &str) -> Result<Option<TestCase>, String> {
         let test_case = serde_yaml::from_str::<TestCase>(&buf);
         match test_case {
             Ok(test_case) => Ok(Some(test_case)),
-            Err(e) => Err(format!("{}", e)),
+            Err(e) => Err(format!("Unable to parse test case:\n{}\nError:{}", str, e)),
         }
     }
 }
