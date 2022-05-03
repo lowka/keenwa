@@ -728,7 +728,7 @@ fn build_interval_literal(
         let bounds = [(0, 9999), (0, 11)];
 
         if to_field - from_field == 0 {
-            fields[from_field] = parse_int_value(value, original_value, Some(bounds[0]))?;
+            fields[to_field] = parse_int_value(value, original_value, Some(bounds[to_field]))?;
         } else {
             let mut parts = value.split('-');
             let year = parts.next();
@@ -759,7 +759,7 @@ fn build_interval_literal(
         let bounds = [(0, 999_999), (0, 23), (0, 59), (0, 59)];
 
         if to_field - from_field == 0 {
-            fields[0] = parse_int_value(parse_value, original_value, Some(bounds[0]))?;
+            fields[to_field] = parse_int_value(parse_value, original_value, Some(bounds[to_field]))?;
         } else {
             let mut index = 1;
             let mut parts = parse_value.split(':');
@@ -776,7 +776,7 @@ fn build_interval_literal(
                     }
                 } else {
                     let field_bounds = bounds[index];
-                    // hours, minutes and seconds must be 2 digits
+                    // minutes and seconds must be 2 digits
                     if let Some(part) = parts.next().and_then(|p| if p.len() == 2 { Some(p) } else { None }) {
                         let int_part = parse_int_value(part.trim(), original_value, Some(bounds[index]))?;
                         if int_part >= field_bounds.0 && int_part <= field_bounds.1 {
@@ -810,11 +810,11 @@ fn build_interval_literal(
         (DateTimeField::Day, Some(DateTimeField::Second), 0, 3),
     ];
 
-    let position = SUPPORTED_INTERVALS
+    let interval_type = SUPPORTED_INTERVALS
         .iter()
         .position(|(leading, last, ..)| leading == &leading_field && last.as_ref() == last_field.as_ref());
 
-    if let Some(interval_type) = position {
+    if let Some(interval_type) = interval_type {
         let (field, .., from, to) = &SUPPORTED_INTERVALS[interval_type];
         let signed_value = value.trim();
         let (unsigned_value, sign) = if signed_value.starts_with('-') {

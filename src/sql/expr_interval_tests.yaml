@@ -71,6 +71,27 @@ error: |
   Internal error: Interval field is out of range: -9999-12
 ---
 ######
+# month
+query: INTERVAL '0' MONTH
+ok: 0 YEARS 0 MONTHS
+---
+query: INTERVAL '-0' MONTH
+ok: 0 YEARS 0 MONTHS
+---
+query: INTERVAL '1' MONTH
+ok: 0 YEARS 1 MONTHS
+---
+query: INTERVAL '-1' MONTH
+ok: -0 YEARS 1 MONTHS
+---
+query: INTERVAL '11' MONTH
+ok: 0 YEARS 11 MONTHS
+---
+query: INTERVAL '12' MONTH
+error : |
+  Internal error: Interval field is out of range: 12
+---
+######
 # day
 query: INTERVAL '0' DAY
 ok: 0 DAYS 0 HOURS 0 MINUTES 0 SECONDS

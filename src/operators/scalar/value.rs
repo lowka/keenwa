@@ -30,18 +30,29 @@ pub enum Interval {
     DaySecond(i32, i32),
 }
 
+const MONTHS_IN_YEAR: u32 = 12;
 const HOURS_IN_DAY: u32 = 24;
 const SECONDS_IN_MINUTE: u32 = 60;
 const MINUTE_IN_HOUR: u32 = 60;
 
 impl Interval {
+    /// Creates an instance of a YearMonth interval from the given values with the given sign.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if the provided values are out of their valid range and the sign is neither `1` nor `-1`.
     pub fn from_year_month(sign: i32, years: u32, month: u32) -> Interval {
         assert!(sign == -1 || sign == 1, "sign must be -1 or 1");
-        assert!(month <= 11, "hours must be between 0 and 11 (inclusive): {}", month);
+        assert!(month < MONTHS_IN_YEAR, "months must be between 0 and 11 (inclusive): {}", month);
 
         YearMonth(sign * years as i32, sign * month as i32)
     }
 
+    /// Creates an instance of a DaySecond interval from the given values with the given sign.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if the provided values if are out of their range and the sign is neither `1` nor `-1`.
     pub fn from_days_seconds(sign: i32, days: u32, hours: u32, minutes: u32, seconds: u32) -> Interval {
         assert!(sign == -1 || sign == 1, "sign must be -1 or 1");
         assert!(hours < HOURS_IN_DAY, "hours must be between  0 and 23 (inclusive): {}", hours);
