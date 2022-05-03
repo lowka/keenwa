@@ -702,29 +702,29 @@ fn build_interval_literal(
         }
     }
 
-    fn parse_year_month(value: &str, from_field: usize, to_field: usize) -> Result<Interval, OptimizerError> {
+    fn parse_year_month(
+        sign: i32,
+        value: &str,
+        original_value: &str,
+        from_field: usize,
+        to_field: usize,
+    ) -> Result<Interval, OptimizerError> {
         let mut fields = [0u32; 2];
         let bounds = [(0, 9999), (0, 11)];
 
-        let parse_value = value.trim();
-        let (parse_value, sign) = if parse_value.starts_with("-") {
-            (&parse_value[1..], -1)
-        } else {
-            (parse_value, 1)
-        };
-
         if to_field - from_field == 0 {
-            fields[from_field] = parse_int_value(parse_value, value, Some(bounds[0]))?;
+            fields[from_field] = parse_int_value(value, original_value, Some(bounds[0]))?;
         } else {
-            let mut parts = parse_value.split("-");
+            let mut parts = value.split('-');
             let year = parts.next();
             let month = parts.next();
             let (year, month) = match (year, month) {
-                (Some(year), Some(month)) => {
-                    (parse_int_value(year, value, Some(bounds[0])), parse_int_value(month, value, Some(bounds[1])))
-                }
-                (Some(year), None) => (parse_int_value(year, value, Some(bounds[0])), Ok(0)),
-                _ => return Err(invalid_interval_literal(value)),
+                (Some(year), Some(month)) => (
+                    parse_int_value(year, value, Some(bounds[0])),
+                    parse_int_value(month, original_value, Some(bounds[1])),
+                ),
+                (Some(year), None) => (parse_int_value(year, original_value, Some(bounds[0])), Ok(0)),
+                _ => return Err(invalid_interval_literal(original_value)),
             };
             fields[0] = year?;
             fields[1] = month?;
@@ -733,51 +733,50 @@ fn build_interval_literal(
         Ok(Interval::from_year_month(sign, fields[0], fields[1]))
     }
 
-    fn parse_day_second(value: &str, from_field: usize, to_field: usize) -> Result<Interval, OptimizerError> {
+    fn parse_day_second(
+        sign: i32,
+        parse_value: &str,
+        original_value: &str,
+        from_field: usize,
+        to_field: usize,
+    ) -> Result<Interval, OptimizerError> {
         let mut fields = [0u32; 4];
         let bounds = [(0, 999_999), (0, 23), (0, 59), (0, 59)];
 
-        let parse_value = value.trim();
-        let (parse_value, sign) = if parse_value.starts_with("-") {
-            (&parse_value[1..], -1)
-        } else {
-            (parse_value, 1)
-        };
-
         if to_field - from_field == 0 {
-            fields[0] = parse_int_value(parse_value, value, Some(bounds[0]))?;
+            fields[0] = parse_int_value(parse_value, original_value, Some(bounds[0]))?;
         } else {
             let mut index = 1;
-            let mut parts = parse_value.split(":");
+            let mut parts = parse_value.split(':');
 
             while index <= to_field {
                 if index == 1 {
-                    if let Some((day, hour)) = parts.next().map(|p| p.trim().split_once(" ")).flatten() {
-                        let day = parse_int_value(day.trim(), value, Some(bounds[0]))?;
-                        let hour = parse_int_value(hour.trim(), value, Some(bounds[1]))?;
+                    if let Some((day, hour)) = parts.next().and_then(|p| p.trim().split_once(' ')) {
+                        let day = parse_int_value(day.trim(), original_value, Some(bounds[0]))?;
+                        let hour = parse_int_value(hour.trim(), original_value, Some(bounds[1]))?;
                         fields[0] = day;
                         fields[1] = hour;
                     } else {
-                        return Err(invalid_interval_literal(value));
+                        return Err(invalid_interval_literal(original_value));
                     }
                 } else {
                     let field_bounds = bounds[index];
                     // hours, minutes and seconds must be 2 digits
-                    if let Some(part) = parts.next().map(|p| if p.len() == 2 { Some(p) } else { None }).flatten() {
-                        let int_part = parse_int_value(part.trim(), value, Some(bounds[index]))?;
+                    if let Some(part) = parts.next().and_then(|p| if p.len() == 2 { Some(p) } else { None }) {
+                        let int_part = parse_int_value(part.trim(), original_value, Some(bounds[index]))?;
                         if int_part >= field_bounds.0 && int_part <= field_bounds.1 {
                             fields[index] = int_part;
                         } else {
-                            return Err(interval_field_out_of_range(value));
+                            return Err(interval_field_out_of_range(original_value));
                         }
                     } else {
-                        return Err(invalid_interval_literal(value));
+                        return Err(invalid_interval_literal(original_value));
                     }
                 }
                 index += 1;
             }
             if parts.next().is_some() {
-                return Err(invalid_interval_literal(value));
+                return Err(invalid_interval_literal(original_value));
             }
         }
 
@@ -785,9 +784,11 @@ fn build_interval_literal(
     }
 
     static SUPPORTED_INTERVALS: [(DateTimeField, Option<DateTimeField>, usize, usize); 7] = [
+        // Year - 0, Month - 1
         (DateTimeField::Year, None, 0, 0),
         (DateTimeField::Year, Some(DateTimeField::Month), 0, 1),
         (DateTimeField::Month, None, 1, 1),
+        // Day - 0, Hour - 1, Minute - 2, Second - 3
         (DateTimeField::Day, None, 0, 0),
         (DateTimeField::Day, Some(DateTimeField::Hour), 0, 1),
         (DateTimeField::Day, Some(DateTimeField::Minute), 0, 2),
@@ -799,11 +800,17 @@ fn build_interval_literal(
         .position(|(leading, last, ..)| leading == &leading_field && last.as_ref() == last_field.as_ref());
 
     if let Some(interval_type) = position {
-        let (.., from, to) = SUPPORTED_INTERVALS[interval_type];
-        let interval = if interval_type <= 2 {
-            parse_year_month(value, from, to)?
+        let (field, .., from, to) = &SUPPORTED_INTERVALS[interval_type];
+        let signed_value = value.trim();
+        let (unsigned_value, sign) = if signed_value.starts_with('-') {
+            (&value[1..], -1)
         } else {
-            parse_day_second(value, from, to)?
+            (value, 1)
+        };
+        let interval = if field == &DateTimeField::Year || field == &DateTimeField::Month {
+            parse_year_month(sign, unsigned_value, value, *from, *to)?
+        } else {
+            parse_day_second(sign, unsigned_value, value, *from, *to)?
         };
         Ok(ScalarExpr::Scalar(ScalarValue::Interval(interval)))
     } else {
