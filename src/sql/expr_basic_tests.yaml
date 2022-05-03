@@ -1,0 +1,80 @@
+query: 1
+ok: 1
+---
+# negation
+query: -1
+ok: -1
+---
+# not equals operator <> is replaced by != operator by the sql parser
+query: 1 <> 2
+ok: 1 != 2
+---
+query: |
+  1+2*3-4/2
+ok: |
+  1 + 2 * 3 - 4 / 2
+---
+query: true
+ok: true
+---
+query: NOT true
+ok: NOT true
+---
+query: 1 IS NULL
+ok: IS NULL 1
+---
+query: 1 IS NOT NULL
+ok: IS NOT NULL 1
+---
+query: CAST(1 as STRING)
+ok: CAST(1 as String)
+---
+query: CAST(1 as Int)
+ok: CAST(1 as Int32)
+---
+query: CAST(1 as Boolean)
+ok: CAST(1 as Bool)
+---
+query: 1 IN (1, 2, 3)
+ok: 1 IN (1, 2, 3)
+---
+query: 1 NOT IN (1, 2, 3)
+ok: 1 NOT IN (1, 2, 3)
+---
+# function expressions
+query: lower('aBc')
+ok: lower(aBc)
+---
+catalog:
+  - table: test
+    columns: i:int32, b:bool, s:string
+query: lower(s) FROM test
+ok: lower(col:3)
+---
+catalog:
+  - table: test
+    columns: i:int32, b:bool, s:string
+query: lower(i) FROM test
+error: |
+  Internal error: No function lower(Int32)
+---
+query: lower(123)
+error: |
+  Internal error: No function lower(Int32)
+---
+query: concat('a', 1, true)
+ok: concat([a, 1, true])
+---
+query: |
+  'a' || 'b'
+ok: |
+  a || b
+---
+query: |
+  'a' LIKE 'b'
+ok: a LIKE b
+---
+query: |
+  'a' NOT LIKE 'b'
+ok: a NOT LIKE b
+---

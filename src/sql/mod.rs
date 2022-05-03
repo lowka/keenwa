@@ -947,13 +947,19 @@ catalog:
     }
 
     #[test]
-    fn test_exprs() {
-        let text = include_str!("exprs_tests.yaml");
+    fn test_exprs_basic() {
+        let text = include_str!("expr_basic_tests.yaml");
+        run_sql_expression_tests(text, "");
+    }
+
+    #[test]
+    fn test_exprs_case() {
+        let text = include_str!("expr_case_tests.yaml");
         run_test_cases(text);
     }
 
     #[test]
-    fn test_day_second_intervals() {
+    fn test_exprs_intervals() {
         let text = include_str!("expr_interval_tests.yaml");
         run_sql_expression_tests(text, "");
     }
