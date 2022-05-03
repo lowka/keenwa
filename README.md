@@ -90,11 +90,10 @@ Cost-based query optimizer (WIP).
 
 - [x] Basic scalar expressions.
 - [x] Basic aggregate functions.
-- [x] Basic sub queries.
-- [x] Basic scalar functions. 
+- [x] Basic sub queries. 
 - [x] Basic identifiers (`table.column`, etc)
 - [ ] Compound identifiers (`schema.object.whatever`, etc)
-- [ ] Functions expressions.
+- [x] Functions expressions.
 - [x] IS NULL/IS NOT NULL.
 - [x] IN/NOT IN (list).
 - [x] IN/NOT IN `<subquery>`.
