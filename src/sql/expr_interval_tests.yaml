@@ -1,0 +1,273 @@
+######
+# year
+query: INTERVAL '0' YEAR
+ok: 0 YEARS 0 MONTHS
+---
+query: INTERVAL '-0' YEAR
+ok: 0 YEARS 0 MONTHS
+---
+query: INTERVAL '2' YEAR
+ok: 2 YEARS 0 MONTHS
+---
+query: INTERVAL '-2' YEAR
+ok: -2 YEARS 0 MONTHS
+---
+query: INTERVAL '10001' YEAR
+error: |
+  Internal error: Interval field is out of range: 10001
+---
+query: INTERVAL '-10001' YEAR
+error: |
+  Internal error: Interval field is out of range: -10001
+---
+query: INTERVAL '-10001 200202' YEAR
+error: |
+  Internal error: Invalid interval literal: -10001 200202
+---
+######
+## year to month
+query: INTERVAL '0-0' YEAR TO MONTH
+ok: 0 YEARS 0 MONTHS
+---
+query: INTERVAL '-0-0' YEAR TO MONTH
+ok: 0 YEARS 0 MONTHS
+---
+query: INTERVAL '0-2' YEAR TO MONTH
+ok: 0 YEARS 2 MONTHS
+---
+query: INTERVAL '10-1' YEAR TO MONTH
+ok: 10 YEARS 1 MONTHS
+---
+query: INTERVAL '-10-01' YEAR TO MONTH
+ok: -10 YEARS 1 MONTHS
+---
+query: INTERVAL '-0-01' YEAR TO MONTH
+ok: -0 YEARS 1 MONTHS
+---
+query: INTERVAL '9999-11' YEAR TO MONTH
+ok: 9999 YEARS 11 MONTHS
+---
+query: INTERVAL '-9999-11' YEAR TO MONTH
+ok: -9999 YEARS 11 MONTHS
+---
+query: INTERVAL '0-11 11' YEAR TO MONTH
+error: |
+  Internal error: Invalid interval literal: 0-11 11
+---
+query: INTERVAL '0-12' YEAR TO MONTH
+error: |
+  Internal error: Interval field is out of range: 0-12
+---
+query: INTERVAL '0--11' YEAR TO MONTH
+error: |
+  Internal error: Invalid interval literal: 0--11
+---
+query: INTERVAL '9999-12' YEAR TO MONTH
+error: |
+  Internal error: Interval field is out of range: 9999-12
+---
+query: INTERVAL '-9999-12' YEAR TO MONTH
+error: |
+  Internal error: Interval field is out of range: -9999-12
+---
+######
+# day
+query: INTERVAL '0' DAY
+ok: 0 DAYS 0 HOURS 0 MINUTES 0 SECONDS
+---
+query: INTERVAL '2' DAY
+ok: 2 DAYS 0 HOURS 0 MINUTES 0 SECONDS
+---
+query: INTERVAL '-0' DAY
+ok: 0 DAYS 0 HOURS 0 MINUTES 0 SECONDS
+---
+query: INTERVAL '999999' DAY
+ok: 999999 DAYS 0 HOURS 0 MINUTES 0 SECONDS
+---
+query: INTERVAL '111 123213' DAY
+error : |
+  Internal error: Invalid interval literal: 111 123213
+---
+query: INTERVAL '1000000' DAY
+error : |
+  Internal error: Interval field is out of range: 1000000
+---
+query: INTERVAL '-1000000' DAY
+error : |
+  Internal error: Interval field is out of range: -1000000
+---
+######
+# day to hour
+query: INTERVAL '0 0' DAY TO HOUR
+ok: 0 DAYS 0 HOURS 0 MINUTES 0 SECONDS
+---
+query: INTERVAL '1 0' DAY TO HOUR
+ok: 1 DAYS 0 HOURS 0 MINUTES 0 SECONDS
+---
+query: INTERVAL '0 11' DAY TO HOUR
+ok: 0 DAYS 11 HOURS 0 MINUTES 0 SECONDS
+---
+query: INTERVAL '-0 11' DAY TO HOUR
+ok: -0 DAYS 11 HOURS 0 MINUTES 0 SECONDS
+---
+query: INTERVAL '100 0' DAY TO HOUR
+ok: 100 DAYS 0 HOURS 0 MINUTES 0 SECONDS
+---
+query: INTERVAL '1 11:43' DAY TO HOUR
+error: |
+  Internal error: Invalid interval literal: 1 11:43
+---
+query: INTERVAL '999999 11' DAY TO HOUR
+ok: 999999 DAYS 11 HOURS 0 MINUTES 0 SECONDS
+---
+query: INTERVAL '-999999 23' DAY TO HOUR
+ok: -999999 DAYS 23 HOURS 0 MINUTES 0 SECONDS
+---
+query: INTERVAL '1000000 0' DAY TO HOUR
+error: |
+  Internal error: Interval field is out of range: 1000000 0
+---
+query: INTERVAL '-1000000 0' DAY TO HOUR
+error: |
+  Internal error: Interval field is out of range: -1000000 0
+---
+query: INTERVAL '0 24' DAY TO HOUR
+error: |
+  Internal error: Interval field is out of range: 0 24
+---
+query: INTERVAL '1' DAY TO HOUR
+error: |
+  Internal error: Invalid interval literal: 1
+---
+query: INTERVAL '-1' DAY TO HOUR
+error: |
+  Internal error: Invalid interval literal: -1
+---
+query: INTERVAL '1-1' DAY TO HOUR
+error: |
+  Internal error: Invalid interval literal: 1-1
+---
+query: INTERVAL '-1-1' DAY TO HOUR
+error: |
+  Internal error: Invalid interval literal: -1-1
+---
+# day to minute
+query: INTERVAL '0 00:00' DAY TO MINUTE
+ok: 0 DAYS 0 HOURS 0 MINUTES 0 SECONDS
+---
+query: INTERVAL '1 00:00' DAY TO MINUTE
+ok: 1 DAYS 0 HOURS 0 MINUTES 0 SECONDS
+---
+query: INTERVAL '0 11:00' DAY TO MINUTE
+ok: 0 DAYS 11 HOURS 0 MINUTES 0 SECONDS
+---
+query: INTERVAL '-0 11:00' DAY TO MINUTE
+ok: -0 DAYS 11 HOURS 0 MINUTES 0 SECONDS
+---
+query: INTERVAL '-0 11:22' DAY TO MINUTE
+ok: -0 DAYS 11 HOURS 22 MINUTES 0 SECONDS
+---
+query: INTERVAL '-0 23:59' DAY TO MINUTE
+ok: -0 DAYS 23 HOURS 59 MINUTES 0 SECONDS
+---
+query: INTERVAL '-0 0:00' DAY TO MINUTE
+ok: 0 DAYS 0 HOURS 0 MINUTES 0 SECONDS
+---
+query: INTERVAL '1' DAY TO MINUTE
+error: |
+  Internal error: Invalid interval literal: 1
+---
+query: INTERVAL '-1' DAY TO MINUTE
+error: |
+  Internal error: Invalid interval literal: -1
+---
+query: INTERVAL '1-1' DAY TO MINUTE
+error: |
+  Internal error: Invalid interval literal: 1-1
+---
+query: INTERVAL '-1-1' DAY TO MINUTE
+error: |
+  Internal error: Invalid interval literal: -1-1
+---
+query: INTERVAL '1 10' DAY TO MINUTE
+error: |
+  Internal error: Invalid interval literal: 1 10
+---
+query: INTERVAL '1 10:22:41' DAY TO MINUTE
+error: |
+  Internal error: Invalid interval literal: 1 10:22:41
+---
+######
+# day to second
+query: INTERVAL '0 11:00:00' DAY TO SECOND
+ok: 0 DAYS 11 HOURS 0 MINUTES 0 SECONDS
+---
+query: INTERVAL '-0 11:00:00' DAY TO SECOND
+ok: -0 DAYS 11 HOURS 0 MINUTES 0 SECONDS
+---
+query: INTERVAL '-0 0:00:00' DAY TO SECOND
+ok: 0 DAYS 0 HOURS 0 MINUTES 0 SECONDS
+---
+query: INTERVAL '2 11:00:00' DAY TO SECOND
+ok: 2 DAYS 11 HOURS 0 MINUTES 0 SECONDS
+---
+query: INTERVAL '2 11:59:59' DAY TO SECOND
+ok: 2 DAYS 11 HOURS 59 MINUTES 59 SECONDS
+---
+query: INTERVAL '2 1:59:59' DAY TO SECOND
+ok: 2 DAYS 1 HOURS 59 MINUTES 59 SECONDS
+---
+query: INTERVAL '2 01:59:59' DAY TO SECOND
+ok: 2 DAYS 1 HOURS 59 MINUTES 59 SECONDS
+---
+query:
+  INTERVAL '-2' DAY TO SECOND
+error: |
+  Internal error: Invalid interval literal: -2
+---
+query:
+  INTERVAL '-2 22' DAY TO SECOND
+error: |
+  Internal error: Invalid interval literal: -2 22
+---
+query:
+  INTERVAL '2-00:01:00' DAY TO SECOND
+error: |
+  Internal error: Invalid interval literal: 2-00:01:00
+---
+query: INTERVAL '2 24:59:59' DAY TO SECOND
+error: |
+  Internal error: Interval field is out of range: 2 24:59:59
+---
+query: INTERVAL '2 24:60:60' DAY TO SECOND
+error: |
+  Internal error: Interval field is out of range: 2 24:60:60
+---
+query: INTERVAL '2 11:60:00' DAY TO SECOND
+error: |
+  Internal error: Interval field is out of range: 2 11:60:00
+---
+query: INTERVAL '2 11:00:60' DAY TO SECOND
+error: |
+  Internal error: Interval field is out of range: 2 11:00:60
+---
+query: INTERVAL '2 11:0:00' DAY TO SECOND
+error: |
+  Internal error: Invalid interval literal: 2 11:0:00
+---
+query: INTERVAL '2 11:00:0' DAY TO SECOND
+error: |
+  Internal error: Invalid interval literal: 2 11:00:0
+---
+query: INTERVAL '2 11:0:0' DAY TO SECOND
+error: |
+  Internal error: Invalid interval literal: 2 11:0:0
+---
+query: INTERVAL '2 11:00:00 11' DAY TO SECOND
+error: |
+  Internal error: Invalid interval literal: 2 11:00:00 11
+---
+query: INTERVAL '2 11:00:00:11' DAY TO SECOND
+error: |
+  Internal error: Invalid interval literal: 2 11:00:00:11
+---

@@ -499,7 +499,7 @@ fn create_mismatch(
             }
         }
         (Ok(expected), Err(actual)) => Some(Mismatch::new(Ok(expected.clone()), Err(format!("{}", actual)))),
-        (Err(_), Ok(actual)) => Some(Mismatch::new(Err(String::new()), Ok(actual.clone()))),
+        (Err(expected), Ok(actual)) => Some(Mismatch::new(Err(format!("{}", expected)), Ok(actual.clone()))),
     }
 }
 
