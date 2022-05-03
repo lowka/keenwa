@@ -9,6 +9,10 @@ pub enum DataType {
     Bool,
     Int32,
     String,
+    Date,
+    Time,
+    Timestamp(bool),
+    Interval,
 }
 
 impl Display for DataType {
@@ -18,6 +22,10 @@ impl Display for DataType {
             DataType::Bool => write!(f, "Bool"),
             DataType::Int32 => write!(f, "Int32"),
             DataType::String => write!(f, "String"),
+            DataType::Date => write!(f, "Date"),
+            DataType::Time => write!(f, "Time"),
+            DataType::Timestamp(tz) => write!(f, "Timestamp{tz}", tz = if *tz { " with timezone" } else { "" }),
+            DataType::Interval => write!(f, "Interval"),
         }
     }
 }

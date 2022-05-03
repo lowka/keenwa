@@ -13,14 +13,14 @@ use crate::operators::relational::RelNode;
 use crate::operators::scalar::aggregates::AggregateFunction;
 use crate::operators::scalar::expr::{BinaryOp, ExprVisitor};
 use crate::operators::scalar::funcs::ScalarFunction;
-use crate::operators::scalar::value::ScalarValue;
+use crate::operators::scalar::value::{Interval, ScalarValue};
 use crate::operators::scalar::{scalar, ScalarExpr};
 use crate::operators::{ExprMemo, Operator, OperatorMemoBuilder, OperatorMetadata};
 use crate::statistics::StatisticsBuilder;
 use itertools::Itertools;
 use sqlparser::ast::{
-    BinaryOperator, DataType as SqlDataType, Expr, Function, FunctionArg, FunctionArgExpr, Ident, Join, JoinConstraint,
-    JoinOperator, ObjectName, OrderByExpr, Query, Select, SelectItem, SetExpr, SetOperator, Statement,
+    BinaryOperator, DataType as SqlDataType, DateTimeField, Expr, Function, FunctionArg, FunctionArgExpr, Ident, Join,
+    JoinConstraint, JoinOperator, ObjectName, OrderByExpr, Query, Select, SelectItem, SetExpr, SetOperator, Statement,
     TableAlias as SqlTableAlias, TableFactor, TableWithJoins, UnaryOperator, Value,
 };
 use sqlparser::dialect::GenericDialect;
@@ -650,10 +650,159 @@ fn build_value_expr(value: Value) -> Result<ScalarExpr, OptimizerError> {
         Value::HexStringLiteral(_) => not_supported!("HEX value literal"),
         Value::DoubleQuotedString(value) => ScalarValue::String(value),
         Value::Boolean(value) => ScalarValue::Bool(value),
-        Value::Interval { .. } => not_implemented!("Interval literal"),
+        Value::Interval {
+            value,
+            leading_field,
+            leading_precision,
+            last_field,
+            fractional_seconds_precision,
+        } => {
+            if let Some(leading_field) = leading_field {
+                if leading_precision.is_some() {
+                    not_supported!("Interval: Leading field precision is not supported")
+                }
+                if fractional_seconds_precision.is_some() {
+                    not_supported!("Interval: Fractional second precision is not supported")
+                }
+                return build_interval_literal(value.as_str(), leading_field, last_field);
+            } else {
+                not_supported!("Interval: literals without leading field")
+            }
+        }
         Value::Null => ScalarValue::Null,
     };
     Ok(ScalarExpr::Scalar(value))
+}
+
+fn build_interval_literal(
+    value: &str,
+    leading_field: DateTimeField,
+    last_field: Option<DateTimeField>,
+) -> Result<ScalarExpr, OptimizerError> {
+    fn interval_field_out_of_range(value: &str) -> OptimizerError {
+        OptimizerError::Internal(format!("Interval field is out of range: {}", value))
+    }
+
+    fn invalid_interval_literal(value: &str) -> OptimizerError {
+        OptimizerError::Internal(format!("Invalid interval literal: {}", value))
+    }
+
+    fn parse_int_value(part: &str, whole_value: &str, bounds: Option<(u32, u32)>) -> Result<u32, OptimizerError> {
+        match (u32::from_str(part), bounds) {
+            (Ok(v), None) => Ok(v),
+            (Ok(v), Some((min, max))) if v >= min && v <= max => Ok(v),
+            (Ok(_), _) => Err(interval_field_out_of_range(whole_value)),
+            _ => Err(invalid_interval_literal(whole_value)),
+        }
+    }
+
+    fn parse_year_month(value: &str, from_field: usize, to_field: usize) -> Result<Interval, OptimizerError> {
+        let mut fields = [0u32; 2];
+        let bounds = [(0, 9999), (0, 11)];
+
+        let parse_value = value.trim();
+        let (parse_value, sign) = if parse_value.starts_with("-") {
+            (&parse_value[1..], -1)
+        } else {
+            (parse_value, 1)
+        };
+
+        if to_field - from_field == 0 {
+            fields[from_field] = parse_int_value(parse_value, value, Some(bounds[0]))?;
+        } else {
+            let mut parts = parse_value.split("-");
+            let year = parts.next();
+            let month = parts.next();
+            let (year, month) = match (year, month) {
+                (Some(year), Some(month)) => {
+                    (parse_int_value(year, value, Some(bounds[0])), parse_int_value(month, value, Some(bounds[1])))
+                }
+                (Some(year), None) => (parse_int_value(year, value, Some(bounds[0])), Ok(0)),
+                _ => return Err(invalid_interval_literal(value)),
+            };
+            fields[0] = year?;
+            fields[1] = month?;
+        }
+
+        Ok(Interval::from_year_month(sign, fields[0], fields[1]))
+    }
+
+    fn parse_day_second(value: &str, from_field: usize, to_field: usize) -> Result<Interval, OptimizerError> {
+        let mut fields = [0u32; 4];
+        let bounds = [(0, 999_999), (0, 23), (0, 59), (0, 59)];
+
+        let parse_value = value.trim();
+        let (parse_value, sign) = if parse_value.starts_with("-") {
+            (&parse_value[1..], -1)
+        } else {
+            (parse_value, 1)
+        };
+
+        if to_field - from_field == 0 {
+            fields[0] = parse_int_value(parse_value, value, Some(bounds[0]))?;
+        } else {
+            let mut index = 1;
+            let mut parts = parse_value.split(":");
+
+            while index <= to_field {
+                if index == 1 {
+                    if let Some((day, hour)) = parts.next().map(|p| p.trim().split_once(" ")).flatten() {
+                        let day = parse_int_value(day.trim(), value, Some(bounds[0]))?;
+                        let hour = parse_int_value(hour.trim(), value, Some(bounds[1]))?;
+                        fields[0] = day;
+                        fields[1] = hour;
+                    } else {
+                        return Err(invalid_interval_literal(value));
+                    }
+                } else {
+                    let field_bounds = bounds[index];
+                    // hours, minutes and seconds must be 2 digits
+                    if let Some(part) = parts.next().map(|p| if p.len() == 2 { Some(p) } else { None }).flatten() {
+                        let int_part = parse_int_value(part.trim(), value, Some(bounds[index]))?;
+                        if int_part >= field_bounds.0 && int_part <= field_bounds.1 {
+                            fields[index] = int_part;
+                        } else {
+                            return Err(interval_field_out_of_range(value));
+                        }
+                    } else {
+                        return Err(invalid_interval_literal(value));
+                    }
+                }
+                index += 1;
+            }
+            if parts.next().is_some() {
+                return Err(invalid_interval_literal(value));
+            }
+        }
+
+        Ok(Interval::from_days_seconds(sign, fields[0], fields[1], fields[2], fields[3]))
+    }
+
+    static SUPPORTED_INTERVALS: [(DateTimeField, Option<DateTimeField>, usize, usize); 7] = [
+        (DateTimeField::Year, None, 0, 0),
+        (DateTimeField::Year, Some(DateTimeField::Month), 0, 1),
+        (DateTimeField::Month, None, 1, 1),
+        (DateTimeField::Day, None, 0, 0),
+        (DateTimeField::Day, Some(DateTimeField::Hour), 0, 1),
+        (DateTimeField::Day, Some(DateTimeField::Minute), 0, 2),
+        (DateTimeField::Day, Some(DateTimeField::Second), 0, 3),
+    ];
+
+    let position = SUPPORTED_INTERVALS
+        .iter()
+        .position(|(leading, last, ..)| leading == &leading_field && last.as_ref() == last_field.as_ref());
+
+    if let Some(interval_type) = position {
+        let (.., from, to) = SUPPORTED_INTERVALS[interval_type];
+        let interval = if interval_type <= 2 {
+            parse_year_month(value, from, to)?
+        } else {
+            parse_day_second(value, from, to)?
+        };
+        Ok(ScalarExpr::Scalar(ScalarValue::Interval(interval)))
+    } else {
+        Err(invalid_interval_literal(value))
+    }
 }
 
 fn build_function_expr(func: Function, builder: OperatorBuilder) -> Result<ScalarExpr, OptimizerError> {
@@ -757,7 +906,7 @@ impl From<ParserError> for OptimizerError {
 
 #[cfg(test)]
 mod test {
-    use crate::sql::testing::logical_plan::run_sql_tests;
+    use crate::sql::testing::logical_plan::{run_sql_expression_tests, run_sql_tests};
 
     fn run_test_cases(str: &str) {
         let catalog_str = r#"
@@ -784,6 +933,12 @@ catalog:
     fn test_exprs() {
         let text = include_str!("exprs_tests.yaml");
         run_test_cases(text);
+    }
+
+    #[test]
+    fn test_day_second_intervals() {
+        let text = include_str!("expr_interval_tests.yaml");
+        run_sql_expression_tests(text, "");
     }
 
     // joins
