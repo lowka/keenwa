@@ -32,7 +32,7 @@ impl ScalarFunction {
             FunctionSignatureBuilder::exact(args)
         }
         fn varargs(args: Vec<DataType>) -> FunctionSignatureBuilder {
-            FunctionSignatureBuilder::varargs(args)
+            FunctionSignatureBuilder::variadic(args)
         }
 
         match self {
@@ -131,7 +131,7 @@ pub mod testing {
                             ArgumentList::Exact(args) => format!("[{}]", args.iter().join(", ").to_lowercase()),
                             ArgumentList::OneOf(_) => panic!("Nested argument lists of type OneOf are not supported"),
                             ArgumentList::Any(num) => format!("[any <{}>]", num),
-                            ArgumentList::Varargs(args) => format!("[{}, ...]", args.iter().join(", ").to_lowercase()),
+                            ArgumentList::Variadic(args) => format!("[{}, ...]", args.iter().join(", ").to_lowercase()),
                         })
                         .join(", ")
                         .as_str(),
@@ -140,7 +140,7 @@ pub mod testing {
             ArgumentList::Any(num) => {
                 buf.push_str(format!("any <{}>", num).as_str());
             }
-            ArgumentList::Varargs(args) => {
+            ArgumentList::Variadic(args) => {
                 buf.push_str(format!("[{}, ...]", args.iter().join(", ").to_lowercase()).as_str());
             }
         }

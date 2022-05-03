@@ -26,7 +26,7 @@ pub enum ArgumentList {
     /// A function with `n` arguments where each argument can be of an arbitrary type.
     Any(NonZeroUsize),
     /// A function can be called with arguments of the given types and any number of additional arguments of an arbitrary type.
-    Varargs(Vec<DataType>),
+    Variadic(Vec<DataType>),
 }
 
 /// Volatility describes whether evaluation of a function is dependent only on functions arguments
@@ -97,10 +97,10 @@ impl FunctionSignatureBuilder {
         }
     }
 
-    /// Creates a builder for a function with variable number of arguments. See [ArgumentList::Varargs].
-    pub fn varargs(args: Vec<DataType>) -> FunctionSignatureBuilder {
+    /// Creates a builder for a function with variable number of arguments. See [ArgumentList::Variadic].
+    pub fn variadic(args: Vec<DataType>) -> FunctionSignatureBuilder {
         FunctionSignatureBuilder {
-            args: ArgumentList::Varargs(args),
+            args: ArgumentList::Variadic(args),
             volatility: Volatility::Immutable,
         }
     }
@@ -156,7 +156,7 @@ pub fn verify_function_arguments(
         ArgumentList::Exact(exact) => exact == arg_types,
         ArgumentList::OneOf(args) => args.iter().any(|a| matches!(a, ArgumentList::Exact(exact) if exact == arg_types)),
         ArgumentList::Any(num) => num.get() == arg_types.len(),
-        ArgumentList::Varargs(args) => args.len() <= arg_types.len() && args == &arg_types[0..args.len()],
+        ArgumentList::Variadic(args) => args.len() <= arg_types.len() && args == &arg_types[0..args.len()],
     };
 
     Ok(matches)
@@ -249,7 +249,7 @@ mod test {
 
     #[test]
     fn test_verify_vararg_signature_no_args() {
-        let signature = FunctionSignatureBuilder::varargs(vec![]).return_type(DataType::Int32);
+        let signature = FunctionSignatureBuilder::variadic(vec![]).return_type(DataType::Int32);
 
         expect_signature_accepts_args(&signature, &[]);
         expect_signature_accepts_args(&signature, &[DataType::String]);
@@ -259,7 +259,7 @@ mod test {
     #[test]
     fn test_verify_vararg_signature_some_args() {
         let signature =
-            FunctionSignatureBuilder::varargs(vec![DataType::String, DataType::Bool]).return_type(DataType::Int32);
+            FunctionSignatureBuilder::variadic(vec![DataType::String, DataType::Bool]).return_type(DataType::Int32);
 
         expect_signature_does_not_accept_args(&signature, &[DataType::Int32]);
         expect_signature_does_not_accept_args(&signature, &[DataType::String]);
