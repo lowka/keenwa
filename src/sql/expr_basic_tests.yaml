@@ -21,10 +21,10 @@ query: NOT true
 ok: NOT true
 ---
 query: 1 IS NULL
-ok: IS NULL 1
+ok: 1 IS NULL
 ---
 query: 1 IS NOT NULL
-ok: IS NOT NULL 1
+ok: 1 IS NOT NULL
 ---
 query: CAST(1 as STRING)
 ok: CAST(1 as String)
