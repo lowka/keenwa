@@ -193,7 +193,7 @@ impl AggregateBuilder<'_> {
         let having_expr = if let Some(expr) = self.having.take() {
             disallow_nested_subqueries(&expr, "AGGREGATE", "HAVING clause")?;
 
-            let mut rewriter = RewriteExprs::new(&scope, metadata.clone(), ValidateFilterExpr::where_clause());
+            let mut rewriter = RewriteExprs::new(&scope, metadata, ValidateFilterExpr::where_clause());
             let expr = expr.rewrite(&mut rewriter)?;
             let mut validate = ValidateHavingClause {
                 projection_columns: &non_aggregate_columns,

@@ -188,7 +188,13 @@ impl LogicalExpr {
                 }
                 input.expr().logical().accept(visitor)?;
             }
-            LogicalExpr::Join(LogicalJoin { left, right, .. }) => {
+            LogicalExpr::Join(LogicalJoin {
+                left, right, condition, ..
+            }) => {
+                match condition {
+                    JoinCondition::Using(_) => (),
+                    JoinCondition::On(on) => on.expr().expr().accept(&mut expr_visitor)?,
+                };
                 left.expr().logical().accept(visitor)?;
                 right.expr().logical().accept(visitor)?;
             }

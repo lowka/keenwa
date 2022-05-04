@@ -10,6 +10,7 @@ pub struct LogicalProperties {
     pub output_columns: Vec<ColumnId>,
     /// Columns from the outer scope used by an operator.
     pub outer_columns: Vec<ColumnId>,
+    pub has_correlated_subqueries: bool,
     //FIXME: Make this non-optional when logical properties builder API becomes stable.
     pub statistics: Option<Statistics>,
 }
@@ -20,6 +21,7 @@ impl LogicalProperties {
         LogicalProperties {
             output_columns,
             outer_columns: Vec::with_capacity(0),
+            has_correlated_subqueries: false,
             statistics,
         }
     }
@@ -32,6 +34,7 @@ impl LogicalProperties {
         LogicalProperties {
             output_columns: Vec::with_capacity(0),
             outer_columns: Vec::with_capacity(0),
+            has_correlated_subqueries: false,
             statistics: None,
         }
     }
@@ -51,11 +54,13 @@ impl LogicalProperties {
         let LogicalProperties {
             output_columns,
             outer_columns,
+            has_correlated_subqueries,
             statistics: _statistics,
         } = self;
         LogicalProperties {
             output_columns,
             outer_columns,
+            has_correlated_subqueries,
             statistics: Some(statistics),
         }
     }

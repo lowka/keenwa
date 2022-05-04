@@ -74,6 +74,7 @@ where
         Ok(LogicalProperties {
             output_columns,
             outer_columns,
+            has_correlated_subqueries: false,
             statistics: None,
         })
     }
@@ -96,6 +97,7 @@ where
         Ok(LogicalProperties {
             output_columns,
             outer_columns,
+            has_correlated_subqueries: false,
             statistics: None,
         })
     }
@@ -125,6 +127,7 @@ where
         Ok(LogicalProperties {
             output_columns,
             outer_columns,
+            has_correlated_subqueries: false,
             statistics: None,
         })
     }
@@ -152,6 +155,7 @@ where
         Ok(LogicalProperties {
             output_columns,
             outer_columns,
+            has_correlated_subqueries: false,
             statistics: None,
         })
     }
@@ -199,6 +203,7 @@ where
         Ok(LogicalProperties {
             output_columns,
             outer_columns,
+            has_correlated_subqueries: false,
             statistics: None,
         })
     }
@@ -222,6 +227,7 @@ where
         Ok(LogicalProperties {
             output_columns,
             outer_columns,
+            has_correlated_subqueries: false,
             statistics: None,
         })
     }
@@ -245,6 +251,7 @@ where
         Ok(LogicalProperties {
             output_columns,
             outer_columns,
+            has_correlated_subqueries: false,
             statistics: None,
         })
     }
@@ -268,6 +275,7 @@ where
         Ok(LogicalProperties {
             output_columns,
             outer_columns,
+            has_correlated_subqueries: false,
             statistics: None,
         })
     }
@@ -279,6 +287,7 @@ where
         Ok(LogicalProperties {
             output_columns,
             outer_columns,
+            has_correlated_subqueries: false,
             statistics: None,
         })
     }
@@ -311,6 +320,7 @@ where
                 let LogicalProperties {
                     output_columns,
                     outer_columns,
+                    has_correlated_subqueries,
                     // build_xxx methods return logical properties without statistics.
                     statistics: _,
                 } = match &**expr {
@@ -361,6 +371,7 @@ where
                 let logical = LogicalProperties {
                     output_columns,
                     outer_columns,
+                    has_correlated_subqueries,
                     statistics: None,
                 };
                 let statistics = self.statistics.build_statistics(expr, &logical, metadata)?;

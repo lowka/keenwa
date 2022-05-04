@@ -15,6 +15,9 @@ use crate::catalog::CatalogRef;
 use crate::error::OptimizerError;
 use crate::memo::MemoExprState;
 use crate::meta::{ColumnId, ColumnMetadata, MetadataRef, MutableMetadata};
+use crate::operators::builder::subqueries::{
+    decorrelate_subqueries, possibly_has_correlated_subqueries, BuildFilter, BuildOperators,
+};
 use crate::operators::relational::join::{JoinCondition, JoinOn, JoinType, JoinUsing};
 use crate::operators::relational::logical::{
     LogicalDistinct, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin, LogicalLimit,
@@ -25,13 +28,14 @@ use crate::operators::scalar::expr::ExprRewriter;
 use crate::operators::scalar::types::resolve_expr_type;
 use crate::operators::scalar::value::ScalarValue;
 use crate::operators::scalar::{get_subquery, ScalarExpr, ScalarNode};
-use crate::operators::{ExprMemo, Operator, OperatorExpr, OuterScope};
+use crate::operators::{ExprMemo, Operator, OperatorExpr, OuterScope, Properties, ScalarProperties};
 use crate::properties::physical::{PhysicalProperties, RequiredProperties};
 use crate::properties::OrderingChoice;
 
 mod aggregate;
 mod projection;
 mod scope;
+mod subqueries;
 
 /// Table alias.
 #[derive(Debug, Clone)]
@@ -116,19 +120,35 @@ pub struct OperatorBuilder {
     metadata: Rc<MutableMetadata>,
     scope: Option<OperatorScope>,
     operator: Option<Operator>,
-    sub_query_builder: bool,
+    decorrelate_sub_queries: bool,
+}
+
+/// Additional configuration options for a [OperatorBuilder].
+#[derive(Debug, Clone, Default)]
+pub struct OperatorBuilderConfig {
+    pub decorrelate_subqueries: bool,
 }
 
 impl OperatorBuilder {
     /// Creates a new instance of OperatorBuilder.
     pub fn new(callback: Rc<dyn OperatorCallback>, catalog: CatalogRef, metadata: Rc<MutableMetadata>) -> Self {
+        OperatorBuilder::with_config(OperatorBuilderConfig::default(), callback, catalog, metadata)
+    }
+
+    /// Creates a new instance of OperatorBuilder with the given configuration options.
+    pub fn with_config(
+        config: OperatorBuilderConfig,
+        callback: Rc<dyn OperatorCallback>,
+        catalog: CatalogRef,
+        metadata: Rc<MutableMetadata>,
+    ) -> Self {
         OperatorBuilder {
             callback,
             catalog,
             metadata,
             scope: None,
             operator: None,
-            sub_query_builder: false,
+            decorrelate_sub_queries: config.decorrelate_subqueries,
         }
     }
 
@@ -154,7 +174,7 @@ impl OperatorBuilder {
             metadata: builder.metadata.clone(),
             scope: Some(scope),
             operator: Some(operator),
-            sub_query_builder: builder.sub_query_builder,
+            decorrelate_sub_queries: builder.decorrelate_sub_queries,
         }
     }
 
@@ -183,13 +203,31 @@ impl OperatorBuilder {
             let metadata = self.metadata.clone();
             let mut rewriter = RewriteExprs::new(&scope, metadata, ValidateFilterExpr::where_clause());
             let filter = filter.rewrite(&mut rewriter)?;
+            let correlated = possibly_has_correlated_subqueries(&filter);
+
             let expr = self.add_scalar_node(filter, &scope);
-            Some(expr)
+            Some((expr, correlated))
         } else {
             None
         };
 
-        let expr = LogicalExpr::Select(LogicalSelect { input, filter });
+        let decorrelate_sub_queries = self.decorrelate_sub_queries;
+        let mut builder = BuildLogicalExprs {
+            scope: Some(scope),
+            builder: &mut self,
+        };
+
+        let expr = match &filter {
+            Some((filter, true)) if decorrelate_sub_queries => {
+                decorrelate_subqueries(input.clone(), filter.clone(), &mut builder)?
+            }
+            _ => None,
+        };
+        let expr = match expr {
+            Some(expr) => expr,
+            None => builder.select(input, filter.map(|(f, _)| BuildFilter::Constructed(f)))?,
+        };
+        let scope = builder.take_scope();
 
         self.add_operator_and_scope(expr, scope);
         Ok(self)
@@ -509,7 +547,7 @@ impl OperatorBuilder {
             metadata: self.metadata.clone(),
             scope: self.scope.as_ref().map(|scope| scope.new_child_scope(self.metadata.get_ref())),
             operator: None,
-            sub_query_builder: true,
+            decorrelate_sub_queries: self.decorrelate_sub_queries,
         }
     }
 
@@ -524,7 +562,7 @@ impl OperatorBuilder {
             metadata: self.metadata.clone(),
             scope: self.scope.as_ref().map(|scope| scope.new_scope(self.metadata.get_ref())),
             operator: None,
-            sub_query_builder: true,
+            decorrelate_sub_queries: self.decorrelate_sub_queries,
         }
     }
 
@@ -538,7 +576,7 @@ impl OperatorBuilder {
             metadata: self.metadata.clone(),
             scope: None,
             operator: None,
-            sub_query_builder: false,
+            decorrelate_sub_queries: self.decorrelate_sub_queries,
         }
     }
 
@@ -727,8 +765,11 @@ impl OperatorBuilder {
         }
     }
 
-    fn add_operator_and_scope(&mut self, expr: LogicalExpr, scope: OperatorScope) {
-        let operator = Operator::from(OperatorExpr::from(expr));
+    fn add_operator_and_scope<T>(&mut self, expr: T, scope: OperatorScope)
+    where
+        T: Into<Operator>,
+    {
+        let operator = expr.into();
         self.operator = Some(operator);
         self.scope = Some(scope);
     }
@@ -746,7 +787,7 @@ impl OperatorBuilder {
     }
 
     fn add_scalar_node(&self, expr: ScalarExpr, scope: &OperatorScope) -> ScalarNode {
-        let operator = Operator::from(OperatorExpr::from(expr));
+        let operator = Operator::new(OperatorExpr::from(expr), Properties::Scalar(ScalarProperties::default()));
         self.callback.new_scalar_expr(operator, scope)
     }
 }
@@ -767,6 +808,7 @@ struct RewriteExprs<'a, T> {
     scope: &'a OperatorScope,
     validator: ExprValidator<T>,
     metadata: Rc<MutableMetadata>,
+    referenced_outer_columns: Vec<ColumnId>,
 }
 
 impl<'a, T> RewriteExprs<'a, T>
@@ -782,6 +824,7 @@ where
                 alias_depth: 0,
                 validator,
             },
+            referenced_outer_columns: Vec::new(),
         }
     }
 }
@@ -799,8 +842,6 @@ where
 
     fn rewrite(&mut self, expr: ScalarExpr) -> Result<ScalarExpr, Self::Error> {
         fn unexpected_column(col_name: &str, scope: &OperatorScope, metadata: MetadataRef) -> OptimizerError {
-            // Store Rc<metadata> instead of MetadataRef<'_> in
-            //TODO: Include names of the outer columns.
             let outer_columns: Vec<_> = scope
                 .outer_columns()
                 .iter()
@@ -863,6 +904,11 @@ where
     }
 
     fn post_rewrite(&mut self, expr: ScalarExpr) -> Result<ScalarExpr, Self::Error> {
+        if let ScalarExpr::Column(id) = &expr {
+            if self.scope.outer_columns().contains(id) {
+                self.referenced_outer_columns.push(*id);
+            }
+        }
         self.validator.after_expr(&expr);
         Ok(expr)
     }
@@ -1082,6 +1128,83 @@ impl OperatorCallback for OperatorCallbackImpl {
         };
         let expr = memo.insert_group(expr, &scope);
         ScalarNode::from_mexpr(expr)
+    }
+}
+
+struct BuildLogicalExprs<'a> {
+    pub scope: Option<OperatorScope>,
+    pub builder: &'a mut OperatorBuilder,
+}
+
+impl BuildLogicalExprs<'_> {
+    fn add_scalar_expr(&self, expr: BuildFilter, scope: Option<&OperatorScope>) -> Result<ScalarNode, OptimizerError> {
+        match expr {
+            BuildFilter::New(expr) => {
+                if let Some(scope) = scope {
+                    Ok(self.builder.add_scalar_node(expr, scope))
+                } else {
+                    Err(OptimizerError::Internal("No scope".to_string()))
+                }
+            }
+            BuildFilter::Constructed(expr) => Ok(expr),
+        }
+    }
+
+    fn take_scope(self) -> OperatorScope {
+        self.scope.expect("No scope")
+    }
+}
+
+impl<'a> BuildOperators for BuildLogicalExprs<'a> {
+    fn metadata(&self) -> MetadataRef {
+        self.builder.metadata.get_ref()
+    }
+
+    fn add_operator(&mut self, expr: Operator) -> Result<RelNode, OptimizerError> {
+        let scope = self.scope.take().expect("No scope");
+        self.builder.add_operator_and_scope(expr, scope);
+        let (node, scope) = self.builder.rel_node()?;
+        self.scope = Some(scope);
+        Ok(node)
+    }
+
+    fn select(&mut self, input: RelNode, filter: Option<BuildFilter>) -> Result<Operator, OptimizerError> {
+        let filter = match filter {
+            Some(filter) => Some(self.add_scalar_expr(filter, self.scope.as_ref())?),
+            None => None,
+        };
+        let select = LogicalExpr::Select(LogicalSelect { input, filter });
+        Ok(select.into())
+    }
+
+    fn inner_join(
+        &mut self,
+        left: RelNode,
+        right: RelNode,
+        condition: BuildFilter,
+    ) -> Result<Operator, OptimizerError> {
+        let condition = self.add_scalar_expr(condition, self.scope.as_ref())?;
+        let join = LogicalExpr::Join(LogicalJoin {
+            join_type: JoinType::Inner,
+            left,
+            right,
+            condition: JoinCondition::On(JoinOn::new(condition)),
+        });
+
+        Ok(join.into())
+    }
+
+    fn left_join(&mut self, left: RelNode, right: RelNode, condition: BuildFilter) -> Result<Operator, OptimizerError> {
+        let condition = self.add_scalar_expr(condition, self.scope.as_ref())?;
+
+        let join = LogicalExpr::Join(LogicalJoin {
+            join_type: JoinType::Left,
+            left,
+            right,
+            condition: JoinCondition::On(JoinOn::new(condition)),
+        });
+
+        Ok(join.into())
     }
 }
 

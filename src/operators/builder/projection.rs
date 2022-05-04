@@ -60,7 +60,7 @@ impl<'a> ProjectionListBuilder<'a> {
         Ok((column_id, expr))
     }
 
-    pub fn add_column(&mut self, id: ColumnId, name: String) -> Result<(), OptimizerError> {
+    fn add_column(&mut self, id: ColumnId, name: String) -> Result<(), OptimizerError> {
         let expr = self.builder.add_scalar_node(ScalarExpr::Column(id), self.scope);
 
         self.projection.add_expr(id, name, expr);
@@ -68,7 +68,7 @@ impl<'a> ProjectionListBuilder<'a> {
         Ok(())
     }
 
-    pub fn add_synthetic_column(
+    fn add_synthetic_column(
         &mut self,
         expr: ScalarExpr,
         name: String,
