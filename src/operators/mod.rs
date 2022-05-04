@@ -152,7 +152,10 @@ pub enum Properties {
 
 impl Properties {
     pub fn new_scalar_properties(nested_sub_queries: Vec<Operator>) -> Self {
-        Properties::Scalar(ScalarProperties { nested_sub_queries })
+        Properties::Scalar(ScalarProperties {
+            nested_sub_queries,
+            has_correlated_sub_queries: false,
+        })
     }
 }
 
@@ -219,7 +222,8 @@ impl RelationalProperties {
 /// Properties of a scalar operator.
 #[derive(Debug, Clone, Default)]
 pub struct ScalarProperties {
-    pub(crate) nested_sub_queries: Vec<Operator>,
+    pub nested_sub_queries: Vec<Operator>,
+    pub has_correlated_sub_queries: bool,
 }
 
 impl ScalarProperties {
@@ -296,12 +300,20 @@ impl MemoExpr for Operator {
     }
 
     fn new_properties_with_nested_sub_queries(
-        _props: Self::Props,
+        props: Self::Props,
         sub_queries: impl Iterator<Item = Self>,
     ) -> Self::Props {
-        Properties::Scalar(ScalarProperties {
-            nested_sub_queries: sub_queries.collect(),
-        })
+        if let Properties::Scalar(scalar) = props {
+            Properties::Scalar(ScalarProperties {
+                nested_sub_queries: sub_queries.collect(),
+                has_correlated_sub_queries: scalar.has_correlated_sub_queries,
+            })
+        } else {
+            Properties::Scalar(ScalarProperties {
+                nested_sub_queries: sub_queries.collect(),
+                has_correlated_sub_queries: false,
+            })
+        }
     }
 
     fn num_children(&self) -> usize {
@@ -434,6 +446,13 @@ impl From<OperatorExpr> for Operator {
         Operator {
             state: MemoExprState::new(expr, props),
         }
+    }
+}
+
+impl From<LogicalExpr> for Operator {
+    fn from(expr: LogicalExpr) -> Self {
+        let expr = OperatorExpr::from(expr);
+        Operator::from(expr)
     }
 }
 

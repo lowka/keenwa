@@ -1,5 +1,6 @@
 use crate::catalog::mutable::MutableCatalog;
 use crate::catalog::{TableBuilder, DEFAULT_SCHEMA};
+use crate::operators::builder::OperatorBuilderConfig;
 use crate::operators::format::{OperatorTreeFormatter, SubQueriesFormatter};
 use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::RelExpr;
@@ -167,5 +168,10 @@ fn new_operator_builder(tables: &[&TestTable]) -> OperatorFromSqlBuilder<NoStati
         catalog.add_table(DEFAULT_SCHEMA, builder.build());
     }
 
-    OperatorFromSqlBuilder::new(catalog, NoStatisticsBuilder)
+    let mut sql_builder = OperatorFromSqlBuilder::new(catalog, NoStatisticsBuilder);
+    let operator_config = OperatorBuilderConfig {
+        decorrelate_subqueries: false,
+    };
+    sql_builder.operator_builder_config(operator_config);
+    sql_builder
 }

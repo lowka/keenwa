@@ -6,7 +6,9 @@ use crate::datatypes::DataType;
 use crate::error::macros::{not_implemented, not_supported};
 use crate::error::OptimizerError;
 use crate::meta::MutableMetadata;
-use crate::operators::builder::{MemoizeOperators, OperatorBuilder, OrderingOption, OrderingOptions, TableAlias};
+use crate::operators::builder::{
+    MemoizeOperators, OperatorBuilder, OperatorBuilderConfig, OrderingOption, OrderingOptions, TableAlias,
+};
 use crate::operators::properties::LogicalPropertiesBuilder;
 use crate::operators::relational::join::JoinType;
 use crate::operators::relational::RelNode;
@@ -34,6 +36,7 @@ use std::str::FromStr;
 pub struct OperatorFromSqlBuilder<T> {
     catalog: CatalogRef,
     statistics_builder: T,
+    operator_builder_config: OperatorBuilderConfig,
 }
 
 impl<T> OperatorFromSqlBuilder<T>
@@ -45,7 +48,12 @@ where
         OperatorFromSqlBuilder {
             catalog,
             statistics_builder,
+            operator_builder_config: OperatorBuilderConfig::default(),
         }
+    }
+
+    pub fn operator_builder_config(&mut self, value: OperatorBuilderConfig) {
+        self.operator_builder_config = value;
     }
 
     /// Parses the given SQL string and returns an [operator tree](Operator) that can then passed to the [query optimizer].
@@ -57,8 +65,12 @@ where
         let memo = OperatorMemoBuilder::new(metadata.clone()).build_with_properties(properties_builder);
         let mut memoization = MemoizeOperators::new(memo);
 
-        let operator_builder =
-            OperatorBuilder::new(memoization.take_callback(), self.catalog.clone(), metadata.clone());
+        let operator_builder = OperatorBuilder::with_config(
+            self.operator_builder_config,
+            memoization.take_callback(),
+            self.catalog.clone(),
+            metadata.clone(),
+        );
 
         let operator = build_from_sql(operator_builder, query)?;
         let memo = memoization.into_memo();
@@ -1040,4 +1052,16 @@ catalog:
         let text = include_str!("subqueries_tests.yaml");
         run_test_cases(text);
     }
+
+    // #[test]
+    // fn test_correlated_subqueries_exists() {
+    //     let text = include_str!("correlated_exists_tests.yaml");
+    //     run_test_cases(text);
+    // }
+    //
+    // #[test]
+    // fn test_correlated_subqueries_in_subquery() {
+    //     let text = include_str!("correlated_in_subquery_tests.yaml");
+    //     run_test_cases(text);
+    // }
 }

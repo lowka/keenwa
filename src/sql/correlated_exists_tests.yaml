@@ -1,0 +1,181 @@
+query:
+  SELECT a1 FROM a WHERE EXISTS (SELECT 1 FROM b WHERE b1 = a2)
+#>SELECT a1 FROM a JOIN b ON b1 = a2
+ok: |
+  LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalJoin type=Inner on=col:5 = col:2
+      left: LogicalGet a cols=[1, 2, 3, 4]
+      right: LogicalGet b cols=[5, 6, 7]
+---
+query:
+  SELECT a1 FROM a WHERE EXISTS (SELECT 1 FROM b WHERE b1 = a2 AND b3 = 100)
+#>SELECT a1 FROM a JOIN b ON b1 = a2 AND b3 = 100
+ok: |
+  LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalJoin type=Inner on=col:5 = col:2 AND col:7 = 100
+      left: LogicalGet a cols=[1, 2, 3, 4]
+      right: LogicalGet b cols=[5, 6, 7]
+---
+query:
+  SELECT a1 FROM a WHERE EXISTS (SELECT 1 FROM b WHERE b1 = a2 OR b3 = 100)
+#>SELECT a1 FROM a JOIN b ON b1 = a2 OR b3 = 100
+ok: |
+  LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalJoin type=Inner on=col:5 = col:2 OR col:7 = 100
+      left: LogicalGet a cols=[1, 2, 3, 4]
+      right: LogicalGet b cols=[5, 6, 7]
+---
+query:
+  SELECT a1 FROM a WHERE EXISTS (SELECT 1 FROM b WHERE b1 = a2 AND a3 = b2)
+#>SELECT a1 FROM a JOIN b ON b1 = a2 AND a3 = b2
+ok: |
+  LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalJoin type=Inner on=col:5 = col:2 AND col:3 = col:6
+      left: LogicalGet a cols=[1, 2, 3, 4]
+      right: LogicalGet b cols=[5, 6, 7]
+---
+### EXISTS (..) + additional conditions
+query:
+  SELECT a1 FROM a WHERE EXISTS (SELECT 1 FROM b WHERE b1 = a2) AND a3 > 10
+#>SELECT a1 FROM a JOIN b ON b1 = a2 AND a3 > 10
+ok: |
+  LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalSelect
+      input: LogicalJoin type=Inner on=col:5 = col:2
+        left: LogicalGet a cols=[1, 2, 3, 4]
+        right: LogicalGet b cols=[5, 6, 7]
+      filter: Expr col:3 > 10
+---
+### EXISTS (..) + additional conditions
+query:
+  SELECT a1 FROM a WHERE EXISTS (SELECT 1 FROM b WHERE b1 = a2 AND EXISTS (SELECT 1 FROM c WHERE c1 = b2))
+#>SELECT a1 FROM a JOIN b ON b1 = a2 JOIN c ON c1 = b2
+ok: |
+  LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalJoin type=Inner on=col:5 = col:2
+      left: LogicalGet a cols=[1, 2, 3, 4]
+      right: LogicalJoin type=Inner on=col:8 = col:6
+        left: LogicalGet b cols=[5, 6, 7]
+        right: LogicalGet c cols=[8, 9, 10]
+---
+
+#### IGNORE <predicate> <OR <SubQuery>>
+# TODO: Replace SELECT ... WHERE <p1> OR <subquery> WITH
+#   SELECT ... WHERE <p1> UNION ALL SELECT ... <subquery>
+# and the decorrelate.
+query:
+  SELECT a1 FROM a WHERE a2 IN (SELECT 1 FROM b WHERE b1 = a2) OR a1 > 100
+ok: |
+  LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalSelect
+      input: LogicalGet a cols=[1, 2, 3, 4]
+      filter: Expr col:2 IN 04 OR col:1 > 100
+  
+  Sub query from filter col:2 IN 04 OR col:1 > 100:
+  LogicalProjection cols=[8] outer_cols=[2] exprs: [1]
+    input: LogicalSelect outer_cols=[2]
+      input: LogicalGet b cols=[5, 6, 7]
+      filter: Expr col:5 = col:2
+---
+
+#############################
+#### NOT EXISTS
+#############################
+
+query:
+  SELECT a1 FROM a WHERE NOT EXISTS (SELECT 1 FROM b WHERE b1 = a2)
+#>SELECT a1 FROM a LEFT JOIN b ON b1 = a2 WHERE b1 IS NULL
+ok: |
+  LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalSelect
+      input: LogicalJoin type=Left on=col:5 = col:2
+        left: LogicalGet a cols=[1, 2, 3, 4]
+        right: LogicalGet b cols=[5, 6, 7]
+      filter: Expr col:5 IS NULL
+---
+query:
+  SELECT a1 FROM a WHERE NOT EXISTS (SELECT 1 FROM b WHERE b1 + b2 = a2)
+#>SELECT a1 FROM a LEFT JOIN b ON b1 + b2 = a2 WHERE b1 IS NULL AND b2 IS NULL
+ok: |
+  LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalSelect
+      input: LogicalJoin type=Left on=col:5 + col:6 = col:2
+        left: LogicalGet a cols=[1, 2, 3, 4]
+        right: LogicalGet b cols=[5, 6, 7]
+      filter: Expr col:5 IS NULL AND col:6 IS NULL
+---
+query:
+  SELECT a1 FROM a WHERE NOT EXISTS (SELECT 1 FROM b WHERE a2 = b1 + b2)
+#>SELECT a1 FROM a LEFT JOIN b ON a2 = b1 + b2 WHERE b1 IS NULL AND b2 IS NULL
+ok: |
+  LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalSelect
+      input: LogicalJoin type=Left on=col:2 = col:5 + col:6
+        left: LogicalGet a cols=[1, 2, 3, 4]
+        right: LogicalGet b cols=[5, 6, 7]
+      filter: Expr col:5 IS NULL AND col:6 IS NULL
+---
+query:
+  SELECT b1 FROM b WHERE NOT EXISTS (SELECT 1 FROM c WHERE c1 = b3)
+#>SELECT b1 FROM b LEFT JOIN c ON c1 = b3  WHERE c1 IS NULL
+ok: |
+  LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalSelect
+      input: LogicalJoin type=Left on=col:4 = col:3
+        left: LogicalGet b cols=[1, 2, 3]
+        right: LogicalGet c cols=[4, 5, 6]
+      filter: Expr col:4 IS NULL
+---
+query:
+  SELECT a1 FROM a WHERE NOT EXISTS (SELECT 1 FROM b WHERE a1 = b1 AND NOT EXISTS (SELECT 1 FROM c WHERE c1 = b1))
+#> SELECT a1 FROM a LEFT JOIN (SELECT b1,c1 FROM b LEFT JOIN c ON c1 = b1 WHERE c1 IS NULL) bc ON a1 = b1 AND c1 IS NULL WHERE bc.b1 IS NULL;
+# remove duplicate predicates in WHERE .. and JOIN .. : [bc.c1 IS NULL] [bc.c1 IS NULL];
+ok: |
+  LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalSelect
+      input: LogicalJoin type=Left on=col:8 IS NULL AND col:1 = col:5
+        left: LogicalGet a cols=[1, 2, 3, 4]
+        right: LogicalJoin type=Left on=col:8 = col:5
+          left: LogicalGet b cols=[5, 6, 7]
+          right: LogicalGet c cols=[8, 9, 10]
+      filter: Expr col:8 IS NULL AND col:5 IS NULL
+---
+query:
+  SELECT a1 FROM a WHERE NOT EXISTS (SELECT 1 FROM b WHERE a2 = b2 AND NOT EXISTS (SELECT 1 FROM c WHERE c1 = b3))
+#> SELECT a1 FROM a LEFT JOIN (SELECT b1,c1 FROM b LEFT JOIN c ON c1 = b1 WHERE c1 IS NULL) bc ON a2 = b2 AND bc.c1 IS NULL WHERE bc.b2 IS NULL;
+# remove duplicate predicates in WHERE .. and JOIN .. : [bc.c1 IS NULL] [bc.c1 IS NULL];
+ok: |
+  LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalSelect
+      input: LogicalJoin type=Left on=col:8 IS NULL AND col:2 = col:6
+        left: LogicalGet a cols=[1, 2, 3, 4]
+        right: LogicalJoin type=Left on=col:8 = col:7
+          left: LogicalGet b cols=[5, 6, 7]
+          right: LogicalGet c cols=[8, 9, 10]
+      filter: Expr col:8 IS NULL AND col:6 IS NULL
+---
+query:
+  SELECT a1 FROM a WHERE NOT EXISTS (SELECT 1 FROM b WHERE a2 + 100 = b1 + b2)
+#>SELECT a1 FROM a LEFT JOIN b ON a2 + 100 = b1 + b2 WHERE b1 IS NULL AND b2 IS NULL
+ok: |
+  LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalSelect
+      input: LogicalJoin type=Left on=col:2 + 100 = col:5 + col:6
+        left: LogicalGet a cols=[1, 2, 3, 4]
+        right: LogicalGet b cols=[5, 6, 7]
+      filter: Expr col:5 IS NULL AND col:6 IS NULL
+---
+#############################
+### NOT EXISTS (..) + additional conditions
+#############################
+query: |
+  SELECT a1 FROM a WHERE a3 > 10 AND NOT EXISTS (SELECT 1 FROM b WHERE b1 = a2)
+#>SELECT a1 FROM a LEFT JOIN b ON b1 = a2 WHERE a1 IS NULL AND a3 > 10
+ok: |
+  LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalSelect
+      input: LogicalJoin type=Left on=col:5 = col:2
+        left: LogicalGet a cols=[1, 2, 3, 4]
+        right: LogicalGet b cols=[5, 6, 7]
+      filter: Expr col:5 IS NULL AND col:3 > 10
+---

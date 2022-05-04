@@ -429,7 +429,11 @@ where
                 self.format_logical(props.logical());
                 self.format_physical(props.physical());
             }
-            Properties::Scalar(_) => {}
+            Properties::Scalar(props) => {
+                if props.has_correlated_sub_queries {
+                    self.fmt.write_value("", "<correlated>");
+                }
+            }
         }
     }
 
@@ -548,6 +552,7 @@ LogicalAggregate cols=[3, 4]
             logical: LogicalProperties {
                 output_columns: vec![col1, col2],
                 outer_columns: vec![col1],
+                has_correlated_subqueries: false,
                 statistics: None,
             },
             physical: PhysicalProperties {
