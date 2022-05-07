@@ -80,13 +80,15 @@ impl AggregateBuilder<'_> {
         let (input, scope) = self.builder.rel_node()?;
 
         let aggr_exprs = std::mem::take(&mut self.aggr_exprs);
+        let metadata = self.builder.metadata.clone();
         let mut projection_builder = ProjectionListBuilder::new(self.builder, &scope);
         let mut non_aggregate_columns = HashSet::new();
 
         for expr in aggr_exprs {
             match expr {
                 AggrExpr::Function { func, distinct, column } => {
-                    let mut rewriter = RewriteExprs::new(&scope, ValidateProjectionExpr::projection_expr());
+                    let mut rewriter =
+                        RewriteExprs::new(&scope, metadata.clone(), ValidateProjectionExpr::projection_expr());
                     let expr = ScalarExpr::ColumnName(column);
                     let expr = expr.rewrite(&mut rewriter)?;
                     let aggr_expr = ScalarExpr::Aggregate {
@@ -146,7 +148,8 @@ impl AggregateBuilder<'_> {
 
             let expr = match expr {
                 ScalarExpr::Column(_) | ScalarExpr::ColumnName(_) => {
-                    let mut rewriter = RewriteExprs::new(&scope, ValidateProjectionExpr::projection_expr());
+                    let mut rewriter =
+                        RewriteExprs::new(&scope, metadata.clone(), ValidateProjectionExpr::projection_expr());
                     let expr = expr.rewrite(&mut rewriter)?;
                     let expr = self.builder.add_scalar_node(expr, &scope);
                     if let ScalarExpr::Column(id) = expr.expr() {
@@ -190,7 +193,7 @@ impl AggregateBuilder<'_> {
         let having_expr = if let Some(expr) = self.having.take() {
             disallow_nested_subqueries(&expr, "AGGREGATE", "HAVING clause")?;
 
-            let mut rewriter = RewriteExprs::new(&scope, ValidateFilterExpr::where_clause());
+            let mut rewriter = RewriteExprs::new(&scope, metadata.clone(), ValidateFilterExpr::where_clause());
             let expr = expr.rewrite(&mut rewriter)?;
             let mut validate = ValidateHavingClause {
                 projection_columns: &non_aggregate_columns,

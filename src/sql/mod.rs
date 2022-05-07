@@ -178,14 +178,14 @@ fn build_select(builder: OperatorBuilder, select: Select) -> Result<OperatorBuil
     not_implemented!(!select.lateral_views.is_empty(), "Lateral views IN SELECT");
 
     let mut projection = vec![];
-    // We should be able to reference tables and columns accessible to
+    // We should be able to reference tables and columns accessible
     // to the topmost operator in the operator tree.
-    let builder = builder.sub_query_builder();
     let builder = if select.from.is_empty() {
         builder.empty(true)?
     } else {
         let mut builder = builder;
         for (i, from) in select.from.into_iter().enumerate() {
+            // Disallow reference to columns from the left side of a join in projections
             if i == 0 {
                 builder = build_from(builder, from)?;
             } else {
@@ -326,7 +326,8 @@ fn build_set_operation(
 }
 
 fn build_from(builder: OperatorBuilder, from: TableWithJoins) -> Result<OperatorBuilder, OptimizerError> {
-    let mut builder = build_relation(builder, from.relation)?;
+    let join_builder = builder.new_relation_builder();
+    let mut builder = build_relation(join_builder.clone(), from.relation)?;
 
     for join in from.joins {
         let join: Join = join;
@@ -339,7 +340,7 @@ fn build_from(builder: OperatorBuilder, from: TableWithJoins) -> Result<Operator
             JoinOperator::CrossApply => not_supported!("CROSS APPLY JOIN"),
             JoinOperator::OuterApply => not_supported!("OUTER APPLY JOIN"),
         };
-        let right = build_relation(builder.clone(), join.relation)?;
+        let right = build_relation(join_builder.clone(), join.relation)?;
         match constraint {
             Some(JoinConstraint::On(expr)) => {
                 let expr = build_scalar_expr(expr, builder.clone())?;
@@ -370,7 +371,6 @@ fn build_from(builder: OperatorBuilder, from: TableWithJoins) -> Result<Operator
 
 fn build_relation(builder: OperatorBuilder, relation: TableFactor) -> Result<OperatorBuilder, OptimizerError> {
     // Make outer columns, table etc. accessible.
-    let builder = builder.sub_query_builder();
     let builder = match relation {
         TableFactor::Table {
             name,

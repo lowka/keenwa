@@ -14,7 +14,7 @@ use scope::{OperatorScope, RelationInScope};
 use crate::catalog::CatalogRef;
 use crate::error::OptimizerError;
 use crate::memo::MemoExprState;
-use crate::meta::{ColumnId, ColumnMetadata, MutableMetadata};
+use crate::meta::{ColumnId, ColumnMetadata, MetadataRef, MutableMetadata};
 use crate::operators::relational::join::{JoinCondition, JoinOn, JoinType, JoinUsing};
 use crate::operators::relational::logical::{
     LogicalDistinct, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin, LogicalLimit,
@@ -180,7 +180,8 @@ impl OperatorBuilder {
     pub fn select(mut self, filter: Option<ScalarExpr>) -> Result<Self, OptimizerError> {
         let (input, scope) = self.rel_node()?;
         let filter = if let Some(filter) = filter {
-            let mut rewriter = RewriteExprs::new(&scope, ValidateFilterExpr::where_clause());
+            let metadata = self.metadata.clone();
+            let mut rewriter = RewriteExprs::new(&scope, metadata, ValidateFilterExpr::where_clause());
             let filter = filter.rewrite(&mut rewriter)?;
             let expr = self.add_scalar_node(filter, &scope);
             Some(expr)
@@ -293,7 +294,8 @@ impl OperatorBuilder {
 
         let scope = left_scope.join(right_scope);
 
-        let mut rewriter = RewriteExprs::new(&scope, ValidateFilterExpr::join_clause());
+        let metadata = self.metadata.clone();
+        let mut rewriter = RewriteExprs::new(&scope, metadata, ValidateFilterExpr::join_clause());
         let expr = expr.rewrite(&mut rewriter)?;
         let expr = self.add_scalar_node(expr, &scope);
         let condition = JoinCondition::On(JoinOn::new(expr));
@@ -356,7 +358,9 @@ impl OperatorBuilder {
                         expr,
                         descending: _descending,
                     } = option;
-                    let mut rewriter = RewriteExprs::new(&scope, ValidateProjectionExpr::projection_expr());
+
+                    let metadata = self.metadata.clone();
+                    let mut rewriter = RewriteExprs::new(&scope, metadata, ValidateProjectionExpr::projection_expr());
                     let expr = expr.rewrite(&mut rewriter)?;
                     let columns = scope.columns();
                     let column_id = match expr {
@@ -444,8 +448,10 @@ impl OperatorBuilder {
     pub fn distinct(mut self, on_expr: Option<ScalarExpr>) -> Result<Self, OptimizerError> {
         let (input, input_scope) = self.rel_node()?;
         let on_expr = if let Some(on_expr) = on_expr {
+            let metadata = self.metadata.clone();
             let mut rewriter = RewriteExprs::new(
                 &input_scope,
+                metadata,
                 ValidateFilterExpr {
                     allow_aggregates: false,
                 },
@@ -507,6 +513,21 @@ impl OperatorBuilder {
         }
     }
 
+    /// Creates a builder that shares the metadata with this builder and
+    /// reuses outer columns from the current scope.
+    /// Unlike [sub_query_builder](Self::sub_query_builder) this method should be used
+    /// to operator trees that will be joined with this operator.
+    pub fn new_relation_builder(&self) -> Self {
+        OperatorBuilder {
+            callback: self.callback.clone(),
+            catalog: self.catalog.clone(),
+            metadata: self.metadata.clone(),
+            scope: self.scope.as_ref().map(|scope| scope.new_scope(self.metadata.get_ref())),
+            operator: None,
+            sub_query_builder: true,
+        }
+    }
+
     /// Creates a builder that shares the metadata with this one.
     /// Unlike [sub_query_builder](Self::sub_query_builder) this method should be used
     /// to build independent operator trees.
@@ -531,24 +552,6 @@ impl OperatorBuilder {
             }
             (None, _) => Err(OptimizerError::Internal("Build: No operator".to_string())),
             (_, _) => Err(OptimizerError::Internal("Build: No scope".to_string())),
-        }
-    }
-
-    /// Creates a nested sub query expression from this nested operator builder.
-    /// If this builder has not been created via call to [Self::sub_query_builder()] this method returns an error.
-    #[deprecated]
-    pub fn to_sub_query(mut self) -> Result<ScalarExpr, OptimizerError> {
-        if self.sub_query_builder {
-            let (operator, _) = self.rel_node()?;
-            if operator.props().logical.output_columns().len() != 1 {
-                let message = "Sub query must return only one column";
-                Err(OptimizerError::Internal(message.into()))
-            } else {
-                Ok(ScalarExpr::SubQuery(operator))
-            }
-        } else {
-            let message = "Sub queries can only be created using builders instantiated via call to OperatorBuilder::sub_query_builder()";
-            Err(OptimizerError::Internal(message.into()))
         }
     }
 
@@ -763,15 +766,17 @@ impl Debug for OperatorBuilder {
 struct RewriteExprs<'a, T> {
     scope: &'a OperatorScope,
     validator: ExprValidator<T>,
+    metadata: Rc<MutableMetadata>,
 }
 
 impl<'a, T> RewriteExprs<'a, T>
 where
     T: ValidateExpr,
 {
-    fn new(scope: &'a OperatorScope, validator: T) -> Self {
+    fn new(scope: &'a OperatorScope, metadata: Rc<MutableMetadata>, validator: T) -> Self {
         RewriteExprs {
             scope,
+            metadata,
             validator: ExprValidator {
                 aggregate_depth: 0,
                 alias_depth: 0,
@@ -793,32 +798,42 @@ where
     }
 
     fn rewrite(&mut self, expr: ScalarExpr) -> Result<ScalarExpr, Self::Error> {
+        fn unexpected_column(col_name: &str, scope: &OperatorScope, metadata: MetadataRef) -> OptimizerError {
+            // Store Rc<metadata> instead of MetadataRef<'_> in
+            //TODO: Include names of the outer columns.
+            let outer_columns: Vec<_> = scope
+                .outer_columns()
+                .iter()
+                .map(|id| {
+                    let col_name = metadata.get_column(id);
+                    (col_name.name().clone(), *id)
+                })
+                .collect();
+
+            OptimizerError::Internal(format!(
+                "Unexpected column: {}. Input columns: {}, Outer columns: {}",
+                col_name,
+                DisplayColumns(scope.columns()),
+                DisplayColumns(&outer_columns),
+            ))
+        }
+
         let expr = match expr {
             ScalarExpr::Column(column_id) => {
                 let exists = self.scope.find_column_by_id(column_id).is_some();
                 if !exists {
-                    return Err(OptimizerError::Internal(format!(
-                        "Unexpected column id: {}. Input columns: {}",
-                        column_id,
-                        DisplayColumns(self.scope.columns()),
-                    )));
+                    let col_name = format!("!{}", column_id);
+                    Err(unexpected_column(col_name.as_str(), self.scope, self.metadata.get_ref()))
+                } else {
+                    Ok(expr)
                 }
-                Ok(expr)
             }
             ScalarExpr::ColumnName(ref column_name) => {
                 let column_id = self.scope.find_column_by_name(column_name);
 
                 match column_id {
                     Some(column_id) => Ok(ScalarExpr::Column(column_id)),
-                    None => {
-                        let outer_columns = self.scope.parent().map(|s| s.columns().to_vec()).unwrap_or_default();
-                        return Err(OptimizerError::Internal(format!(
-                            "Unexpected column: {}. Input columns: {}, Outer columns: {}",
-                            column_name,
-                            DisplayColumns(self.scope.columns()),
-                            DisplayColumns(&outer_columns),
-                        )));
-                    }
+                    None => Err(unexpected_column(column_name, self.scope, self.metadata.get_ref())),
                 }
             }
             _ => {
