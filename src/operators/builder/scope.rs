@@ -10,8 +10,13 @@ pub struct OperatorScope {
     //FIXME: It is not necessary to store output relation in both `relation` and `relations` fields.
     relation: RelationInScope,
     relations: RelationsInScope,
+    // FIXME: Rewrite OperatorScope so it uses the parent scope.
+    //  (currently parent is never set to anything but None)
     parent: Option<Rc<OperatorScope>>,
-    // columns from the parent scope.
+    // FIXME: store relations that are not accessible from this scope.
+    //  (eg. SELECT .. FROM a JOIN (SELECT * FROM b1 WHERE b1 = a1)
+    //    in the above query column a1 should not be accessible
+    // columns from the outer scope.
     outer_columns: Vec<ColumnId>,
 }
 
@@ -40,20 +45,7 @@ impl OperatorScope {
     }
 
     pub fn new_child_scope(&self, metadata: MetadataRef) -> Self {
-        // Outer columns of the child scope include:
-        // - the outer columns from this scope.
-        // - the columns returned by the output relation and the columns they reference
-        // (in case when a column is an expression/a synthetic column) .
-        let mut outer_columns = self.outer_columns.to_vec();
-
-        outer_columns.extend(self.columns().iter().flat_map(|(_, id)| {
-            let column = metadata.get_column(id);
-            let mut columns = vec![*id];
-            if let Some(expr) = column.expr() {
-                columns.extend(exprs::collect_columns(expr).into_iter());
-            }
-            columns
-        }));
+        let outer_columns = self.get_outer_columns(metadata);
 
         let mut relations = RelationsInScope::from_relation(self.relation.clone());
         relations.add_all(self.relations.clone());
@@ -66,13 +58,31 @@ impl OperatorScope {
         }
     }
 
+    pub fn new_scope(&self, metadata: MetadataRef) -> Self {
+        let outer_columns = self.get_outer_columns(metadata);
+        let relations = if self.relation.columns.is_empty() {
+            // The current expression has not been added to the operator tree
+            assert_eq!(self.relations.relations.len(), 1, "Unexpected number of relations");
+            RelationsInScope::from_relation(self.relations.relations[0].clone())
+        } else {
+            RelationsInScope::new()
+        };
+
+        OperatorScope {
+            relation: RelationInScope::from_columns(vec![]),
+            parent: None,
+            relations,
+            outer_columns,
+        }
+    }
+
     pub fn with_new_columns(&self, columns: Vec<(String, ColumnId)>) -> Self {
         let relation = RelationInScope::from_columns(columns);
         let relations = RelationsInScope::from_relation(relation.clone());
 
         OperatorScope {
             relation,
-            parent: self.parent.clone(),
+            parent: None,
             relations,
             outer_columns: self.outer_columns.clone(),
         }
@@ -229,6 +239,25 @@ impl OperatorScope {
                 return None;
             }
         }
+    }
+
+    fn get_outer_columns(&self, metadata: MetadataRef) -> Vec<ColumnId> {
+        // Outer columns of a scope include:
+        // + the outer columns from the scope.
+        // + the columns returned by the output relation and the columns they reference
+        // (in case when a column is an expression/a synthetic column) .
+        let mut outer_columns = self.outer_columns.to_vec();
+
+        outer_columns.extend(self.columns().iter().flat_map(|(_, id)| {
+            let column = metadata.get_column(id);
+            let mut columns = vec![*id];
+            if let Some(expr) = column.expr() {
+                columns.extend(exprs::collect_columns(expr).into_iter());
+            }
+            columns
+        }));
+
+        outer_columns
     }
 }
 

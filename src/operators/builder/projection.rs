@@ -31,7 +31,8 @@ impl<'a> ProjectionListBuilder<'a> {
                 }
             }
             _ => {
-                let mut rewriter = RewriteExprs::new(self.scope, ValidateProjectionExpr::projection_expr());
+                let metadata = self.builder.metadata.clone();
+                let mut rewriter = RewriteExprs::new(self.scope, metadata, ValidateProjectionExpr::projection_expr());
                 let expr = expr.rewrite(&mut rewriter)?;
                 match expr {
                     ScalarExpr::Column(id) => {
