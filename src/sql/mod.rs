@@ -1054,15 +1054,15 @@ catalog:
         run_test_cases(text);
     }
 
-    // #[test]
-    // fn test_correlated_subqueries_exists() {
-    //     let text = include_str!("correlated_exists_tests.yaml");
-    //     run_test_cases(text);
-    // }
-    //
-    // #[test]
-    // fn test_correlated_subqueries_in_subquery() {
-    //     let text = include_str!("correlated_in_subquery_tests.yaml");
-    //     run_test_cases(text);
-    // }
+    #[test]
+    fn test_correlated_subqueries_exists() {
+        let text = include_str!("correlated_exists_tests.yaml");
+        run_test_cases(text);
+    }
+
+    #[test]
+    fn test_correlated_subqueries_in_subquery() {
+        let text = include_str!("correlated_in_subquery_tests.yaml");
+        run_test_cases(text);
+    }
 }

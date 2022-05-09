@@ -1,3 +1,6 @@
+options:
+  decorrelate_subqueries: true
+---
 #### IN (SELECT col ...)
 query:
   SELECT a1 FROM a WHERE a2 IN (SELECT b2 FROM b)
