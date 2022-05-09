@@ -7,8 +7,8 @@ use crate::operators::relational::RelExpr;
 use crate::operators::OperatorExpr;
 use crate::sql::testing::parser::parse_test_cases;
 use crate::sql::testing::{
-    SqlTestCase, SqlTestCaseRunner, SqlTestCaseSet, TestCaseFailure, TestCaseRunResult, TestCaseRunner,
-    TestCaseRunnerFactory, TestRunnerError, TestTable,
+    DefaultTestOptionsParser, SqlTestCase, SqlTestCaseRunner, SqlTestCaseSet, TestCaseFailure, TestCaseRunResult,
+    TestCaseRunner, TestCaseRunnerFactory, TestCatalog, TestOptions, TestRunnerError,
 };
 use crate::sql::OperatorFromSqlBuilder;
 use crate::statistics::{NoStatisticsBuilder, StatisticsBuilder};
@@ -68,9 +68,13 @@ where
     }
     buf.push_str(sql_test_cases_str);
 
-    match parse_test_cases(buf.as_str()) {
-        Ok(SqlTestCaseSet { catalog, test_cases }) => {
-            let runner = SqlTestCaseRunner::new(test_case_runner_factory, catalog, test_cases);
+    match parse_test_cases(buf.as_str(), &DefaultTestOptionsParser) {
+        Ok(SqlTestCaseSet {
+            catalog,
+            options,
+            test_cases,
+        }) => {
+            let runner = SqlTestCaseRunner::new(test_case_runner_factory, catalog, options, test_cases);
             runner.run()
         }
         Err(error) => panic!("Failed to parse test cases: {}", error),
@@ -103,8 +107,13 @@ where
 impl TestCaseRunnerFactory for RelExprTestCaseRunnerFactory {
     type Runner = RelExprTestCaseRunner<NoStatisticsBuilder>;
 
-    fn new_runner(&self, _test_case: &SqlTestCase, tables: Vec<&TestTable>) -> Result<Self::Runner, TestRunnerError> {
-        let builder = new_operator_builder(&tables);
+    fn new_runner(
+        &self,
+        _test_case: &SqlTestCase,
+        catalog: &TestCatalog,
+        options: &TestOptions,
+    ) -> Result<Self::Runner, TestRunnerError> {
+        let builder = new_operator_builder(catalog, options);
         Ok(RelExprTestCaseRunner { builder })
     }
 }
@@ -118,8 +127,13 @@ struct ScalarExprTestCaseRunner<T> {
 impl TestCaseRunnerFactory for ScalarExprTestCaseRunnerFactory {
     type Runner = ScalarExprTestCaseRunner<NoStatisticsBuilder>;
 
-    fn new_runner(&self, _test_case: &SqlTestCase, tables: Vec<&TestTable>) -> Result<Self::Runner, TestRunnerError> {
-        let builder = new_operator_builder(&tables);
+    fn new_runner(
+        &self,
+        _test_case: &SqlTestCase,
+        catalog: &TestCatalog,
+        options: &TestOptions,
+    ) -> Result<Self::Runner, TestRunnerError> {
+        let builder = new_operator_builder(catalog, options);
         Ok(ScalarExprTestCaseRunner { builder })
     }
 }
@@ -157,10 +171,13 @@ where
     }
 }
 
-fn new_operator_builder(tables: &[&TestTable]) -> OperatorFromSqlBuilder<NoStatisticsBuilder> {
+fn new_operator_builder(
+    test_catalog: &TestCatalog,
+    options: &TestOptions,
+) -> OperatorFromSqlBuilder<NoStatisticsBuilder> {
     let catalog = Arc::new(MutableCatalog::new());
 
-    for table in tables {
+    for table in test_catalog.tables.iter() {
         let mut builder = TableBuilder::new(&table.name);
         for (name, data_type) in table.columns.iter() {
             builder = builder.add_column(name, data_type.clone());
@@ -170,7 +187,7 @@ fn new_operator_builder(tables: &[&TestTable]) -> OperatorFromSqlBuilder<NoStati
 
     let mut sql_builder = OperatorFromSqlBuilder::new(catalog, NoStatisticsBuilder);
     let operator_config = OperatorBuilderConfig {
-        decorrelate_subqueries: false,
+        decorrelate_subqueries: options.decorrelate_subqueries.expect("no default value for decorrelate_subqueries"),
     };
     sql_builder.operator_builder_config(operator_config);
     sql_builder
