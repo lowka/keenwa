@@ -130,24 +130,24 @@ impl MutableSchema {
 
     pub fn add_table(&self, table: Table) {
         let mut inner = self.inner.write().unwrap();
-        let table_name = ObjectId::from(table.name().as_str());
+        let table_name = ObjectId::from(table.name.clone());
         inner.tables.insert(table_name, Arc::new(table));
     }
 
     pub fn add_index(&self, index: Index) {
         let mut inner = self.inner.write().unwrap();
-        let table_name = ObjectId::from(index.table().as_str());
+        let table_name = ObjectId::from(index.table.clone());
         let _ = inner.tables.get(&table_name).unwrap_or_else(|| {
             panic!("Unable to add index {:?} - table {:?} does not exist", index.name(), index.table())
         });
 
-        let index_name = ObjectId::from(index.name().as_str());
+        let index_name = ObjectId::from(index.name.clone());
         let existing = match inner.indexes.entry(index_name) {
             Entry::Occupied(mut o) => {
                 let index = Arc::new(index);
                 let existing = o.get();
-                let name = existing.name().clone();
-                let table = existing.table().clone();
+                let name = existing.name().to_string();
+                let table = existing.table().to_string();
 
                 o.insert(index);
                 Some((name, ObjectId::from(table)))

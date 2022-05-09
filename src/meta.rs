@@ -63,7 +63,7 @@ impl RelationMetadata {
     }
 
     /// Returns the name of this relation.
-    pub fn name(&self) -> &String {
+    pub fn name(&self) -> &str {
         &self.name
     }
 
@@ -139,7 +139,7 @@ impl ColumnMetadata {
     }
 
     /// Returns the name of this column.
-    pub fn name(&self) -> &String {
+    pub fn name(&self) -> &str {
         &self.name
     }
 

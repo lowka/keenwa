@@ -187,7 +187,7 @@ impl OperatorBuilder {
             .catalog
             .get_table(source)
             .ok_or_else(|| OptimizerError::Argument(format!("Table does not exist. Table: {}", source)))?;
-        let columns = table.columns().iter().map(|c| c.name()).cloned().collect();
+        let columns = table.columns().iter().map(|c| c.name().to_string()).collect();
         self.add_scan_operator(source, columns)
     }
 
@@ -634,7 +634,7 @@ impl OperatorBuilder {
                 })
             })
             .map_ok(|column| {
-                let column_name = column.name().clone();
+                let column_name = column.name().to_string();
                 let metadata = ColumnMetadata::new_table_column(
                     column_name.clone(),
                     column.data_type().clone(),
@@ -847,7 +847,7 @@ where
                 .iter()
                 .map(|id| {
                     let col_name = metadata.get_column(id);
-                    (col_name.name().clone(), *id)
+                    (col_name.name().to_string(), *id)
                 })
                 .collect();
 

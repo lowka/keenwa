@@ -68,7 +68,7 @@ pub struct Table {
 
 impl Table {
     /// The name of this table.
-    pub fn name(&self) -> &String {
+    pub fn name(&self) -> &str {
         &self.name
     }
 
@@ -178,12 +178,12 @@ pub struct Index {
 
 impl Index {
     /// The name of this index.
-    pub fn name(&self) -> &String {
+    pub fn name(&self) -> &str {
         &self.name
     }
 
     /// The name of the table this index is defined for.
-    pub fn table(&self) -> &String {
+    pub fn table(&self) -> &str {
         &self.table
     }
 
@@ -324,7 +324,7 @@ impl Column {
     }
 
     /// The name of this column.
-    pub fn name(&self) -> &String {
+    pub fn name(&self) -> &str {
         &self.name
     }
 
