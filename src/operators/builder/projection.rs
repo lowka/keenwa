@@ -39,7 +39,7 @@ impl<'a> ProjectionListBuilder<'a> {
                         let name = {
                             // Should never panic because RewriteExprs set an error when encounters an unknown column id.
                             let meta = self.builder.metadata.get_column(&id);
-                            meta.name().clone()
+                            meta.name().to_string()
                         };
                         self.add_column(id, name)?
                     }

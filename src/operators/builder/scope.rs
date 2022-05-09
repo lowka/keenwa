@@ -62,7 +62,7 @@ impl OperatorScope {
         let outer_columns = self.get_outer_columns(metadata);
         let relations = if self.relation.columns.is_empty() {
             // The current expression has not been added to the operator tree
-            assert!(self.relations.relations.len() > 0, "Unexpected number of relations");
+            assert!(!self.relations.relations.is_empty(), "Unexpected number of relations");
             RelationsInScope::from_relation(self.relations.relations[0].clone())
         } else {
             RelationsInScope::new()
@@ -175,7 +175,7 @@ impl OperatorScope {
                         .map(|(_, id)| {
                             // Should never panic because relation contains only valid ids.
                             let meta = metadata.get_column(id);
-                            let column_name = meta.name().clone();
+                            let column_name = meta.name().to_string();
                             (column_name, *id)
                         })
                         .collect();

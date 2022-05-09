@@ -277,7 +277,7 @@ impl SelectivityProvider for PrecomputedSelectivityStatistics {
                 if let ScalarExpr::Column(id) = expr {
                     // Should not panic because columns has been assigned by the metadata itself.
                     let column = self.metadata.get_column(&id);
-                    Ok(ScalarExpr::ColumnName(column.name().clone()))
+                    Ok(ScalarExpr::ColumnName(column.name().into()))
                 } else {
                     Ok(expr)
                 }
