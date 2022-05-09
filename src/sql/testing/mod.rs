@@ -207,6 +207,9 @@ where
         // Contains queries and their actual results separated by ---.
         let mut actual_buf = String::new();
 
+        let mut num_errors = 0;
+        const MAX_ERRORS: usize = 5;
+
         for (i, test_case) in test_cases.iter().enumerate() {
             for test_case_result in run_results.iter().filter(|r| r.test_case_id == i) {
                 let test_case_id = test_case_result.test_case_id;
@@ -232,6 +235,8 @@ where
                                 println!();
                             }
 
+                            num_errors += 1;
+
                             Some(mismatch)
                         } else if self.print_runs {
                             println!("Test case#{} query#{} passed.", test_case_id, query_id);
@@ -248,10 +253,15 @@ where
                             test_case.expected_result,
                             error
                         );
+                        num_errors += 1;
 
                         Some(mismatch)
                     }
                 };
+
+                if num_errors > MAX_ERRORS {
+                    continue;
+                }
 
                 if let Some(Mismatch { expected, actual }) = mismatch {
                     if !expected_buf.is_empty() {
@@ -279,7 +289,22 @@ where
             return None;
         }
 
-        Some((expected_buf, actual_buf))
+        // We limit the number of errors because Clion IDE fails to parse the output
+        // when it is quite long.
+        if num_errors > MAX_ERRORS {
+            let total_errors_message =
+                format!("Showing first {} errors [There are {} errors in total]\n---\n", MAX_ERRORS, num_errors);
+
+            let mut new_expected_buf = total_errors_message.clone();
+            new_expected_buf.push_str(expected_buf.as_str());
+
+            let mut new_actual_buf = total_errors_message.clone();
+            new_actual_buf.push_str(actual_buf.as_str());
+
+            Some((new_expected_buf, new_actual_buf))
+        } else {
+            Some((expected_buf, actual_buf))
+        }
     }
 
     fn add_test_case_result(

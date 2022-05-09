@@ -62,7 +62,7 @@ impl OperatorScope {
         let outer_columns = self.get_outer_columns(metadata);
         let relations = if self.relation.columns.is_empty() {
             // The current expression has not been added to the operator tree
-            assert_eq!(self.relations.relations.len(), 1, "Unexpected number of relations");
+            assert!(self.relations.relations.len() > 0, "Unexpected number of relations");
             RelationsInScope::from_relation(self.relations.relations[0].clone())
         } else {
             RelationsInScope::new()

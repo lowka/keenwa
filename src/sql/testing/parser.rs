@@ -48,16 +48,17 @@ where
             let test_case = parse_test_case(&buf)?;
 
             if let Some(test_case) = test_case {
-                if test_cases.is_empty() && catalog.is_none() {
-                    match &test_case {
-                        _ if test_case.query.is_some() || test_case.queries.is_some() => {}
-                        _ => {
-                            let (new_catalog, new_options) = catalog_and_options(test_case, options_parser)?;
+                if test_cases.is_empty() && (catalog.is_none() || options.is_none()) {
+                    if test_case.query.is_none() && test_case.queries.is_none() {
+                        let (new_catalog, new_options) = catalog_and_options(test_case, options_parser)?;
+                        if new_catalog.is_some() {
                             catalog = new_catalog;
-                            options = new_options;
-                            buf.clear();
-                            continue;
                         }
+                        if new_options.is_some() {
+                            options = new_options;
+                        }
+                        buf.clear();
+                        continue;
                     }
                 }
 
@@ -175,7 +176,13 @@ where
 
 fn validate_test_case(test_case: &TestCase) -> Result<(), String> {
     if test_case.query.is_none() && test_case.queries.is_none() {
-        return Err(format!("Test case: Neither `query` nor `queries` has been specified"));
+        return if test_case.catalog.is_some() {
+            Err(format!("Test case: Expected `query` or `queries` but got catalog"))
+        } else if test_case.options.is_some() {
+            Err(format!("Test case: Expected `query` or `queries` but got options"))
+        } else {
+            Err(format!("Test case: Neither `query` nor `queries` has been specified"))
+        };
     }
 
     if test_case.query.is_some() && test_case.queries.is_some() {
@@ -361,6 +368,24 @@ ok: ok
     }
 
     #[test]
+    fn test_with_initial_options_and_catalog_in_independent_documents() {
+        let test_case = r#"
+catalog:
+  - table: a1
+    columns: a11:int32
+---       
+options:    
+  opt: 1
+---        
+query: q1
+ok: ok
+"#;
+        let test_case_set = run_parse_test_cases(test_case).unwrap();
+        assert!(test_case_set.catalog.is_some(), "catalog");
+        assert!(test_case_set.options.is_some(), "options");
+    }
+
+    #[test]
     fn test_multiple_test_cases() {
         let test_case = r#"
 query: q2
@@ -425,6 +450,25 @@ error: Err
         expect_error(test_case, "Test case: Both `ok` and `error` have been specified");
     }
 
+    #[test]
+    fn test_reject_test_case_when_only_catalog_is_present() {
+        let test_case = r#"
+catalog:
+  - table: a
+    columns: a1:int
+"#;
+        expect_error(test_case, "Test case: Expected `query` or `queries` but got catalog");
+    }
+
+    #[test]
+    fn test_reject_test_case_when_only_options_are_present() {
+        let test_case = r#"
+options:
+  opt: 1
+"#;
+        expect_error(test_case, "Test case: Expected `query` or `queries` but got options");
+    }
+
     fn run_parse_test_cases(str: &str) -> Result<SqlTestCaseSet, String> {
         parse_test_cases(str, &NoOpTestOptionsParser)
     }
@@ -453,6 +497,6 @@ error: Err
 
     fn expect_error(test_cases: &str, error_message: &str) {
         let err = run_parse_test_cases(test_cases).expect_err("Should err");
-        assert!(err.ends_with(error_message), "Expected error: {} but got:\n{}", error_message, err);
+        assert!(err.ends_with(error_message), "Expected error: \"{}\" but got:\n{}", error_message, err);
     }
 }
