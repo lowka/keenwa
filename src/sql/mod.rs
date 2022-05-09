@@ -309,6 +309,10 @@ fn build_select(builder: OperatorBuilder, select: Select) -> Result<OperatorBuil
 
         aggregate_builder.build()?
     } else {
+        if let Some(_) = select.having {
+            return Err(OptimizerError::Internal(format!("HAVING clause is not allowed in non-aggregate queries")));
+        }
+
         builder.project(projection)?
     };
     if select_distinct {
