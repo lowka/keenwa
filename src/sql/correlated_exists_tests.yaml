@@ -1,3 +1,6 @@
+options:
+  decorrelate_subqueries: true
+---
 query:
   SELECT a1 FROM a WHERE EXISTS (SELECT 1 FROM b WHERE b1 = a2)
 #>SELECT a1 FROM a JOIN b ON b1 = a2
