@@ -291,7 +291,7 @@ where
     {
         (Some(filter.expr().clone()), input.clone())
     } else {
-        (None, projection.input.clone())
+        (None, in_subquery.subquery.clone())
     };
 
     if !in_subquery.not {
