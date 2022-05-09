@@ -335,9 +335,10 @@ where
         // SELECT a1 FROM a LEFT JOIN b ON b1 = a1 WHERE b1 IS NULL [+ remaining_predicates]
 
         let col_id = in_subquery.subquery.props().logical().output_columns()[0];
+        let input_produces_no_columns = projection.input.props().logical().output_columns().is_empty();
 
-        //TODO: support a1 NOT IN (SELECT <non_column> FROM ...)
-        if builder.metadata().get_column(&col_id).expr().is_some() {
+        if builder.metadata().get_column(&col_id).expr().is_some() && !input_produces_no_columns {
+            //TODO: support a1 NOT IN (SELECT <non_column> FROM ...)
             return Ok(None);
         }
         let col_expr = ScalarExpr::Column(col_id);
