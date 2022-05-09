@@ -1,6 +1,6 @@
 use crate::error::OptimizerError;
 use crate::meta::MetadataRef;
-use crate::operators::relational::logical::{LogicalExpr, LogicalProjection, LogicalSelect};
+use crate::operators::relational::logical::{LogicalEmpty, LogicalExpr, LogicalProjection, LogicalSelect};
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::BinaryOp;
 use crate::operators::scalar::{exprs, ScalarExpr, ScalarNode};
@@ -291,7 +291,7 @@ where
     {
         (Some(filter.expr().clone()), input.clone())
     } else {
-        (None, projection.input.clone())
+        (None, in_subquery.subquery.clone())
     };
 
     if !in_subquery.not {
@@ -338,7 +338,9 @@ where
 
         //TODO: support a1 NOT IN (SELECT <non_column> FROM ...)
         if builder.metadata().get_column(&col_id).expr().is_some() {
-            return Ok(None);
+            if !projection.input.props().logical().output_columns().is_empty() {
+                return Ok(None);
+            }
         }
         let col_expr = ScalarExpr::Column(col_id);
 

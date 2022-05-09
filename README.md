@@ -84,7 +84,7 @@ Cost-based query optimizer (WIP).
 #### Subqueries
 
 - [x] Basic support.
-- [ ] Correlated subqueries.
+- [x] Correlated subqueries: EXISTS, IN (cases where an input operator is a restriction(filter/select) or a projection).  
 
 ### Scalar expressions
 
