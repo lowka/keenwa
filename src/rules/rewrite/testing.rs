@@ -51,9 +51,6 @@ where
     let result = (f)(builder).expect("Operator setup function failed");
     let expr = result.build().expect("Failed to build an operator");
 
-    println!("{}", format_operator_tree(&expr).as_str());
-    println!(">>>");
-
     let expr = (rule)(&RelNode::from(expr)).expect("Rewrite rule has not been applied");
 
     let mut buf = String::new();
@@ -61,7 +58,4 @@ where
     buf.push_str(format_operator_tree(expr.mexpr()).as_str());
     buf.push('\n');
     assert_eq!(buf, expected, "expected expr");
-
-    // Expressions should not outlive the memo.
-    let _ = memoization.into_memo();
 }

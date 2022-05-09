@@ -70,7 +70,6 @@ pub struct SqlTestCaseRunner<T> {
     catalog: Option<TestCatalog>,
     options: Option<TestOptions>,
     test_cases: Option<Vec<SqlTestCase>>,
-    print_runs: bool,
 }
 
 impl<T> SqlTestCaseRunner<T>
@@ -89,7 +88,6 @@ where
             catalog,
             options,
             test_cases: Some(test_cases),
-            print_runs: false,
         }
     }
 
@@ -225,25 +223,12 @@ where
                             result.result
                         );
 
-                        if self.print_runs {
-                            println!("Test case#{} query#{}:\n{}", test_case_id, query_id, query);
-                        }
-
                         if let Some(mismatch) = &result.mismatch {
-                            if self.print_runs {
-                                println!("Test case#{} query#{} failed.", test_case_id, query_id);
-                                println!();
-                            }
-
                             num_errors += 1;
 
                             Some(mismatch)
-                        } else if self.print_runs {
-                            println!("Test case#{} query#{} passed.", test_case_id, query_id);
-                            println!();
-                            continue;
                         } else {
-                            continue;
+                            None
                         }
                     }
                     Err(NewTestError { mismatch, error }) => {
