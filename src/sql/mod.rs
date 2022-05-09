@@ -52,6 +52,7 @@ where
         }
     }
 
+    /// Specifies [OperatorBuilderConfig] to use.
     pub fn operator_builder_config(&mut self, value: OperatorBuilderConfig) {
         self.operator_builder_config = value;
     }

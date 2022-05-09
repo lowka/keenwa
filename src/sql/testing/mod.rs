@@ -2,9 +2,12 @@ pub mod logical_plan;
 pub mod parser;
 
 use crate::datatypes::DataType;
+use crate::sql::testing::parser::{TestOptionsParser, TestOptionsRaw};
+use itertools::Itertools;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::str::FromStr;
 
 /// Test cases are defined in following YAML structure:
 ///
@@ -65,6 +68,7 @@ use std::fmt::{Display, Formatter};
 pub struct SqlTestCaseRunner<T> {
     factory: T,
     catalog: Option<TestCatalog>,
+    options: Option<TestOptions>,
     test_cases: Option<Vec<SqlTestCase>>,
     print_runs: bool,
 }
@@ -74,10 +78,16 @@ where
     T: TestCaseRunnerFactory,
 {
     /// Creates an environment to run [SqlTestCase]s.
-    pub fn new(factory: T, catalog: Option<TestCatalog>, test_cases: Vec<SqlTestCase>) -> Self {
+    pub fn new(
+        factory: T,
+        catalog: Option<TestCatalog>,
+        options: Option<TestOptions>,
+        test_cases: Vec<SqlTestCase>,
+    ) -> Self {
         SqlTestCaseRunner {
             factory,
             catalog,
+            options,
             test_cases: Some(test_cases),
             print_runs: false,
         }
@@ -108,23 +118,39 @@ where
         }
     }
 
+    fn build_test_case_catalog(&self, tables: &[TestTable], test_case: &SqlTestCase) -> TestCatalog {
+        let mut actual_tables = HashMap::new();
+        tables.iter().for_each(|t| {
+            actual_tables.insert(&t.name, t);
+        });
+
+        if let Some(catalog) = &test_case.catalog {
+            actual_tables.extend(catalog.tables.iter().map(|t| (&t.name, t)))
+        }
+
+        let tables = actual_tables.into_iter().map(|(_, t)| t.clone()).collect();
+        TestCatalog { tables }
+    }
+
+    fn build_test_case_options(&self, test_case: &SqlTestCase) -> TestOptions {
+        let options = self.options.clone().unwrap_or_default();
+        if let Some(options) = test_case.options.as_ref() {
+            options.merge(options)
+        } else {
+            options
+        }
+    }
+
     fn run_and_collect_results(&mut self, tables: Vec<TestTable>) -> (Vec<SqlTestCase>, Vec<TestCaseResult>) {
         let mut run_results = vec![];
         let test_cases: Vec<_> = self.test_cases.take().unwrap().into_iter().collect();
 
         for (test_case_id, test_case) in test_cases.iter().enumerate() {
+            let catalog = self.build_test_case_catalog(&tables, test_case);
+            let options = self.build_test_case_options(test_case);
+
             for (query_id, query) in test_case.queries.iter().enumerate() {
-                let mut actual_tables = HashMap::new();
-                tables.iter().for_each(|t| {
-                    actual_tables.insert(&t.name, t);
-                });
-
-                if let Some(catalog) = &test_case.catalog {
-                    actual_tables.extend(catalog.tables.iter().map(|t| (&t.name, t)))
-                }
-                let tables: Vec<_> = actual_tables.into_iter().map(|(_, t)| t).collect();
-
-                match self.factory.new_runner(test_case, tables) {
+                match self.factory.new_runner(test_case, &catalog, &options) {
                     Ok(instance) => {
                         let test_result = instance.run_test_case(query.as_str());
                         let test_result = match test_result {
@@ -283,7 +309,12 @@ pub trait TestCaseRunnerFactory {
     type Runner: TestCaseRunner;
 
     /// Creates an instance of a [TestCaseRunner] to execute the given test case.
-    fn new_runner(&self, test_case: &SqlTestCase, tables: Vec<&TestTable>) -> Result<Self::Runner, TestRunnerError>;
+    fn new_runner(
+        &self,
+        test_case: &SqlTestCase,
+        catalog: &TestCatalog,
+        options: &TestOptions,
+    ) -> Result<Self::Runner, TestRunnerError>;
 }
 
 /// Result of a test case run.
@@ -331,6 +362,8 @@ pub trait TestCaseRunner {
 pub struct SqlTestCaseSet {
     /// Database catalog. Contains objects used by the test cases.
     pub catalog: Option<TestCatalog>,
+    /// Test case options. See [TestOptions].
+    pub options: Option<TestOptions>,
     /// Test cases.
     pub test_cases: Vec<SqlTestCase>,
 }
@@ -345,24 +378,76 @@ pub struct SqlTestCase {
     queries: Vec<String>,
     /// Contains database objects specific for this test case.
     catalog: Option<TestCatalog>,
+    /// Options that can be used to customize the test environment.
+    options: Option<TestOptions>,
     /// Expected logical plan as string or an error.
     expected_result: Result<String, TestCaseFailure>,
 }
 
 /// A test database catalog.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TestCatalog {
     /// A collection of table definitions.
-    tables: Vec<TestTable>,
+    pub tables: Vec<TestTable>,
 }
 
 /// A test table definition.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TestTable {
     /// Name.
     name: String,
     /// Column definitions.
     columns: Vec<(String, DataType)>,
+}
+
+/// Options to configure a test environment.
+#[derive(Debug, Clone)]
+pub struct TestOptions {
+    /// Whether decorrelate subqueries or not.
+    pub decorrelate_subqueries: Option<bool>,
+}
+
+impl Default for TestOptions {
+    fn default() -> Self {
+        TestOptions {
+            decorrelate_subqueries: Some(false),
+        }
+    }
+}
+
+impl TestOptions {
+    fn merge(&self, other: &TestOptions) -> TestOptions {
+        TestOptions {
+            decorrelate_subqueries: self.decorrelate_subqueries.or(other.decorrelate_subqueries),
+        }
+    }
+}
+
+struct DefaultTestOptionsParser;
+impl TestOptionsParser for DefaultTestOptionsParser {
+    fn parse_options(&self, values: TestOptionsRaw) -> Result<TestOptions, String> {
+        fn get_bool(values: &mut HashMap<String, String>, key: &str, default: bool) -> Result<Option<bool>, String> {
+            if let Some(val) = values.remove(key) {
+                let value = bool::from_str(val.as_str()).map_err(|e| format!("{}", e))?;
+                Ok(Some(value))
+            } else {
+                Ok(Some(default))
+            }
+        }
+
+        let mut values_map = values.0;
+        let options = TestOptions {
+            decorrelate_subqueries: get_bool(&mut values_map, "decorrelate_subqueries", false)?,
+        };
+        if !values_map.is_empty() {
+            Err(format!(
+                "Unknown or unsupported options: {}",
+                values_map.iter().map(|(k, v)| format!("{}: {}", k, v)).join(", ")
+            ))
+        } else {
+            Ok(options)
+        }
+    }
 }
 
 /// An error returned by the test environment.
@@ -736,13 +821,40 @@ error:
         assert_eq!(None, report);
     }
 
+    #[test]
+    fn test_case_with_options() {
+        let factory = DummyRunnerFactory::default();
+
+        let mut runner = new_test_case_runner(factory);
+        let tables = runner.prepare_catalog();
+
+        let (cases, results) = runner.run_and_collect_results(tables);
+        let test_case_options = cases[5].options.clone();
+
+        let mut options = TestOptions::default();
+        options.decorrelate_subqueries = Some(true);
+
+        assert_eq!(
+            options.decorrelate_subqueries,
+            test_case_options.map(|o| o.decorrelate_subqueries).unwrap_or_default(),
+            "test_case options"
+        );
+
+        let report = runner.build_error_report(cases, results);
+        assert_eq!(None, report);
+    }
+
     fn new_test_case_runner<T>(factory: T) -> SqlTestCaseRunner<T>
     where
         T: TestCaseRunnerFactory,
     {
         let s = include_str!("test_runner.yaml");
-        let SqlTestCaseSet { catalog, test_cases } = parse_test_cases(s).unwrap();
-        SqlTestCaseRunner::new(factory, catalog, test_cases)
+        let SqlTestCaseSet {
+            catalog,
+            options,
+            test_cases,
+        } = parse_test_cases(s, &DefaultTestOptionsParser).unwrap();
+        SqlTestCaseRunner::new(factory, catalog, options, test_cases)
     }
 
     fn run_tests(mut runner: SqlTestCaseRunner<DummyRunnerFactory>) -> Option<String> {
@@ -769,7 +881,8 @@ error:
         fn new_runner(
             &self,
             test_case: &SqlTestCase,
-            _tables: Vec<&TestTable>,
+            _catalog: &TestCatalog,
+            _options: &TestOptions,
         ) -> Result<Self::Runner, TestRunnerError> {
             if self.fail_to_start == Some(test_case.id) {
                 Err(TestRunnerError {

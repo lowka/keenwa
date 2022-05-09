@@ -51,3 +51,11 @@ query: |
   SELECT * FROM x
 ok: | 
   Step1
+---
+# testcase 6
+options:
+  decorrelate_subqueries: true
+query: |
+  SELECT * FROM x
+ok: |
+  Step1

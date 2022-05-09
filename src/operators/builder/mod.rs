@@ -1043,7 +1043,7 @@ impl OperatorCallback for NoOpOperatorCallback {
 /// ```text
 ///   let memo = ...;
 ///   let memoization = MemoizeOperators::new(memo);
-///   let operator_callback = memoization.get_callback();
+///   let operator_callback = memoization.take_callback();
 ///
 ///   let operator_builder = OperatorBuilder::new(operator_callback,
 ///     // provide other dependencies
