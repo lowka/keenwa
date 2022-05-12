@@ -93,3 +93,15 @@ ok: 11 NOT BETWEEN 0 AND 10
 #---
 query: (1, true, NOT false, 'abc')
 ok: (1, true, NOT false, abc)
+---
+query: |
+  ARRAY[1, 2, 3]
+ok: |
+  [1, 2, 3]
+---
+query: |
+  [1, 2, 3]
+ok: |
+  [1, 2, 3]
+---
+

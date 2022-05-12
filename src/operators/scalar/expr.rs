@@ -78,6 +78,8 @@ where
     },
     /// An ordered list of expressions.
     Tuple(Vec<Expr<T>>),
+    /// An array expression.
+    Array(Vec<Expr<T>>),
     /// A scalar function expression.
     ScalarFunction { func: ScalarFunction, args: Vec<Expr<T>> },
     /// An aggregate expression.
@@ -186,6 +188,11 @@ where
                     expr.accept(visitor)?;
                 }
             }
+            Expr::Array(exprs) => {
+                for expr in exprs {
+                    expr.accept(visitor)?
+                }
+            }
             Expr::ScalarFunction { args, .. } => {
                 for arg in args {
                     arg.accept(visitor)?;
@@ -274,6 +281,7 @@ where
                 else_expr: rewrite_boxed_option(else_expr, rewriter)?,
             },
             Expr::Tuple(exprs) => Expr::Tuple(rewrite_vec(exprs, rewriter)?),
+            Expr::Array(exprs) => Expr::Array(rewrite_vec(exprs, rewriter)?),
             Expr::ScalarFunction { func, args } => Expr::ScalarFunction {
                 func,
                 args: rewrite_vec(args, rewriter)?,
@@ -349,6 +357,7 @@ where
                 vec![expr.as_ref().clone(), low.as_ref().clone(), high.as_ref().clone()]
             }
             Expr::Tuple(exprs) => exprs.clone(),
+            Expr::Array(exprs) => exprs.clone(),
             Expr::ScalarFunction { args, .. } => args.clone(),
             Expr::Aggregate { args, filter, .. } => {
                 let mut children: Vec<_> = args.to_vec();
@@ -479,6 +488,10 @@ where
             Expr::Tuple(exprs) => {
                 expect_children("Tuple", children.len(), exprs.len());
                 Expr::Tuple(children)
+            }
+            Expr::Array(exprs) => {
+                expect_children("Array", children.len(), exprs.len());
+                Expr::Array(children)
             }
             Expr::ScalarFunction { func, args } => {
                 expect_children("ScalarFunction", children.len(), args.len());
@@ -829,6 +842,9 @@ where
             }
             Expr::Tuple(exprs) => {
                 write!(f, "({})", exprs.iter().join(", "))
+            }
+            Expr::Array(exprs) => {
+                write!(f, "[{}]", exprs.iter().join(", "))
             }
             Expr::SubQuery(query) => {
                 write!(f, "SubQuery ")?;
@@ -1299,6 +1315,25 @@ mod test {
                 "pre:col:a1",
                 "post:col:a1",
                 "post:(true, 1, col:a1)",
+            ],
+        )
+    }
+
+    #[test]
+    fn array_traversal() {
+        let expr =
+            Expr::Array(vec![Expr::Scalar(ScalarValue::Bool(true)), Expr::Scalar(ScalarValue::Bool(false)), col("a1")]);
+        expect_traversal_order(
+            &expr,
+            vec![
+                "pre:[true, false, col:a1]",
+                "pre:true",
+                "post:true",
+                "pre:false",
+                "post:false",
+                "pre:col:a1",
+                "post:col:a1",
+                "post:[true, false, col:a1]",
             ],
         )
     }

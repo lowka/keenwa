@@ -21,6 +21,8 @@ pub enum ScalarValue {
     Interval(Interval),
     /// Tuple.
     Tuple(Vec<ScalarValue>),
+    /// Array.
+    Array(Array),
 }
 
 /// Interval.
@@ -67,6 +69,15 @@ impl Interval {
     }
 }
 
+/// Array.
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub struct Array {
+    /// The type of elements.
+    pub element_type: DataType,
+    /// Elements of the array.
+    pub elements: Vec<ScalarValue>,
+}
+
 impl ScalarValue {
     /// Returns the type of this scalar value.
     pub fn data_type(&self) -> DataType {
@@ -80,6 +91,7 @@ impl ScalarValue {
             ScalarValue::Timestamp(_, tz) => DataType::Timestamp(tz.is_some()),
             ScalarValue::Interval(_) => DataType::Interval,
             ScalarValue::Tuple(values) => DataType::Tuple(values.iter().map(|val| val.data_type()).collect()),
+            ScalarValue::Array(array) => array.element_type.clone(),
         }
     }
 }
@@ -127,6 +139,9 @@ impl Display for ScalarValue {
             }
             ScalarValue::Tuple(values) => {
                 write!(f, "({})", values.iter().join(", "))
+            }
+            ScalarValue::Array(array) => {
+                write!(f, "[{}]", array.elements.iter().join(", "))
             }
         }
     }
