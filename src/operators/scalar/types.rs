@@ -106,6 +106,11 @@ where
 
             Ok(expr_result_type.expect("Invalid case expression"))
         }
+        Expr::Tuple(exprs) => {
+            let expr_types: Result<Vec<DataType>, _> =
+                exprs.iter().map(|expr| resolve_expr_type(expr, column_registry)).collect();
+            Ok(DataType::Tuple(expr_types?))
+        }
         Expr::ScalarFunction { func, args } => {
             let arg_types: Result<Vec<DataType>, _> =
                 args.iter().map(|arg| resolve_expr_type(arg, column_registry)).collect();

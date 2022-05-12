@@ -1,3 +1,4 @@
+use itertools::Itertools;
 use std::fmt::{Display, Formatter};
 
 use crate::datatypes::DataType;
@@ -18,6 +19,8 @@ pub enum ScalarValue {
     Timestamp(i64, Option<String>),
     /// Interval.
     Interval(Interval),
+    /// Tuple.
+    Tuple(Vec<ScalarValue>),
 }
 
 /// Interval.
@@ -76,6 +79,7 @@ impl ScalarValue {
             ScalarValue::Time(_) => DataType::Time,
             ScalarValue::Timestamp(_, tz) => DataType::Timestamp(tz.is_some()),
             ScalarValue::Interval(_) => DataType::Interval,
+            ScalarValue::Tuple(values) => DataType::Tuple(values.iter().map(|val| val.data_type()).collect()),
         }
     }
 }
@@ -120,6 +124,9 @@ impl Display for ScalarValue {
                     write!(f, "{} {}", value, label)?;
                 }
                 Ok(())
+            }
+            ScalarValue::Tuple(values) => {
+                write!(f, "({})", values.iter().join(", "))
             }
         }
     }

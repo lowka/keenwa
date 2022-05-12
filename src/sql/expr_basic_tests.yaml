@@ -91,3 +91,5 @@ ok: 11 NOT BETWEEN 0 AND 10
 #query: 5 BETWEEN ASYMMETRIC 0 AND 10
 #ok: 5 BETWEEN ASYMMETRIC 0 AND 10
 #---
+query: (1, true, NOT false, 'abc')
+ok: (1, true, NOT false, abc)
