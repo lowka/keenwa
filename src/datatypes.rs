@@ -15,6 +15,7 @@ pub enum DataType {
     Timestamp(bool),
     Interval,
     Tuple(Vec<DataType>),
+    Array(Box<DataType>),
 }
 
 impl Display for DataType {
@@ -29,6 +30,7 @@ impl Display for DataType {
             DataType::Timestamp(tz) => write!(f, "Timestamp{tz}", tz = if *tz { " with timezone" } else { "" }),
             DataType::Interval => write!(f, "Interval"),
             DataType::Tuple(values) => write!(f, "Tuple({})", values.iter().join(", ")),
+            DataType::Array(element_type) => write!(f, "{}[]", element_type),
         }
     }
 }

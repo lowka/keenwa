@@ -606,7 +606,11 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
         }
         Expr::InUnnest { .. } => not_supported!("InUnnest expression"),
         Expr::ArrayIndex { .. } => not_supported!("ArrayIndex expression"),
-        Expr::Array(_) => not_supported!("Array expression"),
+        Expr::Array(array) => {
+            let values: Result<Vec<ScalarExpr>, OptimizerError> =
+                array.elem.into_iter().map(|expr| build_scalar_expr(expr, builder.clone())).collect();
+            ScalarExpr::Array(values?)
+        }
     };
     Ok(expr)
 }
@@ -960,6 +964,8 @@ impl From<ParserError> for OptimizerError {
 #[cfg(test)]
 mod test {
     use crate::sql::testing::logical_plan::{run_sql_expression_tests, run_sql_tests};
+    use sqlparser::dialect::PostgreSqlDialect;
+    use sqlparser::parser::Parser;
 
     fn run_test_cases(str: &str) {
         let catalog_str = r#"

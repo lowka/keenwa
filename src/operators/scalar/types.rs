@@ -111,6 +111,21 @@ where
                 exprs.iter().map(|expr| resolve_expr_type(expr, column_registry)).collect();
             Ok(DataType::Tuple(expr_types?))
         }
+        Expr::Array(exprs) => {
+            let expr_types: Result<Vec<DataType>, _> =
+                exprs.iter().map(|expr| resolve_expr_type(expr, column_registry)).collect();
+            let expr_types = expr_types?;
+            if let Some(expr_type) = expr_types.first() {
+                let same_type = expr_types[1..].iter().all(|tpe| expr_type == tpe);
+                if same_type {
+                    Ok(expr_type.clone())
+                } else {
+                    Err(OptimizerError::Internal(format!("Array with elements of different type")))
+                }
+            } else {
+                Err(OptimizerError::Unsupported(format!("Empty array expression")))
+            }
+        }
         Expr::ScalarFunction { func, args } => {
             let arg_types: Result<Vec<DataType>, _> =
                 args.iter().map(|arg| resolve_expr_type(arg, column_registry)).collect();
