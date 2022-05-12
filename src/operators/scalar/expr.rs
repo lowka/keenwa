@@ -76,6 +76,8 @@ where
         /// ELSE <expr>.
         else_expr: Option<Box<Expr<T>>>,
     },
+    /// An ordered list of expressions.
+    Tuple(Vec<Expr<T>>),
     /// A scalar function expression.
     ScalarFunction { func: ScalarFunction, args: Vec<Expr<T>> },
     /// An aggregate expression.
@@ -179,6 +181,11 @@ where
                     expr.accept(visitor)?;
                 }
             }
+            Expr::Tuple(exprs) => {
+                for expr in exprs {
+                    expr.accept(visitor)?;
+                }
+            }
             Expr::ScalarFunction { args, .. } => {
                 for arg in args {
                     arg.accept(visitor)?;
@@ -266,6 +273,7 @@ where
                 when_then_exprs: rewrite_pairs_vec(when_then_exprs, rewriter)?,
                 else_expr: rewrite_boxed_option(else_expr, rewriter)?,
             },
+            Expr::Tuple(exprs) => Expr::Tuple(rewrite_vec(exprs, rewriter)?),
             Expr::ScalarFunction { func, args } => Expr::ScalarFunction {
                 func,
                 args: rewrite_vec(args, rewriter)?,
@@ -340,6 +348,7 @@ where
             Expr::Between { expr, low, high, .. } => {
                 vec![expr.as_ref().clone(), low.as_ref().clone(), high.as_ref().clone()]
             }
+            Expr::Tuple(exprs) => exprs.clone(),
             Expr::ScalarFunction { args, .. } => args.clone(),
             Expr::Aggregate { args, filter, .. } => {
                 let mut children: Vec<_> = args.to_vec();
@@ -466,6 +475,10 @@ where
                     when_then_exprs,
                     else_expr,
                 }
+            }
+            Expr::Tuple(exprs) => {
+                expect_children("Tuple", children.len(), exprs.len());
+                Expr::Tuple(children)
             }
             Expr::ScalarFunction { func, args } => {
                 expect_children("ScalarFunction", children.len(), args.len());
@@ -813,6 +826,9 @@ where
                 } else {
                     write!(f, "{} BETWEEN {} AND {}", &*expr, &*low, &*high)
                 }
+            }
+            Expr::Tuple(exprs) => {
+                write!(f, "({})", exprs.iter().join(", "))
             }
             Expr::SubQuery(query) => {
                 write!(f, "SubQuery ")?;
@@ -1264,6 +1280,25 @@ mod test {
                 "pre:4",
                 "post:4",
                 "post:col:a1 NOT BETWEEN 2 AND 4",
+            ],
+        )
+    }
+
+    #[test]
+    fn tuple_traversal() {
+        let expr =
+            Expr::Tuple(vec![Expr::Scalar(ScalarValue::Bool(true)), Expr::Scalar(ScalarValue::Int32(1)), col("a1")]);
+        expect_traversal_order(
+            &expr,
+            vec![
+                "pre:(true, 1, col:a1)",
+                "pre:true",
+                "post:true",
+                "pre:1",
+                "post:1",
+                "pre:col:a1",
+                "post:col:a1",
+                "post:(true, 1, col:a1)",
             ],
         )
     }

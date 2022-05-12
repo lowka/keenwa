@@ -1,5 +1,6 @@
 //! Data type supported by the optimizer.
 
+use itertools::Itertools;
 use std::fmt::{Display, Formatter};
 
 /// Data types supported in scalar expressions and column definitions.
@@ -13,6 +14,7 @@ pub enum DataType {
     Time,
     Timestamp(bool),
     Interval,
+    Tuple(Vec<DataType>),
 }
 
 impl Display for DataType {
@@ -26,6 +28,7 @@ impl Display for DataType {
             DataType::Time => write!(f, "Time"),
             DataType::Timestamp(tz) => write!(f, "Timestamp{tz}", tz = if *tz { " with timezone" } else { "" }),
             DataType::Interval => write!(f, "Interval"),
+            DataType::Tuple(values) => write!(f, "Tuple({})", values.iter().join(", ")),
         }
     }
 }

@@ -599,7 +599,11 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
         Expr::GroupingSets(_) => not_supported!("GROUPING SETS expression"),
         Expr::Cube(_) => not_supported!("CUBE expression"),
         Expr::Rollup(_) => not_supported!("ROLLUP expression"),
-        Expr::Tuple(_) => not_supported!("Tuple expression"),
+        Expr::Tuple(values) => {
+            let values: Result<Vec<ScalarExpr>, OptimizerError> =
+                values.into_iter().map(|expr| build_scalar_expr(expr, builder.clone())).collect();
+            ScalarExpr::Tuple(values?)
+        }
         Expr::InUnnest { .. } => not_supported!("InUnnest expression"),
         Expr::ArrayIndex { .. } => not_supported!("ArrayIndex expression"),
         Expr::Array(_) => not_supported!("Array expression"),
