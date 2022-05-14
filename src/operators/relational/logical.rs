@@ -8,6 +8,7 @@ use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::expr::ExprVisitor;
 use crate::operators::scalar::{get_subquery, ScalarExpr, ScalarNode};
 use crate::operators::{Operator, OperatorCopyIn, OperatorExpr};
+use std::fmt::{write, Display, Formatter};
 
 // TODO: Docs
 /// A logical expression describes a high-level operator without specifying an implementation algorithm to be used.
@@ -243,6 +244,16 @@ pub enum SetOperator {
     Union,
     Intersect,
     Except,
+}
+
+impl Display for SetOperator {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SetOperator::Union => write!(f, "Union"),
+            SetOperator::Intersect => write!(f, "Intersect"),
+            SetOperator::Except => write!(f, "Except"),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
