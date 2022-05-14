@@ -15,7 +15,7 @@ use crate::operators::relational::RelNode;
 use crate::operators::scalar::aggregates::AggregateFunction;
 use crate::operators::scalar::expr::{BinaryOp, ExprVisitor};
 use crate::operators::scalar::funcs::ScalarFunction;
-use crate::operators::scalar::value::{Interval, ScalarValue};
+use crate::operators::scalar::value::{parse_date, parse_time, parse_timestamp, Interval, ScalarValue};
 use crate::operators::scalar::{scalar, ScalarExpr};
 use crate::operators::{ExprMemo, Operator, OperatorMemoBuilder, OperatorMetadata};
 use crate::statistics::StatisticsBuilder;
@@ -547,7 +547,15 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
         Expr::Collate { .. } => not_supported!("COLLATE expression"),
         Expr::Nested(expr) => build_scalar_expr(*expr, builder)?,
         Expr::Value(value) => build_value_expr(value)?,
-        Expr::TypedString { .. } => not_supported!("Typed string expression"),
+        Expr::TypedString { data_type, value } => match data_type {
+            SqlDataType::Date => ScalarExpr::Scalar(parse_date(value.as_str())?),
+            SqlDataType::Timestamp => ScalarExpr::Scalar(parse_timestamp(value.as_str())?),
+            SqlDataType::Time => ScalarExpr::Scalar(parse_time(value.as_str())?),
+            _ => {
+                let message = format!("Typed string expression for data type: {}", data_type);
+                not_supported!(message)
+            }
+        },
         Expr::MapAccess { .. } => not_supported!("Map access expression"),
         Expr::Function(f) => build_function_expr(f, builder)?,
         Expr::Case {
@@ -964,8 +972,6 @@ impl From<ParserError> for OptimizerError {
 #[cfg(test)]
 mod test {
     use crate::sql::testing::logical_plan::{run_sql_expression_tests, run_sql_tests};
-    use sqlparser::dialect::PostgreSqlDialect;
-    use sqlparser::parser::Parser;
 
     fn run_test_cases(str: &str) {
         let catalog_str = r#"
