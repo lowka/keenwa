@@ -120,10 +120,10 @@ where
                 if same_type {
                     Ok(expr_type.clone())
                 } else {
-                    Err(OptimizerError::Internal(format!("Array with elements of different type")))
+                    Err(OptimizerError::Internal("Array with elements of different type".to_string()))
                 }
             } else {
-                Err(OptimizerError::Unsupported(format!("Empty array expression")))
+                Err(OptimizerError::Unsupported("Empty array expression".to_string()))
             }
         }
         Expr::ScalarFunction { func, args } => {

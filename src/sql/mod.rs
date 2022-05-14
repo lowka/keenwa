@@ -309,8 +309,8 @@ fn build_select(builder: OperatorBuilder, select: Select) -> Result<OperatorBuil
 
         aggregate_builder.build()?
     } else {
-        if let Some(_) = select.having {
-            return Err(OptimizerError::Internal(format!("HAVING clause is not allowed in non-aggregate queries")));
+        if select.having.is_some() {
+            return Err(OptimizerError::Internal("HAVING clause is not allowed in non-aggregate queries".to_string()));
         }
 
         builder.project(projection)?
