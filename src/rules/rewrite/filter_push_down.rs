@@ -5,7 +5,8 @@ use std::convert::Infallible;
 use crate::meta::ColumnId;
 use crate::operators::relational::join::{JoinCondition, JoinUsing};
 use crate::operators::relational::logical::{
-    LogicalAggregate, LogicalExpr, LogicalGet, LogicalJoin, LogicalProjection, LogicalSelect,
+    LogicalAggregate, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin, LogicalProjection,
+    LogicalSelect, LogicalUnion, SetOperator,
 };
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::{BinaryOp, ExprRewriter};
@@ -109,9 +110,24 @@ fn rewrite(mut state: State, expr: &RelNode) -> RelNode {
             left, right, condition, ..
         }) => rewrite_join(state, expr, left, right, condition),
         LogicalExpr::Get(LogicalGet { columns, .. }) => add_filters(state, expr, columns),
-        LogicalExpr::Union(_) => rewrite_inputs(state, expr),
-        LogicalExpr::Intersect(_) => rewrite_inputs(state, expr),
-        LogicalExpr::Except(_) => rewrite_inputs(state, expr),
+        LogicalExpr::Union(LogicalUnion {
+            left,
+            right,
+            all,
+            columns,
+        }) => rewrite_set_op(state, SetOperator::Union, *all, left, right, columns),
+        LogicalExpr::Intersect(LogicalIntersect {
+            left,
+            right,
+            all,
+            columns,
+        }) => rewrite_set_op(state, SetOperator::Intersect, *all, left, right, columns),
+        LogicalExpr::Except(LogicalExcept {
+            left,
+            right,
+            all,
+            columns,
+        }) => rewrite_set_op(state, SetOperator::Except, *all, left, right, columns),
         LogicalExpr::Distinct(_) => rewrite_inputs(state, expr),
         LogicalExpr::Limit(_) => rewrite_inputs(state, expr),
         LogicalExpr::Offset(_) => rewrite_inputs(state, expr),
@@ -334,6 +350,72 @@ fn get_join_filters<'a>(
         .collect();
 
     (left_filters, right_filters, remaining_filters)
+}
+
+fn rewrite_set_op(
+    state: State,
+    set_op: SetOperator,
+    all: bool,
+    left: &RelNode,
+    right: &RelNode,
+    columns: &[ColumnId],
+) -> RelNode {
+    let left_mapping: HashMap<ColumnId, ColumnId> = columns
+        .iter()
+        .zip(left.props().logical().output_columns().iter())
+        .map(|(l, r)| (*l, *r))
+        .collect();
+
+    let right_mapping: HashMap<ColumnId, ColumnId> = columns
+        .iter()
+        .zip(right.props().logical().output_columns().iter())
+        .map(|(l, r)| (*l, *r))
+        .collect();
+
+    let mut left_filters = vec![];
+    let mut right_filters = vec![];
+
+    for (filter_expr, _) in state.filters {
+        let left_filter = replace_columns(filter_expr.expr(), &left_mapping);
+        let left_filter = ScalarNode::from(left_filter);
+        let left_columns: HashSet<ColumnId> = left_mapping.iter().map(|(_, v)| *v).collect();
+        left_filters.push((left_filter, left_columns));
+
+        let right_filter = replace_columns(filter_expr.expr(), &right_mapping);
+        let right_filter = ScalarNode::from(right_filter);
+        let right_columns: HashSet<ColumnId> = right_mapping.iter().map(|(_, v)| *v).collect();
+        right_filters.push((right_filter, right_columns));
+    }
+
+    let left_state = State { filters: left_filters };
+    let left = rewrite(left_state, left);
+
+    let right_state = State { filters: right_filters };
+    let right = rewrite(right_state, right);
+    let columns = columns.to_vec();
+
+    let expr = match set_op {
+        SetOperator::Union => LogicalExpr::Union(LogicalUnion {
+            left,
+            right,
+            all,
+            columns,
+        }),
+        SetOperator::Intersect => LogicalExpr::Intersect(LogicalIntersect {
+            left,
+            right,
+            all,
+            columns,
+        }),
+        SetOperator::Except => LogicalExpr::Except(LogicalExcept {
+            left,
+            right,
+            all,
+            columns,
+        }),
+    };
+
+    RelNode::from(expr)
 }
 
 fn rewrite_inputs(state: State, expr: &RelNode) -> RelNode {
@@ -859,6 +941,108 @@ LogicalLimit rows=5
       filter: Expr col:1 > 100
 "#,
         );
+    }
+
+    #[test]
+    fn test_push_past_union() {
+        fn rewrite_union(all: bool) {
+            rewrite_expr(
+                |builder| {
+                    let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
+                    let from_b = builder.get("B", vec!["b1", "b2"])?;
+                    let intersect = if all {
+                        from_a.union_all(from_b)?
+                    } else {
+                        from_a.union(from_b)?
+                    };
+                    let filter = col("a1").gt(scalar(100)).and(col("a2").lt(scalar(75)));
+                    let filter_a1 = intersect.select(Some(filter))?;
+                    Ok(filter_a1)
+                },
+                r#"
+LogicalUnion all=:all cols=[5, 6]
+  left: LogicalSelect
+    input: LogicalGet A cols=[1, 2]
+    filter: Expr col:1 > 100 AND col:2 < 75
+  right: LogicalSelect
+    input: LogicalGet B cols=[3, 4]
+    filter: Expr col:3 > 100 AND col:4 < 75
+"#
+                .replace(":all", format!("{}", all).as_str())
+                .as_str(),
+            );
+        }
+
+        rewrite_union(false);
+        rewrite_union(true);
+    }
+
+    #[test]
+    fn test_push_past_intersect() {
+        fn rewrite_intersect(all: bool) {
+            rewrite_expr(
+                |builder| {
+                    let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
+                    let from_b = builder.get("B", vec!["b1", "b2"])?;
+                    let intersect = if all {
+                        from_a.intersect_all(from_b)?
+                    } else {
+                        from_a.intersect(from_b)?
+                    };
+                    let filter = col("a1").gt(scalar(100)).and(col("a2").lt(scalar(75)));
+                    let filter_a1 = intersect.select(Some(filter))?;
+                    Ok(filter_a1)
+                },
+                r#"
+LogicalIntersect all=:all cols=[5, 6]
+  left: LogicalSelect
+    input: LogicalGet A cols=[1, 2]
+    filter: Expr col:1 > 100 AND col:2 < 75
+  right: LogicalSelect
+    input: LogicalGet B cols=[3, 4]
+    filter: Expr col:3 > 100 AND col:4 < 75
+"#
+                .replace(":all", format!("{}", all).as_str())
+                .as_str(),
+            );
+        }
+
+        rewrite_intersect(false);
+        rewrite_intersect(true);
+    }
+
+    #[test]
+    fn test_push_past_except() {
+        fn rewrite_except(all: bool) {
+            rewrite_expr(
+                |builder| {
+                    let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
+                    let from_b = builder.get("B", vec!["b1", "b2"])?;
+                    let intersect = if all {
+                        from_a.except_all(from_b)?
+                    } else {
+                        from_a.except(from_b)?
+                    };
+                    let filter = col("a1").gt(scalar(100)).and(col("a2").lt(scalar(75)));
+                    let filter_a1 = intersect.select(Some(filter))?;
+                    Ok(filter_a1)
+                },
+                r#"
+LogicalExcept all=:all cols=[5, 6]
+  left: LogicalSelect
+    input: LogicalGet A cols=[1, 2]
+    filter: Expr col:1 > 100 AND col:2 < 75
+  right: LogicalSelect
+    input: LogicalGet B cols=[3, 4]
+    filter: Expr col:3 > 100 AND col:4 < 75
+"#
+                .replace(":all", format!("{}", all).as_str())
+                .as_str(),
+            );
+        }
+
+        rewrite_except(false);
+        rewrite_except(true);
     }
 
     fn rewrite_expr<F>(f: F, expected: &str)
