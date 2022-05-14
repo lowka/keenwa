@@ -668,7 +668,7 @@ impl OperatorBuilder {
         let (right, right_scope) = right.rel_node()?;
 
         if left_scope.columns().len() != right_scope.columns().len() {
-            return Err(OptimizerError::Argument("Union: Number of columns does not match".to_string()));
+            return Err(OptimizerError::Argument(format!("{}: Number of columns does not match", set_op)));
         }
 
         let outer_columns = left_scope.outer_columns().to_vec();
@@ -681,13 +681,17 @@ impl OperatorBuilder {
             let data_type = {
                 let l = self.metadata.get_column(&l.1);
                 let r = self.metadata.get_column(&r.1);
+                let left_col_type = l.data_type();
+                let right_col_type = r.data_type();
 
-                if l.data_type() != r.data_type() {
-                    let message =
-                        format!("Union: Data type of {}-th column does not match. Type casting is not implemented", i);
-                    return Err(OptimizerError::NotImplemented(message));
+                if left_col_type != right_col_type {
+                    let message = format!(
+                        "{}: Data type of {}-th column does not match. Left: {}, right: {}",
+                        set_op, i, left_col_type, right_col_type
+                    );
+                    return Err(OptimizerError::Argument(message));
                 }
-                l.data_type().clone()
+                left_col_type.clone()
             };
 
             // use column names of the first operand.

@@ -26,6 +26,7 @@ ok: 1 IS NULL
 query: 1 IS NOT NULL
 ok: 1 IS NOT NULL
 ---
+# cast expression
 query: CAST(1 as STRING)
 ok: CAST(1 as String)
 ---
@@ -35,6 +36,16 @@ ok: CAST(1 as Int32)
 query: CAST(1 as Boolean)
 ok: CAST(1 as Bool)
 ---
+query: CAST('2000-01-01' as Date)
+ok: CAST(2000-01-01 as Date)
+---
+query: CAST('12:11:53.021' as Time)
+ok: CAST(12:11:53.021 as Time)
+---
+query: CAST('2000-01-01T00:00:00.000' as Timestamp)
+ok: CAST(2000-01-01T00:00:00.000 as Timestamp)
+---
+#
 query: 1 IN (1, 2, 3)
 ok: 1 IN (1, 2, 3)
 ---

@@ -27,7 +27,7 @@ impl Display for DataType {
             DataType::String => write!(f, "String"),
             DataType::Date => write!(f, "Date"),
             DataType::Time => write!(f, "Time"),
-            DataType::Timestamp(tz) => write!(f, "Timestamp{tz}", tz = if *tz { " with timezone" } else { "" }),
+            DataType::Timestamp(tz) => write!(f, "Timestamp{tz}", tz = if *tz { " with time zone" } else { "" }),
             DataType::Interval => write!(f, "Interval"),
             DataType::Tuple(values) => write!(f, "Tuple({})", values.iter().join(", ")),
             DataType::Array(element_type) => write!(f, "{}[]", element_type),

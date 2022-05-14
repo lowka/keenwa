@@ -96,7 +96,7 @@ impl ScalarValue {
             ScalarValue::Timestamp(_, tz) => DataType::Timestamp(tz.is_some()),
             ScalarValue::Interval(_) => DataType::Interval,
             ScalarValue::Tuple(values) => DataType::Tuple(values.iter().map(|val| val.data_type()).collect()),
-            ScalarValue::Array(array) => array.element_type.clone(),
+            ScalarValue::Array(array) => DataType::Array(Box::new(array.element_type.clone())),
         }
     }
 }
@@ -243,6 +243,30 @@ mod test {
         assert_eq!(ScalarValue::Bool(true).data_type(), DataType::Bool, "bool value");
         assert_eq!(ScalarValue::Int32(1).data_type(), DataType::Int32, "i32 value");
         assert_eq!(ScalarValue::String(String::from("abc")).data_type(), DataType::String, "string value");
+
+        assert_eq!(ScalarValue::Interval(Interval::YearMonth(0, 0)).data_type(), DataType::Interval, "date value");
+        assert_eq!(ScalarValue::Interval(Interval::DaySecond(0, 0)).data_type(), DataType::Interval, "date value");
+
+        assert_eq!(ScalarValue::Date(1).data_type(), DataType::Date, "date value");
+        assert_eq!(ScalarValue::Time(0, 0).data_type(), DataType::Time, "time value");
+        assert_eq!(ScalarValue::Timestamp(0, None).data_type(), DataType::Timestamp(false), "timestamp value");
+        assert_eq!(
+            ScalarValue::Timestamp(0, Some(0)).data_type(),
+            DataType::Timestamp(true),
+            "timestamp with time zone value"
+        );
+
+        assert_eq!(
+            ScalarValue::Tuple(vec![ScalarValue::Bool(true), ScalarValue::Int32(1)]).data_type(),
+            DataType::Tuple(vec![DataType::Bool, DataType::Int32]),
+            "tuple value"
+        );
+
+        let array = Array {
+            element_type: DataType::Int32,
+            elements: vec![ScalarValue::Int32(1)],
+        };
+        assert_eq!(ScalarValue::Array(array).data_type(), DataType::Array(Box::new(DataType::Int32)), "array value");
     }
 
     #[test]
