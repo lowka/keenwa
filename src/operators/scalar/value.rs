@@ -1,6 +1,4 @@
-use chrono::{
-    DateTime, Datelike, FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime, ParseError, TimeZone, Timelike, Utc,
-};
+use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
 use itertools::Itertools;
 use std::fmt::{Display, Formatter};
 
@@ -120,12 +118,9 @@ impl Display for ScalarValue {
                 let secs = *value / 1000;
                 let millis = *value - 1000 * secs;
 
-                let timezone = match tz {
-                    Some(tz) => Some(FixedOffset::east_opt(*tz).map(|r| Ok(r)).unwrap_or(Err(tz))),
-                    None => None,
-                };
+                let timezone = tz.map(|tz| FixedOffset::east_opt(tz).map(Ok).unwrap_or(Err(tz)));
                 let datetime = NaiveDateTime::from_timestamp_opt(secs, (millis * 1_000_000) as u32)
-                    .map(|r| Ok(r))
+                    .map(Ok)
                     .unwrap_or(Err(millis));
 
                 match (datetime, timezone) {
@@ -209,12 +204,10 @@ pub fn parse_time(input: &str) -> Result<ScalarValue, OptimizerError> {
 
 /// Parses the given RFC 3339 string into [ScalarValue::Timestamp] without timezone.
 pub fn parse_timestamp(input: &str) -> Result<ScalarValue, OptimizerError> {
-    let may_include_timezone = match input.split_once('T') {
-        // DATE`T`TIME[timezone]
-        // If the right part contains `+` or `-` sign then a string probably include a timezone information.
-        Some((_, right)) if right.contains("+") || right.contains("-") => true,
-        _ => false,
-    };
+    // DATE`T`TIME[timezone]
+    // If the right part contains `+` or `-` sign then a string probably include a timezone information.
+    let may_include_timezone =
+        matches!(input.split_once('T'), Some((_, right)) if right.contains('+') || right.contains('-'));
 
     if may_include_timezone {
         match DateTime::parse_from_rfc3339(input) {
