@@ -18,6 +18,8 @@ pub enum LogicalExpr {
     Select(LogicalSelect),
     Aggregate(LogicalAggregate),
     Join(LogicalJoin),
+    SemiJoin(LogicalSemiJoin),
+    AntiJoin(LogicalAntiJoin),
     Get(LogicalGet),
     Union(LogicalUnion),
     Intersect(LogicalIntersect),
@@ -35,6 +37,8 @@ impl LogicalExpr {
             LogicalExpr::Projection(expr) => expr.copy_in(visitor, expr_ctx),
             LogicalExpr::Select(expr) => expr.copy_in(visitor, expr_ctx),
             LogicalExpr::Join(expr) => expr.copy_in(visitor, expr_ctx),
+            LogicalExpr::SemiJoin(expr) => expr.copy_in(visitor, expr_ctx),
+            LogicalExpr::AntiJoin(expr) => expr.copy_in(visitor, expr_ctx),
             LogicalExpr::Get(_) => {}
             LogicalExpr::Aggregate(expr) => expr.copy_in(visitor, expr_ctx),
             LogicalExpr::Union(expr) => expr.copy_in(visitor, expr_ctx),
@@ -52,6 +56,8 @@ impl LogicalExpr {
             LogicalExpr::Projection(expr) => LogicalExpr::Projection(expr.with_new_inputs(inputs)),
             LogicalExpr::Select(expr) => LogicalExpr::Select(expr.with_new_inputs(inputs)),
             LogicalExpr::Join(expr) => LogicalExpr::Join(expr.with_new_inputs(inputs)),
+            LogicalExpr::SemiJoin(expr) => LogicalExpr::SemiJoin(expr.with_new_inputs(inputs)),
+            LogicalExpr::AntiJoin(expr) => LogicalExpr::AntiJoin(expr.with_new_inputs(inputs)),
             LogicalExpr::Get(expr) => LogicalExpr::Get(expr.with_new_inputs(inputs)),
             LogicalExpr::Aggregate(expr) => LogicalExpr::Aggregate(expr.with_new_inputs(inputs)),
             LogicalExpr::Union(expr) => LogicalExpr::Union(expr.with_new_inputs(inputs)),
@@ -69,6 +75,8 @@ impl LogicalExpr {
             LogicalExpr::Projection(expr) => expr.num_children(),
             LogicalExpr::Select(expr) => expr.num_children(),
             LogicalExpr::Join(expr) => expr.num_children(),
+            LogicalExpr::SemiJoin(expr) => expr.num_children(),
+            LogicalExpr::AntiJoin(expr) => expr.num_children(),
             LogicalExpr::Get(expr) => expr.num_children(),
             LogicalExpr::Aggregate(expr) => expr.num_children(),
             LogicalExpr::Union(expr) => expr.num_children(),
@@ -87,6 +95,8 @@ impl LogicalExpr {
             LogicalExpr::Select(expr) => expr.get_child(i),
             LogicalExpr::Aggregate(expr) => expr.get_child(i),
             LogicalExpr::Join(expr) => expr.get_child(i),
+            LogicalExpr::SemiJoin(expr) => expr.get_child(i),
+            LogicalExpr::AntiJoin(expr) => expr.get_child(i),
             LogicalExpr::Get(expr) => expr.get_child(i),
             LogicalExpr::Union(expr) => expr.get_child(i),
             LogicalExpr::Intersect(expr) => expr.get_child(i),
@@ -106,6 +116,8 @@ impl LogicalExpr {
             LogicalExpr::Projection(expr) => expr.format_expr(f),
             LogicalExpr::Select(expr) => expr.format_expr(f),
             LogicalExpr::Join(expr) => expr.format_expr(f),
+            LogicalExpr::SemiJoin(expr) => expr.format_expr(f),
+            LogicalExpr::AntiJoin(expr) => expr.format_expr(f),
             LogicalExpr::Get(expr) => expr.format_expr(f),
             LogicalExpr::Aggregate(expr) => expr.format_expr(f),
             LogicalExpr::Union(expr) => expr.format_expr(f),
@@ -195,6 +207,15 @@ impl LogicalExpr {
                 match condition {
                     JoinCondition::Using(_) => (),
                     JoinCondition::On(on) => on.expr().expr().accept(&mut expr_visitor)?,
+                };
+                left.expr().logical().accept(visitor)?;
+                right.expr().logical().accept(visitor)?;
+            }
+            LogicalExpr::SemiJoin(LogicalSemiJoin { left, right, expr, .. })
+            | LogicalExpr::AntiJoin(LogicalAntiJoin { left, right, expr, .. }) => {
+                match expr {
+                    Some(expr) => expr.expr().accept(&mut expr_visitor)?,
+                    None => {}
                 };
                 left.expr().logical().accept(visitor)?;
                 right.expr().logical().accept(visitor)?;
@@ -489,6 +510,132 @@ impl LogicalJoin {
             JoinCondition::Using(using) => f.write_value("using", using),
             JoinCondition::On(on) => f.write_value("on", on),
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LogicalSemiJoin {
+    pub left: RelNode,
+    pub right: RelNode,
+    /// column expression for IN <subquery>.
+    pub expr: Option<ScalarNode>,
+}
+
+impl LogicalSemiJoin {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.left);
+        visitor.visit_rel(expr_ctx, &self.right);
+        visitor.visit_opt_scalar(expr_ctx, self.expr.as_ref());
+    }
+
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
+        let num_opt = match self.expr.as_ref() {
+            Some(_) => 1,
+            None => 0,
+        };
+        inputs.expect_len(2 + num_opt, "LogicalSemiJoin");
+
+        LogicalSemiJoin {
+            left: inputs.rel_node(),
+            right: inputs.rel_node(),
+            expr: match self.expr.as_ref() {
+                Some(_) => Some(inputs.scalar_node()),
+                None => None,
+            },
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        let num_opt = match self.expr.as_ref() {
+            Some(_) => 1,
+            None => 0,
+        };
+        2 + num_opt
+    }
+
+    fn get_child(&self, i: usize) -> Option<&Operator> {
+        match i {
+            0 => Some(self.left.mexpr()),
+            1 => Some(self.right.mexpr()),
+            2 => match self.expr.as_ref() {
+                Some(expr) => Some(expr.mexpr()),
+                None => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("LogicalSemiJoin");
+        f.write_expr("left", &self.left);
+        f.write_expr("right", &self.right);
+        f.write_expr_if_present("expr", self.expr.as_ref());
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LogicalAntiJoin {
+    pub left: RelNode,
+    pub right: RelNode,
+    /// column expression for IN <subquery>.
+    pub expr: Option<ScalarNode>,
+}
+
+impl LogicalAntiJoin {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.left);
+        visitor.visit_rel(expr_ctx, &self.right);
+        visitor.visit_opt_scalar(expr_ctx, self.expr.as_ref());
+    }
+
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
+        let num_opt = match self.expr.as_ref() {
+            Some(_) => 1,
+            None => 0,
+        };
+        inputs.expect_len(2 + num_opt, "LogicalAntiJoin");
+
+        LogicalAntiJoin {
+            left: inputs.rel_node(),
+            right: inputs.rel_node(),
+            expr: match self.expr.as_ref() {
+                Some(_) => Some(inputs.scalar_node()),
+                None => None,
+            },
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        let num_opt = match self.expr.as_ref() {
+            Some(_) => 1,
+            None => 0,
+        };
+        2 + num_opt
+    }
+
+    fn get_child(&self, i: usize) -> Option<&Operator> {
+        match i {
+            0 => Some(self.left.mexpr()),
+            1 => Some(self.right.mexpr()),
+            2 => match self.expr.as_ref() {
+                Some(expr) => Some(expr.mexpr()),
+                None => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("LogicalAntiJoin");
+        f.write_expr("left", &self.left);
+        f.write_expr("right", &self.right);
+        f.write_expr_if_present("expr", self.expr.as_ref());
     }
 }
 
