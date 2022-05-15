@@ -21,7 +21,7 @@ use crate::rules::rewrite::{rewrite_rel_inputs, with_new_rel_inputs};
 ///
 /// # Limitations:
 /// * Currently it does not support ON condition in joins.
-/// * Does not support UNION, INTERSECT, EXCEPT operators.
+/// * Does not support SemiJoin and AntiJoin.
 /// * When this rule passes filter through the join it adds redundant filter expressions.
 ///
 /// # Note
@@ -109,6 +109,10 @@ fn rewrite(mut state: State, expr: &RelNode) -> RelNode {
         LogicalExpr::Join(LogicalJoin {
             left, right, condition, ..
         }) => rewrite_join(state, expr, left, right, condition),
+        LogicalExpr::SemiJoin(_) | LogicalExpr::AntiJoin(_) => {
+            /// TODO: Implement filter push down through semi/anti joins.
+            expr.clone()
+        }
         LogicalExpr::Get(LogicalGet { columns, .. }) => add_filters(state, expr, columns),
         LogicalExpr::Union(LogicalUnion {
             left,

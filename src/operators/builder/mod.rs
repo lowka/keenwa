@@ -20,8 +20,9 @@ use crate::operators::builder::subqueries::{
 };
 use crate::operators::relational::join::{JoinCondition, JoinOn, JoinType, JoinUsing};
 use crate::operators::relational::logical::{
-    LogicalDistinct, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin, LogicalLimit,
-    LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
+    LogicalAntiJoin, LogicalDistinct, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect,
+    LogicalJoin, LogicalLimit, LogicalOffset, LogicalProjection, LogicalSelect, LogicalSemiJoin, LogicalUnion,
+    SetOperator,
 };
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::ExprRewriter;
@@ -379,6 +380,54 @@ impl OperatorBuilder {
             right,
             condition,
         });
+
+        self.add_operator_and_scope(expr, scope);
+        Ok(self)
+    }
+
+    /// Adds a semi-join operator to an operator tree.
+    pub fn semi_join(
+        mut self,
+        mut right: OperatorBuilder,
+        expr: Option<ScalarExpr>,
+    ) -> Result<OperatorBuilder, OptimizerError> {
+        let (left, scope) = self.rel_node()?;
+        let (right, _) = right.rel_node()?;
+
+        let metadata = self.metadata.clone();
+        let mut rewriter = RewriteExprs::new(&scope, metadata, ValidateFilterExpr::join_clause());
+        let expr = if let Some(expr) = expr {
+            let expr = expr.rewrite(&mut rewriter)?;
+            Some(self.add_scalar_node(expr, &scope))
+        } else {
+            None
+        };
+
+        let expr = LogicalExpr::SemiJoin(LogicalSemiJoin { left, right, expr });
+
+        self.add_operator_and_scope(expr, scope);
+        Ok(self)
+    }
+
+    /// Adds an anti-join operator to an operator tree.
+    pub fn anti_join(
+        mut self,
+        mut right: OperatorBuilder,
+        expr: Option<ScalarExpr>,
+    ) -> Result<OperatorBuilder, OptimizerError> {
+        let (left, scope) = self.rel_node()?;
+        let (right, _) = right.rel_node()?;
+
+        let metadata = self.metadata.clone();
+        let mut rewriter = RewriteExprs::new(&scope, metadata, ValidateFilterExpr::join_clause());
+        let expr = if let Some(expr) = expr {
+            let expr = expr.rewrite(&mut rewriter)?;
+            Some(self.add_scalar_node(expr, &scope))
+        } else {
+            None
+        };
+
+        let expr = LogicalExpr::AntiJoin(LogicalAntiJoin { left, right, expr });
 
         self.add_operator_and_scope(expr, scope);
         Ok(self)
@@ -2060,6 +2109,138 @@ Metadata:
 Memo:
   01 LogicalDistinct input=00 cols=[1, 2, 3, 4]
   00 LogicalGet A cols=[1, 2, 3, 4]
+"#,
+        );
+    }
+
+    #[test]
+    fn test_semi_join_exists_subquery() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let left = builder.get("A", vec!["a1", "a2"])?;
+            let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
+            let expr = col("a1");
+            let join = left.semi_join(right, None)?;
+
+            join.build()
+        });
+
+        tester.expect_expr(
+            r#"
+LogicalSemiJoin
+  left: LogicalGet A cols=[1, 2]
+  right: LogicalGet B cols=[3, 4]
+  output cols: [1, 2]
+Metadata:
+  col:1 A.a1 Int32
+  col:2 A.a2 Int32
+  col:3 B.b1 Int32
+  col:4 B.b2 Int32
+Memo:
+  02 LogicalSemiJoin left=00 right=01
+  01 LogicalGet B cols=[3, 4]
+  00 LogicalGet A cols=[1, 2]
+"#,
+        );
+    }
+
+    #[test]
+    fn test_semi_join_in_subquery() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let left = builder.get("A", vec!["a1", "a2"])?;
+            let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
+            let expr = col("a1");
+            let join = left.semi_join(right, Some(expr))?;
+
+            join.build()
+        });
+
+        tester.expect_expr(
+            r#"
+LogicalSemiJoin
+  left: LogicalGet A cols=[1, 2]
+  right: LogicalGet B cols=[3, 4]
+  expr: Expr col:1
+  output cols: [1, 2]
+Metadata:
+  col:1 A.a1 Int32
+  col:2 A.a2 Int32
+  col:3 B.b1 Int32
+  col:4 B.b2 Int32
+Memo:
+  03 LogicalSemiJoin left=00 right=01 expr=02
+  02 Expr col:1
+  01 LogicalGet B cols=[3, 4]
+  00 LogicalGet A cols=[1, 2]
+"#,
+        );
+    }
+
+    #[test]
+    fn test_anti_join_exists_subquery() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let left = builder.get("A", vec!["a1", "a2"])?;
+            let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
+            let expr = col("a1");
+            let join = left.anti_join(right, None)?;
+
+            join.build()
+        });
+
+        tester.expect_expr(
+            r#"
+LogicalAntiJoin
+  left: LogicalGet A cols=[1, 2]
+  right: LogicalGet B cols=[3, 4]
+  output cols: [1, 2]
+Metadata:
+  col:1 A.a1 Int32
+  col:2 A.a2 Int32
+  col:3 B.b1 Int32
+  col:4 B.b2 Int32
+Memo:
+  02 LogicalAntiJoin left=00 right=01
+  01 LogicalGet B cols=[3, 4]
+  00 LogicalGet A cols=[1, 2]
+"#,
+        );
+    }
+
+    #[test]
+    fn test_anti_join_in_subquery() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let left = builder.get("A", vec!["a1", "a2"])?;
+            let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
+            let expr = col("a1");
+            let join = left.anti_join(right, Some(expr))?;
+
+            join.build()
+        });
+
+        tester.expect_expr(
+            r#"
+LogicalAntiJoin
+  left: LogicalGet A cols=[1, 2]
+  right: LogicalGet B cols=[3, 4]
+  expr: Expr col:1
+  output cols: [1, 2]
+Metadata:
+  col:1 A.a1 Int32
+  col:2 A.a2 Int32
+  col:3 B.b1 Int32
+  col:4 B.b2 Int32
+Memo:
+  03 LogicalAntiJoin left=00 right=01 expr=02
+  02 Expr col:1
+  01 LogicalGet B cols=[3, 4]
+  00 LogicalGet A cols=[1, 2]
 "#,
         );
     }

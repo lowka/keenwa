@@ -11,8 +11,9 @@ use crate::error::OptimizerError;
 use crate::meta::{ColumnId, MetadataRef};
 use crate::operators::relational::join::{JoinCondition, JoinType};
 use crate::operators::relational::logical::{
-    LogicalAggregate, LogicalDistinct, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin,
-    LogicalLimit, LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
+    LogicalAggregate, LogicalAntiJoin, LogicalDistinct, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect,
+    LogicalJoin, LogicalLimit, LogicalOffset, LogicalProjection, LogicalSelect, LogicalSemiJoin, LogicalUnion,
+    SetOperator,
 };
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::ExprRewriter;
@@ -84,6 +85,20 @@ where
         left: &RelNode,
         _right: &RelNode,
         _condition: &JoinCondition,
+    ) -> Result<Option<Statistics>, OptimizerError> {
+        let logical = left.props().logical();
+        let statistics = logical.statistics().unwrap();
+        let row_count = statistics.row_count();
+        // take selectivity of the join condition into account
+        Ok(Some(Statistics::from_row_count(row_count)))
+    }
+
+    fn build_semi_join(
+        &self,
+        _anti: bool,
+        left: &RelNode,
+        _right: &RelNode,
+        _expr: Option<&ScalarNode>,
     ) -> Result<Option<Statistics>, OptimizerError> {
         let logical = left.props().logical();
         let statistics = logical.statistics().unwrap();
@@ -187,6 +202,12 @@ where
                 right,
                 condition,
             }) => self.build_join(join_type, left, right, condition),
+            LogicalExpr::SemiJoin(LogicalSemiJoin { left, right, expr }) => {
+                self.build_semi_join(false, left, right, expr.as_ref())
+            }
+            LogicalExpr::AntiJoin(LogicalAntiJoin { left, right, expr }) => {
+                self.build_semi_join(true, left, right, expr.as_ref())
+            }
             LogicalExpr::Get(LogicalGet { source, .. }) => self.build_get(source),
             LogicalExpr::Union(LogicalUnion {
                 left,

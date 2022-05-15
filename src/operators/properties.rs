@@ -5,8 +5,9 @@ use crate::memo::Props;
 use crate::meta::{ColumnId, MetadataRef};
 use crate::operators::relational::join::{JoinCondition, JoinType};
 use crate::operators::relational::logical::{
-    LogicalAggregate, LogicalDistinct, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect,
-    LogicalJoin, LogicalLimit, LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
+    LogicalAggregate, LogicalAntiJoin, LogicalDistinct, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet,
+    LogicalIntersect, LogicalJoin, LogicalLimit, LogicalOffset, LogicalProjection, LogicalSelect, LogicalSemiJoin,
+    LogicalUnion, SetOperator,
 };
 use crate::operators::relational::physical::{PhysicalExpr, Sort};
 use crate::operators::relational::{RelExpr, RelNode};
@@ -121,6 +122,35 @@ where
         match condition {
             JoinCondition::Using(using) => outer_columns.add_expr(&using.get_expr()),
             JoinCondition::On(on_expr) => outer_columns.add_expr(on_expr.expr()),
+        };
+        let outer_columns = outer_columns.build();
+
+        Ok(LogicalProperties {
+            output_columns,
+            outer_columns,
+            has_correlated_subqueries: false,
+            statistics: None,
+        })
+    }
+
+    /// Builds logical properties for a semi-join or an anti-join operator.
+    pub fn build_semi_join(
+        &self,
+        _anti: bool,
+        left: &RelNode,
+        _right: &RelNode,
+        expr: Option<&ScalarNode>,
+        metadata: MetadataRef,
+        outer_scope: &OuterScope,
+    ) -> Result<LogicalProperties, OptimizerError> {
+        let output_columns = left.props().logical().output_columns().to_vec();
+
+        let mut outer_columns = OuterColumnsBuilder::new(outer_scope, metadata);
+        outer_columns.add_input(left);
+
+        match expr {
+            Some(expr) => outer_columns.add_expr(expr),
+            None => {}
         };
         let outer_columns = outer_columns.build();
 
@@ -342,6 +372,12 @@ where
                         right,
                         condition,
                     }) => self.build_join(join_type, left, right, condition, metadata.clone(), scope),
+                    LogicalExpr::SemiJoin(LogicalSemiJoin { left, right, expr }) => {
+                        self.build_semi_join(false, left, right, expr.as_ref(), metadata.clone(), scope)
+                    }
+                    LogicalExpr::AntiJoin(LogicalAntiJoin { left, right, expr }) => {
+                        self.build_semi_join(true, left, right, expr.as_ref(), metadata.clone(), scope)
+                    }
                     LogicalExpr::Get(LogicalGet { source, columns }) => self.build_get(source, columns),
                     LogicalExpr::Union(LogicalUnion {
                         left,
