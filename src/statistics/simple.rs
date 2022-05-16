@@ -11,9 +11,8 @@ use crate::error::OptimizerError;
 use crate::meta::{ColumnId, MetadataRef};
 use crate::operators::relational::join::{JoinCondition, JoinType};
 use crate::operators::relational::logical::{
-    LogicalAggregate, LogicalAntiJoin, LogicalDistinct, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect,
-    LogicalJoin, LogicalLimit, LogicalOffset, LogicalProjection, LogicalSelect, LogicalSemiJoin, LogicalUnion,
-    SetOperator,
+    LogicalAggregate, LogicalDistinct, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin,
+    LogicalLimit, LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
 };
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::ExprRewriter;
