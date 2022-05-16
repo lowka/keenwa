@@ -296,16 +296,9 @@ impl OperatorBuilder {
             columns_ids.push((left_id, right_id));
         }
 
-        let scope = left_scope.join(right_scope);
         let condition = JoinCondition::using(columns_ids);
-        let expr = LogicalExpr::Join(LogicalJoin {
-            join_type,
-            left,
-            right,
-            condition,
-        });
+        self.add_join(left, right, left_scope, right_scope, join_type, condition)?;
 
-        self.add_operator_and_scope(expr, scope);
         Ok(self)
     }
 
@@ -331,21 +324,9 @@ impl OperatorBuilder {
             }
         }
 
-        let scope = left_scope.join(right_scope);
+        let condition = JoinCondition::On(JoinOn::new(ScalarNode::from(expr)));
+        self.add_join(left, right, left_scope, right_scope, join_type, condition)?;
 
-        let metadata = self.metadata.clone();
-        let mut rewriter = RewriteExprs::new(&scope, metadata, ValidateFilterExpr::join_clause());
-        let expr = expr.rewrite(&mut rewriter)?;
-        let expr = self.add_scalar_node(expr, &scope);
-        let condition = JoinCondition::On(JoinOn::new(expr));
-        let expr = LogicalExpr::Join(LogicalJoin {
-            join_type,
-            left,
-            right,
-            condition,
-        });
-
-        self.add_operator_and_scope(expr, scope);
         Ok(self)
     }
 
@@ -354,8 +335,15 @@ impl OperatorBuilder {
         let (left, left_scope) = self.rel_node()?;
         let (right, right_scope) = right.rel_node()?;
 
-        if join_type == JoinType::Cross {
-            return Err(OptimizerError::Argument("CROSS JOIN: Natural join condition is not allowed".to_string()));
+        let error = match join_type {
+            JoinType::Cross => Some("CROSS JOIN"),
+            JoinType::LeftSemi => Some("LEFT SEMI JOIN"),
+            JoinType::RightSemi => Some("RIGHT SEMI JOIN"),
+            JoinType::Anti => Some("ANTI JOIN"),
+            _ => None,
+        };
+        if let Some(error) = error {
+            return Err(OptimizerError::Argument(format!("{}: Natural join condition is not allowed", error)));
         }
 
         let left_name_id: HashMap<String, ColumnId, RandomState> = HashMap::from_iter(left_scope.columns().to_vec());
@@ -382,52 +370,6 @@ impl OperatorBuilder {
         });
 
         self.add_operator_and_scope(expr, scope);
-        Ok(self)
-    }
-
-    /// Adds a semi-join operator to an operator tree.
-    pub fn semi_join(
-        mut self,
-        mut right: OperatorBuilder,
-        expr: ScalarExpr,
-    ) -> Result<OperatorBuilder, OptimizerError> {
-        let (left, left_scope) = self.rel_node()?;
-        let (right, right_scope) = right.rel_node()?;
-
-        let metadata = self.metadata.clone();
-        let expr_scope = left_scope.clone().join(right_scope);
-        let mut rewriter = RewriteExprs::new(&expr_scope, metadata, ValidateFilterExpr::join_clause());
-        let expr = expr.rewrite(&mut rewriter)?;
-        // Add expression with scope that includes all columns.
-        let expr = self.add_scalar_node(expr, &expr_scope);
-
-        let expr = LogicalExpr::SemiJoin(LogicalSemiJoin { left, right, expr });
-
-        // Anti join returns columns from the left side.
-        self.add_operator_and_scope(expr, left_scope);
-        Ok(self)
-    }
-
-    /// Adds an anti-join operator to an operator tree.
-    pub fn anti_join(
-        mut self,
-        mut right: OperatorBuilder,
-        expr: ScalarExpr,
-    ) -> Result<OperatorBuilder, OptimizerError> {
-        let (left, left_scope) = self.rel_node()?;
-        let (right, right_scope) = right.rel_node()?;
-
-        let metadata = self.metadata.clone();
-        let expr_scope = left_scope.clone().join(right_scope);
-        let mut rewriter = RewriteExprs::new(&expr_scope, metadata, ValidateFilterExpr::join_clause());
-        let expr = expr.rewrite(&mut rewriter)?;
-        // Add expression with scope that includes all columns.
-        let expr = self.add_scalar_node(expr, &expr_scope);
-
-        let expr = LogicalExpr::AntiJoin(LogicalAntiJoin { left, right, expr });
-
-        // Semi join returns columns from the left side.
-        self.add_operator_and_scope(expr, left_scope);
         Ok(self)
     }
 
@@ -802,6 +744,67 @@ impl OperatorBuilder {
             scope.add_relations(input);
         }
         self.scope = Some(scope);
+    }
+
+    fn add_join(
+        &mut self,
+        left: RelNode,
+        right: RelNode,
+        left_scope: OperatorScope,
+        right_scope: OperatorScope,
+        join_type: JoinType,
+        condition: JoinCondition,
+    ) -> Result<(), OptimizerError> {
+        fn build_join_expr_and_scope(
+            builder: &mut OperatorBuilder,
+            expr_scope: &OperatorScope,
+            left: RelNode,
+            right: RelNode,
+            join_type: JoinType,
+            condition: JoinCondition,
+        ) -> Result<LogicalExpr, OptimizerError> {
+            let metadata = builder.metadata.clone();
+            let condition = match condition {
+                JoinCondition::Using(using) => JoinCondition::Using(using),
+                JoinCondition::On(JoinOn { expr: ref expr }) => {
+                    let mut rewriter = RewriteExprs::new(&expr_scope, metadata, ValidateFilterExpr::join_clause());
+                    let expr = expr.expr().clone().rewrite(&mut rewriter)?;
+                    let expr = builder.add_scalar_node(expr, &expr_scope);
+                    JoinCondition::On(JoinOn::new(expr))
+                }
+            };
+            let expr = LogicalExpr::Join(LogicalJoin {
+                join_type,
+                left,
+                right,
+                condition,
+            });
+
+            Ok(expr)
+        }
+
+        let (expr, scope) = match join_type {
+            JoinType::LeftSemi | JoinType::Anti => {
+                let scope = left_scope.clone().join(right_scope);
+                let expr = build_join_expr_and_scope(self, &scope, left, right, join_type, condition)?;
+                // LeftSemi and anti join return only left columns
+                (expr, left_scope)
+            }
+            JoinType::RightSemi => {
+                let scope = right_scope.clone().join(left_scope);
+                let expr = build_join_expr_and_scope(self, &scope, left, right, join_type, condition)?;
+                // RightSemi join return only right columns
+                (expr, right_scope)
+            }
+            _ => {
+                let scope = left_scope.join(right_scope);
+                let expr = build_join_expr_and_scope(self, &scope, left, right, join_type, condition)?;
+                (expr, scope)
+            }
+        };
+
+        self.add_operator_and_scope(expr, scope);
+        Ok(())
     }
 
     fn add_input_operator(&mut self, expr: LogicalExpr, relation: RelationInScope) {
@@ -2112,24 +2115,23 @@ Memo:
     }
 
     #[test]
-    fn test_semi_join() {
+    fn test_left_semi_join() {
         let mut tester = OperatorBuilderTester::new();
 
         tester.build_operator(|builder| {
             let left = builder.get("A", vec!["a1", "a2"])?;
             let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
             let expr = col("a1").eq(col("b1"));
-            let join = left.semi_join(right, expr)?;
+            let join = left.join_on(right, JoinType::LeftSemi, expr)?;
 
             join.build()
         });
 
         tester.expect_expr(
             r#"
-LogicalSemiJoin
+LogicalJoin type=LeftSemi on=col:1 = col:3
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
-  expr: Expr col:1 = col:3
   output cols: [1, 2]
 Metadata:
   col:1 A.a1 Int32
@@ -2137,7 +2139,7 @@ Metadata:
   col:3 B.b1 Int32
   col:4 B.b2 Int32
 Memo:
-  03 LogicalSemiJoin left=00 right=01 expr=02
+  03 LogicalJoin left=00 right=01 type=LeftSemi on=col:1 = col:3
   02 Expr col:1 = col:3
   01 LogicalGet B cols=[3, 4]
   00 LogicalGet A cols=[1, 2]
@@ -2146,24 +2148,23 @@ Memo:
     }
 
     #[test]
-    fn test_anti_join_in() {
+    fn test_left_semi_join_using() {
         let mut tester = OperatorBuilderTester::new();
 
         tester.build_operator(|builder| {
             let left = builder.get("A", vec!["a1", "a2"])?;
             let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
             let expr = col("a1").eq(col("b1"));
-            let join = left.anti_join(right, expr)?;
+            let join = left.join_using(right, JoinType::LeftSemi, vec![("a1", "b1")])?;
 
             join.build()
         });
 
         tester.expect_expr(
             r#"
-LogicalAntiJoin
+LogicalJoin type=LeftSemi using=[(1, 3)]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
-  expr: Expr col:1 = col:3
   output cols: [1, 2]
 Metadata:
   col:1 A.a1 Int32
@@ -2171,8 +2172,137 @@ Metadata:
   col:3 B.b1 Int32
   col:4 B.b2 Int32
 Memo:
-  03 LogicalAntiJoin left=00 right=01 expr=02
+  02 LogicalJoin left=00 right=01 type=LeftSemi using=[(1, 3)]
+  01 LogicalGet B cols=[3, 4]
+  00 LogicalGet A cols=[1, 2]
+"#,
+        );
+    }
+
+    #[test]
+    fn test_right_semi_join() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let left = builder.get("A", vec!["a1", "a2"])?;
+            let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
+            let expr = col("a1").eq(col("b1"));
+            let join = left.join_on(right, JoinType::RightSemi, expr)?;
+
+            join.build()
+        });
+
+        tester.expect_expr(
+            r#"
+LogicalJoin type=RightSemi on=col:1 = col:3
+  left: LogicalGet A cols=[1, 2]
+  right: LogicalGet B cols=[3, 4]
+  output cols: [3, 4]
+Metadata:
+  col:1 A.a1 Int32
+  col:2 A.a2 Int32
+  col:3 B.b1 Int32
+  col:4 B.b2 Int32
+Memo:
+  03 LogicalJoin left=00 right=01 type=RightSemi on=col:1 = col:3
   02 Expr col:1 = col:3
+  01 LogicalGet B cols=[3, 4]
+  00 LogicalGet A cols=[1, 2]
+"#,
+        );
+    }
+
+    #[test]
+    fn test_right_semi_join_using() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let left = builder.get("A", vec!["a1", "a2"])?;
+            let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
+            let expr = col("a1").eq(col("b1"));
+            let join = left.join_using(right, JoinType::RightSemi, vec![("a1", "b1")])?;
+
+            join.build()
+        });
+
+        tester.expect_expr(
+            r#"
+LogicalJoin type=RightSemi using=[(1, 3)]
+  left: LogicalGet A cols=[1, 2]
+  right: LogicalGet B cols=[3, 4]
+  output cols: [3, 4]
+Metadata:
+  col:1 A.a1 Int32
+  col:2 A.a2 Int32
+  col:3 B.b1 Int32
+  col:4 B.b2 Int32
+Memo:
+  02 LogicalJoin left=00 right=01 type=RightSemi using=[(1, 3)]
+  01 LogicalGet B cols=[3, 4]
+  00 LogicalGet A cols=[1, 2]
+"#,
+        );
+    }
+
+    #[test]
+    fn test_anti_join() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let left = builder.get("A", vec!["a1", "a2"])?;
+            let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
+            let expr = col("a1").eq(col("b1"));
+            let join = left.join_on(right, JoinType::Anti, expr)?;
+
+            join.build()
+        });
+
+        tester.expect_expr(
+            r#"
+LogicalJoin type=Anti on=col:1 = col:3
+  left: LogicalGet A cols=[1, 2]
+  right: LogicalGet B cols=[3, 4]
+  output cols: [1, 2]
+Metadata:
+  col:1 A.a1 Int32
+  col:2 A.a2 Int32
+  col:3 B.b1 Int32
+  col:4 B.b2 Int32
+Memo:
+  03 LogicalJoin left=00 right=01 type=Anti on=col:1 = col:3
+  02 Expr col:1 = col:3
+  01 LogicalGet B cols=[3, 4]
+  00 LogicalGet A cols=[1, 2]
+"#,
+        );
+    }
+
+    #[test]
+    fn test_anti_join_using() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let left = builder.get("A", vec!["a1", "a2"])?;
+            let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
+            let expr = col("a1").eq(col("b1"));
+            let join = left.join_using(right, JoinType::Anti, vec![("a1", "b1")])?;
+
+            join.build()
+        });
+
+        tester.expect_expr(
+            r#"
+LogicalJoin type=Anti using=[(1, 3)]
+  left: LogicalGet A cols=[1, 2]
+  right: LogicalGet B cols=[3, 4]
+  output cols: [1, 2]
+Metadata:
+  col:1 A.a1 Int32
+  col:2 A.a2 Int32
+  col:3 B.b1 Int32
+  col:4 B.b2 Int32
+Memo:
+  02 LogicalJoin left=00 right=01 type=Anti using=[(1, 3)]
   01 LogicalGet B cols=[3, 4]
   00 LogicalGet A cols=[1, 2]
 "#,

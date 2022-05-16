@@ -18,8 +18,6 @@ pub enum LogicalExpr {
     Select(LogicalSelect),
     Aggregate(LogicalAggregate),
     Join(LogicalJoin),
-    SemiJoin(LogicalSemiJoin),
-    AntiJoin(LogicalAntiJoin),
     Get(LogicalGet),
     Union(LogicalUnion),
     Intersect(LogicalIntersect),
@@ -37,8 +35,6 @@ impl LogicalExpr {
             LogicalExpr::Projection(expr) => expr.copy_in(visitor, expr_ctx),
             LogicalExpr::Select(expr) => expr.copy_in(visitor, expr_ctx),
             LogicalExpr::Join(expr) => expr.copy_in(visitor, expr_ctx),
-            LogicalExpr::SemiJoin(expr) => expr.copy_in(visitor, expr_ctx),
-            LogicalExpr::AntiJoin(expr) => expr.copy_in(visitor, expr_ctx),
             LogicalExpr::Get(_) => {}
             LogicalExpr::Aggregate(expr) => expr.copy_in(visitor, expr_ctx),
             LogicalExpr::Union(expr) => expr.copy_in(visitor, expr_ctx),
@@ -56,8 +52,6 @@ impl LogicalExpr {
             LogicalExpr::Projection(expr) => LogicalExpr::Projection(expr.with_new_inputs(inputs)),
             LogicalExpr::Select(expr) => LogicalExpr::Select(expr.with_new_inputs(inputs)),
             LogicalExpr::Join(expr) => LogicalExpr::Join(expr.with_new_inputs(inputs)),
-            LogicalExpr::SemiJoin(expr) => LogicalExpr::SemiJoin(expr.with_new_inputs(inputs)),
-            LogicalExpr::AntiJoin(expr) => LogicalExpr::AntiJoin(expr.with_new_inputs(inputs)),
             LogicalExpr::Get(expr) => LogicalExpr::Get(expr.with_new_inputs(inputs)),
             LogicalExpr::Aggregate(expr) => LogicalExpr::Aggregate(expr.with_new_inputs(inputs)),
             LogicalExpr::Union(expr) => LogicalExpr::Union(expr.with_new_inputs(inputs)),
@@ -75,8 +69,6 @@ impl LogicalExpr {
             LogicalExpr::Projection(expr) => expr.num_children(),
             LogicalExpr::Select(expr) => expr.num_children(),
             LogicalExpr::Join(expr) => expr.num_children(),
-            LogicalExpr::SemiJoin(expr) => expr.num_children(),
-            LogicalExpr::AntiJoin(expr) => expr.num_children(),
             LogicalExpr::Get(expr) => expr.num_children(),
             LogicalExpr::Aggregate(expr) => expr.num_children(),
             LogicalExpr::Union(expr) => expr.num_children(),
@@ -95,8 +87,6 @@ impl LogicalExpr {
             LogicalExpr::Select(expr) => expr.get_child(i),
             LogicalExpr::Aggregate(expr) => expr.get_child(i),
             LogicalExpr::Join(expr) => expr.get_child(i),
-            LogicalExpr::SemiJoin(expr) => expr.get_child(i),
-            LogicalExpr::AntiJoin(expr) => expr.get_child(i),
             LogicalExpr::Get(expr) => expr.get_child(i),
             LogicalExpr::Union(expr) => expr.get_child(i),
             LogicalExpr::Intersect(expr) => expr.get_child(i),
@@ -116,8 +106,6 @@ impl LogicalExpr {
             LogicalExpr::Projection(expr) => expr.format_expr(f),
             LogicalExpr::Select(expr) => expr.format_expr(f),
             LogicalExpr::Join(expr) => expr.format_expr(f),
-            LogicalExpr::SemiJoin(expr) => expr.format_expr(f),
-            LogicalExpr::AntiJoin(expr) => expr.format_expr(f),
             LogicalExpr::Get(expr) => expr.format_expr(f),
             LogicalExpr::Aggregate(expr) => expr.format_expr(f),
             LogicalExpr::Union(expr) => expr.format_expr(f),
@@ -208,12 +196,6 @@ impl LogicalExpr {
                     JoinCondition::Using(_) => (),
                     JoinCondition::On(on) => on.expr().expr().accept(&mut expr_visitor)?,
                 };
-                left.expr().logical().accept(visitor)?;
-                right.expr().logical().accept(visitor)?;
-            }
-            LogicalExpr::SemiJoin(LogicalSemiJoin { left, right, expr, .. })
-            | LogicalExpr::AntiJoin(LogicalAntiJoin { left, right, expr, .. }) => {
-                expr.expr().accept(&mut expr_visitor)?;
                 left.expr().logical().accept(visitor)?;
                 right.expr().logical().accept(visitor)?;
             }
