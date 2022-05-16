@@ -1,10 +1,16 @@
 #![allow(dead_code)]
+
+use crate::memo::{MemoExpr, NewChildExprs};
 use crate::operators::relational::join::JoinCondition;
 use crate::operators::relational::logical::{
-    LogicalAggregate, LogicalExpr, LogicalGet, LogicalJoin, LogicalProjection,
+    LogicalAggregate, LogicalAntiJoin, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin,
+    LogicalProjection, LogicalSemiJoin, LogicalUnion,
 };
 use crate::operators::relational::RelNode;
+use crate::operators::scalar::exprs;
+use crate::operators::Operator;
 use crate::rules::rewrite::rewrite_rel_inputs;
+use std::collections::VecDeque;
 
 /// A basic implementation of a redundant projection removal rule.
 ///
@@ -22,16 +28,15 @@ use crate::rules::rewrite::rewrite_rel_inputs;
 /// The implementation does not rely on logical properties because logical properties are not set
 /// for new expressions created by this rule.
 pub fn remove_redundant_projections(expr: &RelNode) -> Option<RelNode> {
-    Some(rewrite(expr))
+    Some(rewrite(expr, true))
 }
 
-fn rewrite(expr: &RelNode) -> RelNode {
+fn rewrite(expr: &RelNode, keep_projection: bool) -> RelNode {
     if let LogicalExpr::Projection(projection) = expr.expr().logical() {
         // We exploit the fact that output columns of a projection ([col:1, col:2, col:2 as c3]) are [col:1, col:2, col:3]
         // Because of that we can simply compare output columns of a projection operator and its child operator
         // and if those columns are equal then the projection is redundant and can be removed.
         let input = &projection.input;
-        let columns = &projection.columns;
 
         match input.expr().logical() {
             LogicalExpr::Projection(LogicalProjection {
@@ -40,6 +45,8 @@ fn rewrite(expr: &RelNode) -> RelNode {
                 exprs: child_exprs,
                 ..
             }) => {
+                let columns = &projection.columns;
+
                 if columns.iter().zip(child_columns.iter()).all(|(a, b)| a == b) {
                     // Use the expression list from the child projection to replace
                     // aliased references in the parent projection with corresponding alias expressions.
@@ -57,50 +64,44 @@ fn rewrite(expr: &RelNode) -> RelNode {
                     new_projection.exprs = child_exprs[0..projection.exprs.len()].to_vec();
 
                     let new_projection = RelNode::from(LogicalExpr::Projection(new_projection));
-                    rewrite(&new_projection)
+                    // if expr is the root operator, rewrite inputs of a new projection operator
+                    // as if it were the root operator.
+                    rewrite(&new_projection, keep_projection)
                 } else {
                     rewrite_inputs(expr)
                 }
             }
-            LogicalExpr::Join(LogicalJoin { condition, .. }) => {
-                match condition {
-                    JoinCondition::Using(using) => {
-                        let (left, right) = using.get_columns_pair();
-                        let join_columns: Vec<_> = left.into_iter().chain(right.into_iter()).collect();
-                        if join_columns.len() == columns.len() && columns.iter().all(|c| join_columns.contains(c)) {
-                            // Projection contains only columns from the join condition -> projection is redundant.
-                            rewrite_inputs(input)
-                        } else {
-                            rewrite_inputs(expr)
-                        }
-                    }
-                    JoinCondition::On(_) => {
-                        //TODO: support ON condition
-                        rewrite_inputs(expr)
-                    }
-                }
-            }
-            LogicalExpr::Aggregate(LogicalAggregate {
-                columns: child_columns, ..
-            }) => {
-                if child_columns == columns {
-                    // Projection contains only columns produced by the aggregation -> projection is redundant.
+            LogicalExpr::Aggregate(LogicalAggregate { columns, .. }) => {
+                if columns == &projection.columns {
+                    // Projection that only contains columns produced by the aggregation is redundant.
                     rewrite_inputs(input)
                 } else {
                     rewrite_inputs(expr)
                 }
             }
-            LogicalExpr::Get(LogicalGet {
-                columns: child_columns, ..
-            }) => {
-                if child_columns == columns {
-                    // Projection contains only columns from the scan -> projection is redundant.
+            LogicalExpr::Get(LogicalGet { columns, .. }) => {
+                if columns == &projection.columns {
+                    // Projection that only contains columns from the scan is redundant.
                     input.clone()
                 } else {
                     rewrite_inputs(expr)
                 }
             }
-            _ => rewrite_inputs(expr),
+            LogicalExpr::Select(_) => rewrite_inputs(expr),
+            LogicalExpr::Join(_) => rewrite_inputs(expr),
+            LogicalExpr::Union(LogicalUnion { columns, .. })
+            | LogicalExpr::Intersect(LogicalIntersect { columns, .. })
+            | LogicalExpr::Except(LogicalExcept { columns, .. }) => {
+                if columns == &projection.columns {
+                    rewrite_inputs(input)
+                } else {
+                    rewrite_inputs(expr)
+                }
+            }
+            LogicalExpr::Distinct(_) => rewrite_inputs(expr),
+            LogicalExpr::Limit(_) => rewrite_inputs(expr),
+            LogicalExpr::Offset(_) => rewrite_inputs(expr),
+            LogicalExpr::Empty(_) => rewrite_inputs(expr),
         }
     } else {
         rewrite_inputs(expr)
@@ -108,7 +109,10 @@ fn rewrite(expr: &RelNode) -> RelNode {
 }
 
 fn rewrite_inputs(expr: &RelNode) -> RelNode {
-    rewrite_rel_inputs(expr, rewrite)
+    fn rewrite_non_root(expr: &RelNode) -> RelNode {
+        rewrite(expr, false)
+    }
+    rewrite_rel_inputs(expr, rewrite_non_root)
 }
 
 #[cfg(test)]
@@ -407,102 +411,7 @@ LogicalProjection cols=[4, 5] exprs: [col:3 AS s, col:1 + col:1 AS s2]
     }
 
     #[test]
-    fn test_remove_projection_before_join_if_projection_uses_only_columns_from_join_condition() {
-        rewrite_expr(
-            |builder| {
-                let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
-                let from_b = builder.get("B", vec!["b1", "b2"])?;
-                let join = from_a.join_using(from_b, JoinType::Inner, vec![("a1", "b1")])?;
-                let projection = join.project(vec![col("a1"), col("b1")])?;
-
-                Ok(projection)
-            },
-            r#"
-LogicalJoin type=Inner using=[(1, 3)]
-  left: LogicalGet A cols=[1, 2]
-  right: LogicalGet B cols=[3, 4]
-"#,
-        );
-    }
-
-    #[test]
-    fn test_do_not_remove_projection_before_join_if_projection_introduces_additional_expressions() {
-        rewrite_expr(
-            |builder| {
-                let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
-                let from_b = builder.get("B", vec!["b1", "b2"])?;
-                let join = from_a.join_using(from_b, JoinType::Inner, vec![("a1", "b1")])?;
-                let projection = join.project(vec![col("a1"), col("b1"), col("b2")])?;
-
-                Ok(projection)
-            },
-            r#"
-LogicalProjection cols=[1, 3, 4] exprs: [col:1, col:3, col:4]
-  input: LogicalJoin type=Inner using=[(1, 3)]
-    left: LogicalGet A cols=[1, 2]
-    right: LogicalGet B cols=[3, 4]
-"#,
-        );
-
-        rewrite_expr(
-            |builder| {
-                let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
-                let from_b = builder.get("B", vec!["b1", "b2"])?;
-                let join = from_a.join_using(from_b, JoinType::Inner, vec![("a1", "b1")])?;
-                let projection = join.project(vec![col("a1"), col("b1"), col("a1").alias("c1")])?;
-
-                Ok(projection)
-            },
-            r#"
-LogicalProjection cols=[1, 3, 5] exprs: [col:1, col:3, col:1 AS c1]
-  input: LogicalJoin type=Inner using=[(1, 3)]
-    left: LogicalGet A cols=[1, 2]
-    right: LogicalGet B cols=[3, 4]
-"#,
-        );
-
-        // keep projection if it uses aliases
-        rewrite_expr(
-            |builder| {
-                let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
-                let from_b = builder.get("B", vec!["b1", "b2"])?;
-                let join = from_a.join_using(from_b, JoinType::Inner, vec![("a1", "b1")])?;
-                let projection = join.project(vec![col("a1"), col("b1").alias("c1")])?;
-
-                Ok(projection)
-            },
-            r#"
-LogicalProjection cols=[1, 5] exprs: [col:1, col:3 AS c1]
-  input: LogicalJoin type=Inner using=[(1, 3)]
-    left: LogicalGet A cols=[1, 2]
-    right: LogicalGet B cols=[3, 4]
-"#,
-        );
-    }
-
-    #[test]
-    fn test_do_not_remove_projection_before_join_if_projection_uses_aliases() {
-        // keep projection if it uses aliases
-        rewrite_expr(
-            |builder| {
-                let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
-                let from_b = builder.get("B", vec!["b1", "b2"])?;
-                let join = from_a.join_using(from_b, JoinType::Inner, vec![("a1", "b1")])?;
-                let projection = join.project(vec![col("a1"), col("b1").alias("c1")])?;
-
-                Ok(projection)
-            },
-            r#"
-LogicalProjection cols=[1, 5] exprs: [col:1, col:3 AS c1]
-  input: LogicalJoin type=Inner using=[(1, 3)]
-    left: LogicalGet A cols=[1, 2]
-    right: LogicalGet B cols=[3, 4]
-"#,
-        );
-    }
-
-    #[test]
-    fn test_do_not_move_projection_before_select() {
+    fn test_do_not_move_projection_past_select() {
         rewrite_expr(
             |builder| {
                 let from_a = builder.get("A", vec!["a1", "a2"])?;
@@ -521,7 +430,7 @@ LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
     }
 
     #[test]
-    fn test_do_not_move_projection_before_empty() {
+    fn test_do_not_move_projection_past_empty() {
         rewrite_expr(
             |builder| {
                 let empty = builder.empty(true)?;
@@ -532,6 +441,63 @@ LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
             r#"
 LogicalProjection cols=[1] exprs: [1]
   input: LogicalEmpty return_one_row=true
+"#,
+        )
+    }
+
+    #[test]
+    fn test_remove_redundant_projection_before_union() {
+        rewrite_expr(
+            |builder| {
+                let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
+                let from_b = builder.get("B", vec!["b1", "b2"])?;
+                let union = from_a.union(from_b)?;
+                let project = union.project(vec![col("a1"), col("a2")])?;
+
+                Ok(project)
+            },
+            r#"
+LogicalUnion all=false cols=[5, 6]
+  left: LogicalGet A cols=[1, 2]
+  right: LogicalGet B cols=[3, 4]
+"#,
+        )
+    }
+
+    #[test]
+    fn test_remove_redundant_projection_before_intersect() {
+        rewrite_expr(
+            |builder| {
+                let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
+                let from_b = builder.get("B", vec!["b1", "b2"])?;
+                let intersect = from_a.intersect(from_b)?;
+                let project = intersect.project(vec![col("a1"), col("a2")])?;
+
+                Ok(project)
+            },
+            r#"
+LogicalIntersect all=false cols=[5, 6]
+  left: LogicalGet A cols=[1, 2]
+  right: LogicalGet B cols=[3, 4]
+"#,
+        )
+    }
+
+    #[test]
+    fn test_remove_redundant_projection_before_except() {
+        rewrite_expr(
+            |builder| {
+                let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
+                let from_b = builder.get("B", vec!["b1", "b2"])?;
+                let except = from_a.except(from_b)?;
+                let project = except.project(vec![col("a1"), col("a2")])?;
+
+                Ok(project)
+            },
+            r#"
+LogicalExcept all=false cols=[5, 6]
+  left: LogicalGet A cols=[1, 2]
+  right: LogicalGet B cols=[3, 4]
 "#,
         )
     }
