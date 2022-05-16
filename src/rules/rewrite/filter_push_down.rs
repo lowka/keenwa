@@ -109,10 +109,6 @@ fn rewrite(mut state: State, expr: &RelNode) -> RelNode {
         LogicalExpr::Join(LogicalJoin {
             left, right, condition, ..
         }) => rewrite_join(state, expr, left, right, condition),
-        LogicalExpr::SemiJoin(_) | LogicalExpr::AntiJoin(_) => {
-            /// TODO: Implement filter push down through semi/anti joins.
-            expr.clone()
-        }
         LogicalExpr::Get(LogicalGet { columns, .. }) => add_filters(state, expr, columns),
         LogicalExpr::Union(LogicalUnion {
             left,

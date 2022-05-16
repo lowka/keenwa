@@ -68,8 +68,8 @@ Cost-based query optimizer (WIP).
 - [x] Right
 - [x] Full
 - [x] Cross
-- [ ] Semi 
-- [ ] Anti (NOT IN ..)
+- [x] Semi 
+- [x] Anti (NOT IN ..)
 - [ ] Lateral
 
 - [x] Basic transformation rules: AxB -> BxA, (AxB)xC -> Ax(BxC)

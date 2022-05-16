@@ -113,8 +113,15 @@ where
         metadata: MetadataRef,
         outer_scope: &OuterScope,
     ) -> Result<LogicalProperties, OptimizerError> {
-        let mut output_columns = left.props().logical().output_columns().to_vec();
-        output_columns.extend_from_slice(right.props().logical().output_columns());
+        let output_columns = match _join_type {
+            JoinType::LeftSemi | JoinType::Anti => left.props().logical().output_columns().to_vec(),
+            JoinType::RightSemi => right.props().logical().output_columns().to_vec(),
+            _ => {
+                let mut output_columns = left.props().logical().output_columns().to_vec();
+                output_columns.extend_from_slice(right.props().logical().output_columns());
+                output_columns
+            }
+        };
 
         let mut outer_columns = OuterColumnsBuilder::new(outer_scope, metadata);
         outer_columns.add_input(left);
@@ -123,31 +130,6 @@ where
             JoinCondition::Using(using) => outer_columns.add_expr(&using.get_expr()),
             JoinCondition::On(on_expr) => outer_columns.add_expr(on_expr.expr()),
         };
-        let outer_columns = outer_columns.build();
-
-        Ok(LogicalProperties {
-            output_columns,
-            outer_columns,
-            has_correlated_subqueries: false,
-            statistics: None,
-        })
-    }
-
-    /// Builds logical properties for a semi-join or an anti-join operator.
-    pub fn build_semi_join(
-        &self,
-        _anti: bool,
-        left: &RelNode,
-        _right: &RelNode,
-        expr: &ScalarNode,
-        metadata: MetadataRef,
-        outer_scope: &OuterScope,
-    ) -> Result<LogicalProperties, OptimizerError> {
-        let output_columns = left.props().logical().output_columns().to_vec();
-
-        let mut outer_columns = OuterColumnsBuilder::new(outer_scope, metadata);
-        outer_columns.add_input(left);
-        outer_columns.add_expr(expr);
         let outer_columns = outer_columns.build();
 
         Ok(LogicalProperties {
@@ -368,12 +350,6 @@ where
                         right,
                         condition,
                     }) => self.build_join(join_type, left, right, condition, metadata.clone(), scope),
-                    LogicalExpr::SemiJoin(LogicalSemiJoin { left, right, expr }) => {
-                        self.build_semi_join(false, left, right, expr, metadata.clone(), scope)
-                    }
-                    LogicalExpr::AntiJoin(LogicalAntiJoin { left, right, expr }) => {
-                        self.build_semi_join(true, left, right, expr, metadata.clone(), scope)
-                    }
                     LogicalExpr::Get(LogicalGet { source, columns }) => self.build_get(source, columns),
                     LogicalExpr::Union(LogicalUnion {
                         left,
