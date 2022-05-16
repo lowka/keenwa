@@ -139,7 +139,7 @@ where
         _anti: bool,
         left: &RelNode,
         _right: &RelNode,
-        expr: Option<&ScalarNode>,
+        expr: &ScalarNode,
         metadata: MetadataRef,
         outer_scope: &OuterScope,
     ) -> Result<LogicalProperties, OptimizerError> {
@@ -147,11 +147,7 @@ where
 
         let mut outer_columns = OuterColumnsBuilder::new(outer_scope, metadata);
         outer_columns.add_input(left);
-
-        match expr {
-            Some(expr) => outer_columns.add_expr(expr),
-            None => {}
-        };
+        outer_columns.add_expr(expr);
         let outer_columns = outer_columns.build();
 
         Ok(LogicalProperties {
@@ -373,10 +369,10 @@ where
                         condition,
                     }) => self.build_join(join_type, left, right, condition, metadata.clone(), scope),
                     LogicalExpr::SemiJoin(LogicalSemiJoin { left, right, expr }) => {
-                        self.build_semi_join(false, left, right, expr.as_ref(), metadata.clone(), scope)
+                        self.build_semi_join(false, left, right, expr, metadata.clone(), scope)
                     }
                     LogicalExpr::AntiJoin(LogicalAntiJoin { left, right, expr }) => {
-                        self.build_semi_join(true, left, right, expr.as_ref(), metadata.clone(), scope)
+                        self.build_semi_join(true, left, right, expr, metadata.clone(), scope)
                     }
                     LogicalExpr::Get(LogicalGet { source, columns }) => self.build_get(source, columns),
                     LogicalExpr::Union(LogicalUnion {

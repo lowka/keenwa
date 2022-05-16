@@ -98,7 +98,7 @@ where
         _anti: bool,
         left: &RelNode,
         _right: &RelNode,
-        _expr: Option<&ScalarNode>,
+        _expr: &ScalarNode,
     ) -> Result<Option<Statistics>, OptimizerError> {
         let logical = left.props().logical();
         let statistics = logical.statistics().unwrap();
@@ -203,10 +203,10 @@ where
                 condition,
             }) => self.build_join(join_type, left, right, condition),
             LogicalExpr::SemiJoin(LogicalSemiJoin { left, right, expr }) => {
-                self.build_semi_join(false, left, right, expr.as_ref())
+                self.build_semi_join(false, left, right, expr)
             }
             LogicalExpr::AntiJoin(LogicalAntiJoin { left, right, expr }) => {
-                self.build_semi_join(true, left, right, expr.as_ref())
+                self.build_semi_join(true, left, right, expr)
             }
             LogicalExpr::Get(LogicalGet { source, .. }) => self.build_get(source),
             LogicalExpr::Union(LogicalUnion {

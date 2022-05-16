@@ -213,10 +213,7 @@ impl LogicalExpr {
             }
             LogicalExpr::SemiJoin(LogicalSemiJoin { left, right, expr, .. })
             | LogicalExpr::AntiJoin(LogicalAntiJoin { left, right, expr, .. }) => {
-                match expr {
-                    Some(expr) => expr.expr().accept(&mut expr_visitor)?,
-                    None => {}
-                };
+                expr.expr().accept(&mut expr_visitor)?;
                 left.expr().logical().accept(visitor)?;
                 right.expr().logical().accept(visitor)?;
             }
@@ -517,50 +514,35 @@ impl LogicalJoin {
 pub struct LogicalSemiJoin {
     pub left: RelNode,
     pub right: RelNode,
-    /// column expression for IN <subquery>.
-    pub expr: Option<ScalarNode>,
+    pub expr: ScalarNode,
 }
 
 impl LogicalSemiJoin {
     fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
         visitor.visit_rel(expr_ctx, &self.left);
         visitor.visit_rel(expr_ctx, &self.right);
-        visitor.visit_opt_scalar(expr_ctx, self.expr.as_ref());
+        visitor.visit_scalar(expr_ctx, &self.expr);
     }
 
     fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        let num_opt = match self.expr.as_ref() {
-            Some(_) => 1,
-            None => 0,
-        };
-        inputs.expect_len(2 + num_opt, "LogicalSemiJoin");
+        inputs.expect_len(3, "LogicalSemiJoin");
 
         LogicalSemiJoin {
             left: inputs.rel_node(),
             right: inputs.rel_node(),
-            expr: match self.expr.as_ref() {
-                Some(_) => Some(inputs.scalar_node()),
-                None => None,
-            },
+            expr: inputs.scalar_node(),
         }
     }
 
     fn num_children(&self) -> usize {
-        let num_opt = match self.expr.as_ref() {
-            Some(_) => 1,
-            None => 0,
-        };
-        2 + num_opt
+        3
     }
 
     fn get_child(&self, i: usize) -> Option<&Operator> {
         match i {
             0 => Some(self.left.mexpr()),
             1 => Some(self.right.mexpr()),
-            2 => match self.expr.as_ref() {
-                Some(expr) => Some(expr.mexpr()),
-                None => None,
-            },
+            2 => Some(self.expr.mexpr()),
             _ => None,
         }
     }
@@ -572,7 +554,7 @@ impl LogicalSemiJoin {
         f.write_name("LogicalSemiJoin");
         f.write_expr("left", &self.left);
         f.write_expr("right", &self.right);
-        f.write_expr_if_present("expr", self.expr.as_ref());
+        f.write_expr("expr", &self.expr);
     }
 }
 
@@ -580,50 +562,35 @@ impl LogicalSemiJoin {
 pub struct LogicalAntiJoin {
     pub left: RelNode,
     pub right: RelNode,
-    /// column expression for IN <subquery>.
-    pub expr: Option<ScalarNode>,
+    pub expr: ScalarNode,
 }
 
 impl LogicalAntiJoin {
     fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
         visitor.visit_rel(expr_ctx, &self.left);
         visitor.visit_rel(expr_ctx, &self.right);
-        visitor.visit_opt_scalar(expr_ctx, self.expr.as_ref());
+        visitor.visit_scalar(expr_ctx, &self.expr);
     }
 
     fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        let num_opt = match self.expr.as_ref() {
-            Some(_) => 1,
-            None => 0,
-        };
-        inputs.expect_len(2 + num_opt, "LogicalAntiJoin");
+        inputs.expect_len(3, "LogicalAntiJoin");
 
         LogicalAntiJoin {
             left: inputs.rel_node(),
             right: inputs.rel_node(),
-            expr: match self.expr.as_ref() {
-                Some(_) => Some(inputs.scalar_node()),
-                None => None,
-            },
+            expr: inputs.scalar_node(),
         }
     }
 
     fn num_children(&self) -> usize {
-        let num_opt = match self.expr.as_ref() {
-            Some(_) => 1,
-            None => 0,
-        };
-        2 + num_opt
+        3
     }
 
     fn get_child(&self, i: usize) -> Option<&Operator> {
         match i {
             0 => Some(self.left.mexpr()),
             1 => Some(self.right.mexpr()),
-            2 => match self.expr.as_ref() {
-                Some(expr) => Some(expr.mexpr()),
-                None => None,
-            },
+            2 => Some(self.expr.mexpr()),
             _ => None,
         }
     }
@@ -635,7 +602,7 @@ impl LogicalAntiJoin {
         f.write_name("LogicalAntiJoin");
         f.write_expr("left", &self.left);
         f.write_expr("right", &self.right);
-        f.write_expr_if_present("expr", self.expr.as_ref());
+        f.write_expr("expr", &self.expr);
     }
 }
 
