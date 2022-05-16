@@ -1,16 +1,10 @@
 #![allow(dead_code)]
 
-use crate::memo::{MemoExpr, NewChildExprs};
-use crate::operators::relational::join::JoinCondition;
 use crate::operators::relational::logical::{
-    LogicalAggregate, LogicalAntiJoin, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin,
-    LogicalProjection, LogicalSemiJoin, LogicalUnion,
+    LogicalAggregate, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalProjection, LogicalUnion,
 };
 use crate::operators::relational::RelNode;
-use crate::operators::scalar::exprs;
-use crate::operators::Operator;
 use crate::rules::rewrite::rewrite_rel_inputs;
-use std::collections::VecDeque;
 
 /// A basic implementation of a redundant projection removal rule.
 ///
@@ -119,7 +113,6 @@ fn rewrite_inputs(expr: &RelNode) -> RelNode {
 mod test {
     use crate::error::OptimizerError;
     use crate::operators::builder::OperatorBuilder;
-    use crate::operators::relational::join::JoinType;
     use crate::operators::scalar::{col, scalar, ScalarExpr};
     use crate::rules::rewrite::testing::build_and_rewrite_expr;
 

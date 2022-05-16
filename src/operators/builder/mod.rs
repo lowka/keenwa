@@ -1814,18 +1814,38 @@ Memo:
     }
 
     #[test]
-    fn test_natural_join_do_not_allow_cross_join_type() {
+    fn test_natural_join_condition_is_not_allowed_for_cross_join() {
+        do_not_allow_natural_join(JoinType::Cross, "CROSS JOIN");
+    }
+
+    #[test]
+    fn test_natural_join_condition_is_not_allowed_for_left_semi_join() {
+        do_not_allow_natural_join(JoinType::LeftSemi, "LEFT SEMI JOIN");
+    }
+
+    #[test]
+    fn test_natural_join_condition_is_not_allowed_for_right_semi_join() {
+        do_not_allow_natural_join(JoinType::RightSemi, "RIGHT SEMI JOIN");
+    }
+
+    #[test]
+    fn test_natural_join_condition_is_not_allowed_for_anti_join() {
+        do_not_allow_natural_join(JoinType::Anti, "ANTI JOIN");
+    }
+
+    fn do_not_allow_natural_join(join_type: JoinType, join_type_str: &str) {
         let mut tester = OperatorBuilderTester::new();
 
-        tester.build_operator(|builder| {
+        tester.build_operator(move |builder| {
+            let join_type = join_type.clone();
             let left = builder.get("A", vec!["a1", "a2"])?;
             let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
-            let join = left.natural_join(right, JoinType::Cross)?;
+            let join = left.natural_join(right, join_type)?;
 
             join.build()
         });
 
-        tester.expect_error("CROSS JOIN: Natural join condition is not allowed");
+        tester.expect_error(format!("{}: Natural join condition is not allowed", join_type_str).as_str());
     }
 
     #[test]
