@@ -20,9 +20,8 @@ use crate::operators::builder::subqueries::{
 };
 use crate::operators::relational::join::{JoinCondition, JoinOn, JoinType, JoinUsing};
 use crate::operators::relational::logical::{
-    LogicalAntiJoin, LogicalDistinct, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect,
-    LogicalJoin, LogicalLimit, LogicalOffset, LogicalProjection, LogicalSelect, LogicalSemiJoin, LogicalUnion,
-    SetOperator,
+    LogicalDistinct, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin, LogicalLimit,
+    LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
 };
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::ExprRewriter;
@@ -296,7 +295,7 @@ impl OperatorBuilder {
             columns_ids.push((left_id, right_id));
         }
 
-        let condition = JoinCondition::using(columns_ids);
+        let condition = BuildJoinCondition::Using(JoinUsing::new(columns_ids));
         self.add_join(left, right, left_scope, right_scope, join_type, condition)?;
 
         Ok(self)
@@ -324,7 +323,7 @@ impl OperatorBuilder {
             }
         }
 
-        let condition = JoinCondition::On(JoinOn::new(ScalarNode::from(expr)));
+        let condition = BuildJoinCondition::On(expr);
         self.add_join(left, right, left_scope, right_scope, join_type, condition)?;
 
         Ok(self)
@@ -753,7 +752,7 @@ impl OperatorBuilder {
         left_scope: OperatorScope,
         right_scope: OperatorScope,
         join_type: JoinType,
-        condition: JoinCondition,
+        condition: BuildJoinCondition,
     ) -> Result<(), OptimizerError> {
         fn build_join_expr_and_scope(
             builder: &mut OperatorBuilder,
@@ -761,15 +760,15 @@ impl OperatorBuilder {
             left: RelNode,
             right: RelNode,
             join_type: JoinType,
-            condition: JoinCondition,
+            condition: BuildJoinCondition,
         ) -> Result<LogicalExpr, OptimizerError> {
             let metadata = builder.metadata.clone();
             let condition = match condition {
-                JoinCondition::Using(using) => JoinCondition::Using(using),
-                JoinCondition::On(JoinOn { expr: ref expr }) => {
-                    let mut rewriter = RewriteExprs::new(&expr_scope, metadata, ValidateFilterExpr::join_clause());
-                    let expr = expr.expr().clone().rewrite(&mut rewriter)?;
-                    let expr = builder.add_scalar_node(expr, &expr_scope);
+                BuildJoinCondition::Using(using) => JoinCondition::Using(using),
+                BuildJoinCondition::On(expr) => {
+                    let mut rewriter = RewriteExprs::new(expr_scope, metadata, ValidateFilterExpr::join_clause());
+                    let expr = expr.rewrite(&mut rewriter)?;
+                    let expr = builder.add_scalar_node(expr, expr_scope);
                     JoinCondition::On(JoinOn::new(expr))
                 }
             };
@@ -966,6 +965,11 @@ where
         self.validator.after_expr(&expr);
         Ok(expr)
     }
+}
+
+enum BuildJoinCondition {
+    Using(JoinUsing),
+    On(ScalarExpr),
 }
 
 struct DisplayColumns<'a>(&'a [(String, ColumnId)]);

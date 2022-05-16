@@ -4,8 +4,6 @@ use std::fmt::{Display, Formatter};
 
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
-use crate::operators::scalar::value::Interval::{DaySecond, YearMonth};
-use crate::operators::scalar::value::ScalarValue::Date;
 
 /// Supported scalar values.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -53,7 +51,7 @@ impl Interval {
         assert!(sign == -1 || sign == 1, "sign must be -1 or 1");
         assert!(month < MONTHS_IN_YEAR, "months must be between 0 and 11 (inclusive): {}", month);
 
-        YearMonth(sign * years as i32, sign * month as i32)
+        Interval::YearMonth(sign * years as i32, sign * month as i32)
     }
 
     /// Creates an instance of a DaySecond interval from the given values with the given sign.
@@ -68,7 +66,7 @@ impl Interval {
         assert!(seconds < SECONDS_IN_MINUTE, "seconds must be between 0 and 59 (inclusive): {}", seconds);
 
         let time_in_seconds = hours * MINUTE_IN_HOUR * SECONDS_IN_MINUTE + minutes * SECONDS_IN_MINUTE + seconds;
-        DaySecond(sign * days as i32, sign * time_in_seconds as i32)
+        Interval::DaySecond(sign * days as i32, sign * time_in_seconds as i32)
     }
 }
 
