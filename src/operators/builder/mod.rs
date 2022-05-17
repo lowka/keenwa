@@ -21,14 +21,14 @@ use crate::operators::builder::subqueries::{
 use crate::operators::relational::join::{JoinCondition, JoinOn, JoinType, JoinUsing};
 use crate::operators::relational::logical::{
     LogicalDistinct, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin, LogicalLimit,
-    LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
+    LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, LogicalValues, SetOperator,
 };
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::ExprRewriter;
 use crate::operators::scalar::types::resolve_expr_type;
 use crate::operators::scalar::value::ScalarValue;
 use crate::operators::scalar::{get_subquery, ScalarExpr, ScalarNode};
-use crate::operators::{ExprMemo, Operator, OperatorExpr, OuterScope, Properties, ScalarProperties};
+use crate::operators::{ExprMemo, Operator, OperatorExpr, OperatorMetadata, OuterScope, Properties, ScalarProperties};
 use crate::properties::physical::{PhysicalProperties, RequiredProperties};
 use crate::properties::OrderingChoice;
 
@@ -194,6 +194,72 @@ impl OperatorBuilder {
     /// Adds a scan operator to an operator tree. A scan operator can only be added as leaf node of a tree.
     pub fn get(self, source: &str, columns: Vec<impl Into<String>>) -> Result<Self, OptimizerError> {
         self.add_scan_operator(source, columns)
+    }
+
+    /// Adds an operator that returns the given list of rows.
+    pub fn values(mut self, values: Vec<Vec<ScalarExpr>>) -> Result<Self, OptimizerError> {
+        if values.is_empty() {
+            return Err(OptimizerError::Argument("VALUES list is empty".to_string()));
+        }
+
+        let value_list_length = values[0].len();
+        let mut result_list = Vec::with_capacity(values.len());
+        let mut columns = vec![];
+        let relation_id = self.metadata.add_table("");
+
+        for (i, value_list) in values.into_iter().enumerate() {
+            let list_length = value_list.len();
+            let tuple = ScalarExpr::Tuple(value_list);
+            let metadata = self.metadata.clone();
+            let validator = ValidateFilterExpr::where_clause();
+
+            let value_list_expr = if let Some(scope) = self.scope.as_ref() {
+                let mut rewriter = RewriteExprs::new(scope, metadata, validator);
+                let tuple = tuple.rewrite(&mut rewriter)?;
+                self.add_scalar_node(tuple, scope)
+            } else {
+                let scope = OperatorScope::from_columns(vec![], vec![]);
+                let mut rewriter = RewriteExprs::new(&scope, metadata, validator);
+                let tuple = tuple.rewrite(&mut rewriter)?;
+                self.add_scalar_node(tuple, &scope)
+            };
+
+            if i == 0 {
+                if let ScalarExpr::Tuple(values) = value_list_expr.expr() {
+                    let columns_from_values: Result<Vec<(String, ColumnId)>, OptimizerError> = values
+                        .iter()
+                        .enumerate()
+                        .map(|(i, value)| {
+                            let col_type = resolve_expr_type(value, &self.metadata)?;
+                            let col_name = format!("column{}", (i + 1));
+                            let column =
+                                ColumnMetadata::new_table_column(col_name.clone(), col_type, relation_id, "".into());
+                            let col_id = self.metadata.add_column(column);
+
+                            Ok((col_name, col_id))
+                        })
+                        .collect();
+                    let columns_from_values = columns_from_values?;
+                    columns.extend(columns_from_values.into_iter());
+                }
+            }
+
+            result_list.push(value_list_expr);
+
+            if list_length != value_list_length {
+                return Err(OptimizerError::Argument("VALUE lists must all have the same length".to_string()));
+            }
+        }
+
+        let expr = LogicalExpr::Values(LogicalValues {
+            values: result_list,
+            columns: columns.iter().map(|(_, id)| *id).collect(),
+        });
+        let relation = RelationInScope::new(relation_id, "".into(), columns);
+
+        self.add_input_operator(expr, relation);
+
+        Ok(self)
     }
 
     /// Adds a select operator to an operator tree.
@@ -573,6 +639,7 @@ impl OperatorBuilder {
     pub fn build(self) -> Result<Operator, OptimizerError> {
         match (self.operator, self.scope) {
             (Some(operator), Some(scope)) => {
+                validate_rel_node(&operator, &self.metadata)?;
                 let rel_node = self.callback.new_rel_expr(operator, &scope);
                 Ok(rel_node.into_inner())
             }
@@ -592,7 +659,7 @@ impl OperatorBuilder {
                 self.metadata.rename_column(id, column.clone());
             }
 
-            scope.set_alias(alias)?;
+            scope.set_alias(alias, &self.metadata)?;
             Ok(self)
         } else {
             Err(OptimizerError::Argument("ALIAS: no operator".to_string()))
@@ -833,8 +900,9 @@ impl OperatorBuilder {
             .take()
             .ok_or_else(|| OptimizerError::Internal("No input operator".to_string()))?;
 
-        let scope = self.scope.take().ok_or_else(|| OptimizerError::Internal("No scope".to_string()))?;
+        validate_rel_node(&operator, &self.metadata)?;
 
+        let scope = self.scope.take().ok_or_else(|| OptimizerError::Internal("No scope".to_string()))?;
         let rel_node = self.callback.new_rel_expr(operator, &scope);
         Ok((rel_node, scope))
     }
@@ -843,6 +911,22 @@ impl OperatorBuilder {
         let operator = Operator::new(OperatorExpr::from(expr), Properties::Scalar(ScalarProperties::default()));
         self.callback.new_scalar_expr(operator, scope)
     }
+}
+
+fn validate_rel_node(operator: &Operator, metadata: &OperatorMetadata) -> Result<(), OptimizerError> {
+    // Move validation logic somewhere else.
+    if let OperatorExpr::Relational(rel_expr) = operator.expr() {
+        if let LogicalExpr::Values(values) = rel_expr.logical() {
+            let col_id = values.columns[0];
+            let column = metadata.get_column(&col_id);
+            let relation_id = column.relation_id().expect("VALUES column without relation_id");
+            let relation = metadata.get_relation(&relation_id);
+            if relation.name().is_empty() {
+                return Err(OptimizerError::Internal("VALUES in FROM must have an alias".to_string()));
+            }
+        }
+    }
+    Ok(())
 }
 
 impl Debug for OperatorBuilder {
@@ -2331,6 +2415,56 @@ Memo:
   00 LogicalGet A cols=[1, 2]
 "#,
         );
+    }
+
+    #[test]
+    pub fn test_values() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let values = builder.values(vec![vec![scalar(1), scalar(true)]])?;
+            let values = values.with_alias(TableAlias {
+                name: "v".to_string(),
+                columns: vec![],
+            })?;
+
+            values.build()
+        });
+
+        tester.expect_expr(
+            r#"
+LogicalValues values: [(1, true)]
+  output cols: [1, 2]
+Metadata:
+  col:1 .column1 Int32
+  col:2 .column2 Bool
+Memo:
+  01 LogicalValues values=[00]
+  00 Expr (1, true)
+"#,
+        );
+    }
+
+    #[test]
+    pub fn test_values_empty_list_are_not_allowed() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let values = builder.values(vec![vec![scalar(1), scalar(true)]])?;
+            let projection = values.project(vec![col("column1")])?;
+            projection.build()
+        });
+
+        tester.expect_error("VALUES in FROM must have an alias");
+
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let values = builder.values(vec![vec![scalar(1), scalar(true)]])?;
+            values.build()
+        });
+
+        tester.expect_error("VALUES in FROM must have an alias");
     }
 
     fn expect_set_op(set_op: SetOperator, all: bool, logical_op: &str) {

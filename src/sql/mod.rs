@@ -23,7 +23,7 @@ use itertools::Itertools;
 use sqlparser::ast::{
     BinaryOperator, DataType as SqlDataType, DateTimeField, Expr, Function, FunctionArg, FunctionArgExpr, Ident, Join,
     JoinConstraint, JoinOperator, ObjectName, OrderByExpr, Query, Select, SelectItem, SetExpr, SetOperator, Statement,
-    TableAlias as SqlTableAlias, TableFactor, TableWithJoins, UnaryOperator, Value,
+    TableAlias as SqlTableAlias, TableFactor, TableWithJoins, UnaryOperator, Value, Values,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::{Parser, ParserError};
@@ -177,7 +177,7 @@ fn build_set_expr(builder: OperatorBuilder, set_expr: SetExpr) -> Result<Operato
         SetExpr::Select(select) => build_select(builder, *select),
         SetExpr::Query(query) => build_query(builder, *query),
         SetExpr::SetOperation { op, all, left, right } => build_set_operation(builder, op, all, *left, *right),
-        SetExpr::Values(_) => not_implemented!("VALUES"),
+        SetExpr::Values(values) => build_values(builder, values),
         SetExpr::Insert(_) => not_implemented!("INSERT"),
     }
 }
@@ -340,6 +340,19 @@ fn build_set_operation(
         SetOperator::Intersect if all => left.intersect_all(right),
         SetOperator::Intersect => left.intersect(right),
     }
+}
+
+fn build_values(builder: OperatorBuilder, values: Values) -> Result<OperatorBuilder, OptimizerError> {
+    let value_lists: Vec<Vec<Expr>> = values.0;
+    let mut value_list_result = Vec::with_capacity(value_lists.len());
+
+    for value_list in value_lists {
+        let value_list: Result<Vec<ScalarExpr>, OptimizerError> =
+            value_list.into_iter().map(|expr| build_scalar_expr(expr, builder.clone())).collect();
+        value_list_result.push(value_list?);
+    }
+
+    builder.values(value_list_result)
 }
 
 fn build_from(builder: OperatorBuilder, from: TableWithJoins) -> Result<OperatorBuilder, OptimizerError> {

@@ -14,10 +14,10 @@ use crate::catalog::CatalogRef;
 use crate::error::OptimizerError;
 use crate::operators::relational::logical::{
     LogicalDistinct, LogicalEmpty, LogicalExpr, LogicalGet, LogicalLimit, LogicalOffset, LogicalProjection,
-    LogicalSelect,
+    LogicalSelect, LogicalValues,
 };
 use crate::operators::relational::physical::{
-    Empty, HashAggregate, Limit, Offset, PhysicalExpr, Projection, Scan, Select, Unique,
+    Empty, HashAggregate, Limit, Offset, PhysicalExpr, Projection, Scan, Select, Unique, Values,
 };
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
 use crate::operators::ScalarProperties;
@@ -138,6 +138,39 @@ impl Rule for ProjectionRule {
                 Ok(Some(RuleResult::Implementation(expr)))
             }
             _ => Ok(None),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct ValuesRule;
+
+impl Rule for ValuesRule {
+    fn name(&self) -> String {
+        "ValuesRule".into()
+    }
+
+    fn rule_type(&self) -> RuleType {
+        RuleType::Implementation
+    }
+
+    fn matches(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Option<RuleMatch> {
+        if matches!(expr, LogicalExpr::Values(_)) {
+            Some(RuleMatch::Expr)
+        } else {
+            None
+        }
+    }
+
+    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
+        if let LogicalExpr::Values(LogicalValues { values, columns }) = expr {
+            let expr = PhysicalExpr::Values(Values {
+                values: values.clone(),
+                columns: columns.clone(),
+            });
+            Ok(Some(RuleResult::Implementation(expr)))
+        } else {
+            Ok(None)
         }
     }
 }
@@ -271,6 +304,8 @@ impl Rule for LimitOffsetRule {
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::meta::testing::TestMetadata;
+    use crate::operators::scalar::value::ScalarValue;
     use crate::rules::testing::RuleTester;
 
     #[test]
@@ -281,6 +316,28 @@ mod test {
             &expr,
             r#"
 Empty return_one_row=true
+        "#,
+        )
+    }
+
+    #[test]
+    fn test_values() {
+        let mut tester = RuleTester::new(ValuesRule);
+        let mut metadata = TestMetadata::with_tables(vec!["A"]);
+        let col = metadata.column("A").build();
+
+        let val1 = ScalarExpr::Scalar(ScalarValue::Int32(1));
+        let val2 = ScalarExpr::Scalar(ScalarValue::Bool(true));
+
+        let tuple = ScalarNode::from(ScalarExpr::Tuple(vec![val1, val2]));
+        let expr = LogicalExpr::Values(LogicalValues {
+            values: vec![tuple],
+            columns: vec![col],
+        });
+        tester.apply(
+            &expr,
+            r#"
+Values values: [(1, true)]
         "#,
         )
     }

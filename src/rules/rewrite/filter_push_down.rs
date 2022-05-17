@@ -131,6 +131,7 @@ fn rewrite(mut state: State, expr: &RelNode) -> RelNode {
         LogicalExpr::Distinct(_) => rewrite_inputs(state, expr),
         LogicalExpr::Limit(_) => rewrite_inputs(state, expr),
         LogicalExpr::Offset(_) => rewrite_inputs(state, expr),
+        LogicalExpr::Values(_) => rewrite_inputs(state, expr),
         LogicalExpr::Empty(_) => rewrite_inputs(state, expr),
     }
 }

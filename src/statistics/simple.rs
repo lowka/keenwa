@@ -12,7 +12,7 @@ use crate::meta::{ColumnId, MetadataRef};
 use crate::operators::relational::join::{JoinCondition, JoinType};
 use crate::operators::relational::logical::{
     LogicalAggregate, LogicalDistinct, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin,
-    LogicalLimit, LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
+    LogicalLimit, LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, LogicalValues, SetOperator,
 };
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::ExprRewriter;
@@ -121,6 +121,11 @@ where
         Ok(Some(Statistics::from_row_count(row_count)))
     }
 
+    fn build_values(&self, values: &[ScalarNode], _columns: &[ColumnId]) -> Result<Option<Statistics>, OptimizerError> {
+        let row_count = values.len() as f64;
+        Ok(Some(Statistics::new(row_count, Statistics::DEFAULT_SELECTIVITY)))
+    }
+
     fn build_empty(&self) -> Result<Option<Statistics>, OptimizerError> {
         Ok(Some(Statistics::new(0f64, Statistics::DEFAULT_SELECTIVITY)))
     }
@@ -211,6 +216,7 @@ where
             }
             LogicalExpr::Limit(LogicalLimit { input, rows }) => self.build_limit(input, *rows),
             LogicalExpr::Offset(LogicalOffset { input, rows }) => self.build_offset(input, *rows),
+            LogicalExpr::Values(LogicalValues { values, columns }) => self.build_values(values, columns),
             LogicalExpr::Empty(_) => self.build_empty(),
         }
     }

@@ -119,11 +119,12 @@ impl OperatorScope {
         self.relations.add_all(other.relations);
     }
 
-    pub fn set_alias(&mut self, alias: TableAlias) -> Result<(), OptimizerError> {
+    pub fn set_alias(&mut self, alias: TableAlias, metadata: &MutableMetadata) -> Result<(), OptimizerError> {
         fn set_alias(
             relation: &mut RelationInScope,
             alias: String,
             renamed_columns: Vec<String>,
+            metadata: &MutableMetadata,
         ) -> Result<(), OptimizerError> {
             let renamed_columns_len = renamed_columns.len();
             // rename first len(columns) from the relation.
@@ -132,12 +133,15 @@ impl OperatorScope {
             // use remaining columns from the relation.
             columns.extend(relation.columns.drain(renamed_columns_len..));
 
-            if relation.relation_id.is_some() {
+            if relation.name.is_empty() {
+                if let Some(relation_id) = relation.relation_id {
+                    metadata.rename_relation(&relation_id, alias.clone());
+                }
+                relation.name = alias.clone();
                 relation.alias = Some(alias);
                 relation.columns = columns;
                 Ok(())
-            } else if relation.name.is_empty() {
-                relation.name = alias.clone();
+            } else if relation.relation_id.is_some() {
                 relation.alias = Some(alias);
                 relation.columns = columns;
                 Ok(())
@@ -151,8 +155,8 @@ impl OperatorScope {
             let output_relation = &mut self.relation;
             let TableAlias { name: alias, columns } = alias;
 
-            set_alias(relation, alias.clone(), columns.clone())?;
-            set_alias(output_relation, alias, columns)
+            set_alias(relation, alias.clone(), columns.clone(), metadata)?;
+            set_alias(output_relation, alias, columns, metadata)
         } else {
             let message = "OperatorScope is empty!".to_string();
             Err(OptimizerError::Internal(message))
@@ -384,8 +388,21 @@ impl RelationInScope {
     }
 
     fn find_column_by_name(&self, name: &str) -> Option<ColumnId> {
-        let f = |(col_name, _): &(String, ColumnId)| col_name == name;
-        self.find_column(&f)
+        if let Some((table, name)) = name.split_once('.') {
+            let table = table;
+            let name = name;
+            match table {
+                _ if self.name != table => None,
+                _ if self.alias.as_ref().map(|a| a == table) == Some(false) => None,
+                _ => {
+                    let f = |(col_name, col_id): &(String, ColumnId)| col_name == name;
+                    self.find_column(&f)
+                }
+            }
+        } else {
+            let f = |(col_name, col_id): &(String, ColumnId)| col_name == name;
+            self.find_column(&f)
+        }
     }
 
     fn find_column_by_id(&self, id: &ColumnId) -> Option<ColumnId> {
