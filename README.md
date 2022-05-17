@@ -85,6 +85,8 @@ Cost-based query optimizer (WIP).
 
 - [x] Basic support.
 - [x] Correlated subqueries: EXISTS, IN (cases where an input operator is a restriction(filter/select) or a projection).
+- [x] Transform correlated subqueries (EXISTS, IN ) into semi-joins.
+- [ ] Transform correlated subqueries (NOT EXISTS, NOT IN) into anti-joins.
 
 ### Scalar expressions
 

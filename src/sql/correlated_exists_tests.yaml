@@ -6,7 +6,7 @@ query:
 #>SELECT a1 FROM a JOIN b ON b1 = a2
 ok: |
   LogicalProjection cols=[1] exprs: [col:1]
-    input: LogicalJoin type=Inner on=col:5 = col:2
+    input: LogicalJoin type=LeftSemi on=col:5 = col:2
       left: LogicalGet a cols=[1, 2, 3, 4]
       right: LogicalGet b cols=[5, 6, 7]
 ---
@@ -15,7 +15,7 @@ query:
 #>SELECT a1 FROM a JOIN b ON b1 = a2 AND b3 = 100
 ok: |
   LogicalProjection cols=[1] exprs: [col:1]
-    input: LogicalJoin type=Inner on=col:5 = col:2 AND col:7 = 100
+    input: LogicalJoin type=LeftSemi on=col:5 = col:2 AND col:7 = 100
       left: LogicalGet a cols=[1, 2, 3, 4]
       right: LogicalGet b cols=[5, 6, 7]
 ---
@@ -24,7 +24,7 @@ query:
 #>SELECT a1 FROM a JOIN b ON b1 = a2 OR b3 = 100
 ok: |
   LogicalProjection cols=[1] exprs: [col:1]
-    input: LogicalJoin type=Inner on=col:5 = col:2 OR col:7 = 100
+    input: LogicalJoin type=LeftSemi on=col:5 = col:2 OR col:7 = 100
       left: LogicalGet a cols=[1, 2, 3, 4]
       right: LogicalGet b cols=[5, 6, 7]
 ---
@@ -33,7 +33,7 @@ query:
 #>SELECT a1 FROM a JOIN b ON b1 = a2 AND a3 = b2
 ok: |
   LogicalProjection cols=[1] exprs: [col:1]
-    input: LogicalJoin type=Inner on=col:5 = col:2 AND col:3 = col:6
+    input: LogicalJoin type=LeftSemi on=col:5 = col:2 AND col:3 = col:6
       left: LogicalGet a cols=[1, 2, 3, 4]
       right: LogicalGet b cols=[5, 6, 7]
 ---
@@ -44,7 +44,7 @@ query:
 ok: |
   LogicalProjection cols=[1] exprs: [col:1]
     input: LogicalSelect
-      input: LogicalJoin type=Inner on=col:5 = col:2
+      input: LogicalJoin type=LeftSemi on=col:5 = col:2
         left: LogicalGet a cols=[1, 2, 3, 4]
         right: LogicalGet b cols=[5, 6, 7]
       filter: Expr col:3 > 10
@@ -55,9 +55,9 @@ query:
 #>SELECT a1 FROM a JOIN b ON b1 = a2 JOIN c ON c1 = b2
 ok: |
   LogicalProjection cols=[1] exprs: [col:1]
-    input: LogicalJoin type=Inner on=col:5 = col:2
+    input: LogicalJoin type=LeftSemi on=col:5 = col:2
       left: LogicalGet a cols=[1, 2, 3, 4]
-      right: LogicalJoin type=Inner on=col:8 = col:6
+      right: LogicalJoin type=LeftSemi on=col:8 = col:6
         left: LogicalGet b cols=[5, 6, 7]
         right: LogicalGet c cols=[8, 9, 10]
 ---
