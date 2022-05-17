@@ -213,7 +213,7 @@ where
 
         // SELECT a1 FROM a WHERE EXISTS (SELECT 1 FROM b WHERE b1 = a2 AND EXISTS (SELECT 1 FROM c WHERE c1 = b2))
         // >>>>>
-        // SELECT a1 FROM a WHERE EXISTS (SELECT 1 FROM b JOIN c ON c1 = b2 WHERE b1 = a2)
+        // SELECT a1 FROM a WHERE EXISTS (SELECT 1 FROM b SEMI-JOIN c ON c1 = b2 WHERE b1 = a2)
         // >>>>>
         // SELECT a1 FROM a LEFT SEMI-JOIN b ON b1 = a2 LEFT SEMI-JOIN c ON c1 = b2
 

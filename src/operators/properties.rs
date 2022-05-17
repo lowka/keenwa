@@ -105,14 +105,14 @@ where
     /// Builds logical properties for a join operator.
     pub fn build_join(
         &self,
-        _join_type: &JoinType,
+        join_type: &JoinType,
         left: &RelNode,
         right: &RelNode,
         condition: &JoinCondition,
         metadata: MetadataRef,
         outer_scope: &OuterScope,
     ) -> Result<LogicalProperties, OptimizerError> {
-        let output_columns = match _join_type {
+        let output_columns = match join_type {
             JoinType::LeftSemi | JoinType::Anti => left.props().logical().output_columns().to_vec(),
             JoinType::RightSemi => right.props().logical().output_columns().to_vec(),
             _ => {
