@@ -95,6 +95,7 @@ fn rewrite(expr: &RelNode, keep_projection: bool) -> RelNode {
             LogicalExpr::Distinct(_) => rewrite_inputs(expr),
             LogicalExpr::Limit(_) => rewrite_inputs(expr),
             LogicalExpr::Offset(_) => rewrite_inputs(expr),
+            LogicalExpr::Values(_) => rewrite_inputs(expr),
             LogicalExpr::Empty(_) => rewrite_inputs(expr),
         }
     } else {

@@ -29,6 +29,7 @@ pub enum PhysicalExpr {
     HashedSetOp(HashedSetOp),
     Limit(Limit),
     Offset(Offset),
+    Values(Values),
     /// Relation that produces no rows.
     Empty(Empty),
 }
@@ -50,6 +51,7 @@ impl PhysicalExpr {
             PhysicalExpr::HashedSetOp(expr) => expr.copy_in(visitor, expr_ctx),
             PhysicalExpr::Limit(expr) => expr.copy_in(visitor, expr_ctx),
             PhysicalExpr::Offset(expr) => expr.copy_in(visitor, expr_ctx),
+            PhysicalExpr::Values(expr) => expr.copy_in(visitor, expr_ctx),
             PhysicalExpr::Empty(_) => {}
         }
     }
@@ -70,6 +72,7 @@ impl PhysicalExpr {
             PhysicalExpr::HashedSetOp(expr) => PhysicalExpr::HashedSetOp(expr.with_new_inputs(inputs)),
             PhysicalExpr::Limit(expr) => PhysicalExpr::Limit(expr.with_new_inputs(inputs)),
             PhysicalExpr::Offset(expr) => PhysicalExpr::Offset(expr.with_new_inputs(inputs)),
+            PhysicalExpr::Values(expr) => PhysicalExpr::Values(expr.with_new_inputs(inputs)),
             PhysicalExpr::Empty(expr) => PhysicalExpr::Empty(expr.with_new_inputs(inputs)),
         }
     }
@@ -90,6 +93,7 @@ impl PhysicalExpr {
             PhysicalExpr::HashedSetOp(expr) => expr.num_children(),
             PhysicalExpr::Limit(expr) => expr.num_children(),
             PhysicalExpr::Offset(expr) => expr.num_children(),
+            PhysicalExpr::Values(expr) => expr.num_children(),
             PhysicalExpr::Empty(expr) => expr.num_children(),
         }
     }
@@ -110,6 +114,7 @@ impl PhysicalExpr {
             PhysicalExpr::HashedSetOp(expr) => expr.get_child(i),
             PhysicalExpr::Limit(expr) => expr.get_child(i),
             PhysicalExpr::Offset(expr) => expr.get_child(i),
+            PhysicalExpr::Values(expr) => expr.get_child(i),
             PhysicalExpr::Empty(expr) => expr.get_child(i),
         }
     }
@@ -130,6 +135,7 @@ impl PhysicalExpr {
             PhysicalExpr::HashedSetOp(expr) => expr.build_required_properties(),
             PhysicalExpr::Limit(expr) => expr.build_required_properties(),
             PhysicalExpr::Offset(expr) => expr.build_required_properties(),
+            PhysicalExpr::Values(expr) => expr.build_required_properties(),
             PhysicalExpr::Empty(expr) => expr.build_required_properties(),
         }
     }
@@ -153,6 +159,7 @@ impl PhysicalExpr {
             PhysicalExpr::HashedSetOp(expr) => expr.format_expr(f),
             PhysicalExpr::Limit(expr) => expr.format_expr(f),
             PhysicalExpr::Offset(expr) => expr.format_expr(f),
+            PhysicalExpr::Values(expr) => expr.format_expr(f),
             PhysicalExpr::Empty(expr) => expr.format_expr(f),
         }
     }
@@ -940,6 +947,49 @@ impl Offset {
         f.write_name("Offset");
         f.write_expr("input", &self.input);
         f.write_value("rows", self.rows)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Values {
+    /// A list of tuples where each list is a row.
+    pub values: Vec<ScalarNode>,
+    pub columns: Vec<ColumnId>,
+}
+
+impl Values {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        for expr in self.values.iter() {
+            visitor.visit_scalar(expr_ctx, expr);
+        }
+    }
+
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
+        inputs.expect_len(self.values.len(), "Values");
+        Values {
+            values: inputs.scalar_nodes(self.values.len()),
+            columns: self.columns.clone(),
+        }
+    }
+
+    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
+        None
+    }
+
+    fn num_children(&self) -> usize {
+        self.values.len()
+    }
+
+    fn get_child(&self, i: usize) -> Option<&Operator> {
+        self.values.get(i).map(|row| row.mexpr())
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("Values");
+        f.write_exprs("values", self.values.iter())
     }
 }
 

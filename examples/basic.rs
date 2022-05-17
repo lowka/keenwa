@@ -10,7 +10,7 @@ use keenwa::operators::relational::join::JoinType;
 use keenwa::operators::scalar::{col, scalar};
 use keenwa::operators::{Operator, OperatorMemoBuilder};
 use keenwa::optimizer::{NoOpResultCallback, Optimizer};
-use keenwa::rules::implementation::{EmptyRule, GetToScanRule, HashJoinRule, ProjectionRule, SelectRule};
+use keenwa::rules::implementation::{EmptyRule, GetToScanRule, HashJoinRule, ProjectionRule, SelectRule, ValuesRule};
 use keenwa::rules::{Rule, StaticRuleSet};
 use keenwa::statistics::simple::{DefaultSelectivityStatistics, SimpleCatalogStatisticsBuilder};
 use std::ops::Not;

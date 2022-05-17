@@ -40,7 +40,7 @@ Cost-based query optimizer (WIP).
 - [x] Union/Except/Intersect (ALL).
 - [x] Limit/Offset
 - [ ] Fetch
-- [ ] VALUES operator (?).
+- [x] VALUES operator.
 - [x] Distinct option in SELECT
 - TODO
 
@@ -191,7 +191,7 @@ See test cases in `sql/*_tests.yaml`.
 - [ ] EXPLAIN/ANALYZE
 - [x] ALIAS (column list)
 - [x] AGGREGATE DISTINCT
-- [ ] VALUES(..)
+- [x] VALUES(..)
 
 - [x] NOT IN/ IN `<subquery>`
 - [x] EXISTS/NOT EXISTS `<subquery>`.

@@ -259,6 +259,21 @@ impl MutableMetadata {
         column.name = name;
     }
 
+    /// Renames the relation with the given identifier.
+    ///
+    /// # Panics
+    ///
+    /// This method panics if there is no metadata for the relation with the given identifier.
+    pub fn rename_relation(&self, relation_id: &RelationId, name: String) {
+        let mut inner = self.inner.borrow_mut();
+        let mut relation = inner
+            .relations
+            .get_mut(relation_id.0 - 1)
+            .unwrap_or_else(|| panic!("Unknown or unexpected relation id: {}", relation_id));
+
+        relation.name = name;
+    }
+
     /// Returns metadata for the relation with the given identifier.
     ///
     /// # Panics

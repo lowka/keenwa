@@ -25,6 +25,7 @@ pub enum LogicalExpr {
     Distinct(LogicalDistinct),
     Limit(LogicalLimit),
     Offset(LogicalOffset),
+    Values(LogicalValues),
     /// Relation that produces no rows.
     Empty(LogicalEmpty),
 }
@@ -43,6 +44,7 @@ impl LogicalExpr {
             LogicalExpr::Distinct(expr) => expr.copy_in(visitor, expr_ctx),
             LogicalExpr::Limit(expr) => expr.copy_in(visitor, expr_ctx),
             LogicalExpr::Offset(expr) => expr.copy_in(visitor, expr_ctx),
+            LogicalExpr::Values(expr) => expr.copy_in(visitor, expr_ctx),
             LogicalExpr::Empty(_) => {}
         }
     }
@@ -60,6 +62,7 @@ impl LogicalExpr {
             LogicalExpr::Distinct(expr) => LogicalExpr::Distinct(expr.with_new_inputs(inputs)),
             LogicalExpr::Limit(expr) => LogicalExpr::Limit(expr.with_new_inputs(inputs)),
             LogicalExpr::Offset(expr) => LogicalExpr::Offset(expr.with_new_inputs(inputs)),
+            LogicalExpr::Values(expr) => LogicalExpr::Values(expr.with_new_inputs(inputs)),
             LogicalExpr::Empty(expr) => LogicalExpr::Empty(expr.with_new_inputs(inputs)),
         }
     }
@@ -77,6 +80,7 @@ impl LogicalExpr {
             LogicalExpr::Distinct(expr) => expr.num_children(),
             LogicalExpr::Limit(expr) => expr.num_children(),
             LogicalExpr::Offset(expr) => expr.num_children(),
+            LogicalExpr::Values(expr) => expr.num_children(),
             LogicalExpr::Empty(expr) => expr.num_children(),
         }
     }
@@ -94,6 +98,7 @@ impl LogicalExpr {
             LogicalExpr::Distinct(expr) => expr.get_child(i),
             LogicalExpr::Limit(expr) => expr.get_child(i),
             LogicalExpr::Offset(expr) => expr.get_child(i),
+            LogicalExpr::Values(expr) => expr.get_child(i),
             LogicalExpr::Empty(expr) => expr.get_child(i),
         }
     }
@@ -114,6 +119,7 @@ impl LogicalExpr {
             LogicalExpr::Distinct(expr) => expr.format_expr(f),
             LogicalExpr::Limit(expr) => expr.format_expr(f),
             LogicalExpr::Offset(expr) => expr.format_expr(f),
+            LogicalExpr::Values(expr) => expr.format_expr(f),
             LogicalExpr::Empty(expr) => expr.format_expr(f),
         }
     }
@@ -214,6 +220,11 @@ impl LogicalExpr {
             }
             LogicalExpr::Offset(LogicalOffset { input, .. }) => {
                 input.expr().logical().accept(visitor)?;
+            }
+            LogicalExpr::Values(LogicalValues { values, .. }) => {
+                for values in values {
+                    values.expr().accept(&mut expr_visitor)?;
+                }
             }
             LogicalExpr::Empty(_) => {}
         }
@@ -798,6 +809,45 @@ impl LogicalOffset {
             0 => Some(self.input.mexpr()),
             _ => None,
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LogicalValues {
+    /// A list of tuples where each list is a row.
+    pub values: Vec<ScalarNode>,
+    pub columns: Vec<ColumnId>,
+}
+
+impl LogicalValues {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        for expr in self.values.iter() {
+            visitor.visit_scalar(expr_ctx, expr);
+        }
+    }
+
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
+        inputs.expect_len(self.values.len(), "LogicalValues");
+        LogicalValues {
+            values: inputs.scalar_nodes(self.values.len()),
+            columns: self.columns.clone(),
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("LogicalValues");
+        f.write_exprs("values", self.values.iter())
+    }
+
+    fn num_children(&self) -> usize {
+        self.values.len()
+    }
+
+    fn get_child(&self, i: usize) -> Option<&Operator> {
+        self.values.get(i).map(|row| row.mexpr())
     }
 }
 

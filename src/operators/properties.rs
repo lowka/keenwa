@@ -6,7 +6,8 @@ use crate::meta::{ColumnId, MetadataRef};
 use crate::operators::relational::join::{JoinCondition, JoinType};
 use crate::operators::relational::logical::{
     LogicalAggregate, LogicalDistinct, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect,
-    LogicalJoin, LogicalLimit, LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, SetOperator,
+    LogicalJoin, LogicalLimit, LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, LogicalValues,
+    SetOperator,
 };
 use crate::operators::relational::physical::{PhysicalExpr, Sort};
 use crate::operators::relational::{RelExpr, RelNode};
@@ -184,6 +185,30 @@ where
             SetOperator::Intersect => self.build_intersect(left, right, all, columns, metadata, outer_scope),
             SetOperator::Except => self.build_except(left, right, all, columns, metadata, outer_scope),
         }
+    }
+
+    /// Builds logical properties for a values operator.
+    pub fn build_values(
+        &self,
+        values: &[ScalarNode],
+        columns: &[ColumnId],
+        metadata: MetadataRef,
+        outer_scope: &OuterScope,
+    ) -> Result<LogicalProperties, OptimizerError> {
+        let output_columns = columns.to_vec();
+
+        let mut outer_columns = OuterColumnsBuilder::new(outer_scope, metadata);
+        for value_list in values {
+            outer_columns.add_expr(value_list);
+        }
+        let outer_columns = outer_columns.build();
+
+        Ok(LogicalProperties {
+            output_columns,
+            outer_columns,
+            has_correlated_subqueries: false,
+            statistics: None,
+        })
     }
 
     /// Builds logical properties for an empty operator.
@@ -373,6 +398,9 @@ where
                     }
                     LogicalExpr::Limit(LogicalLimit { input, .. })
                     | LogicalExpr::Offset(LogicalOffset { input, .. }) => self.build_limit_offset(input),
+                    LogicalExpr::Values(LogicalValues { values, columns }) => {
+                        self.build_values(values, columns, metadata.clone(), scope)
+                    }
                     LogicalExpr::Empty(LogicalEmpty { .. }) => self.build_empty(),
                 }?;
                 let logical = LogicalProperties {
