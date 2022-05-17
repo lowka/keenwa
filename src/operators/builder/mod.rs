@@ -1235,7 +1235,7 @@ impl<'a> BuildOperators for BuildLogicalExprs<'a> {
         Ok(select.into())
     }
 
-    fn inner_join(
+    fn left_semi_join(
         &mut self,
         left: RelNode,
         right: RelNode,
@@ -1243,7 +1243,7 @@ impl<'a> BuildOperators for BuildLogicalExprs<'a> {
     ) -> Result<Operator, OptimizerError> {
         let condition = self.add_scalar_expr(condition, self.scope.as_ref())?;
         let join = LogicalExpr::Join(LogicalJoin {
-            join_type: JoinType::Inner,
+            join_type: JoinType::LeftSemi,
             left,
             right,
             condition: JoinCondition::On(JoinOn::new(condition)),

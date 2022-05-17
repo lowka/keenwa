@@ -17,9 +17,13 @@ pub trait BuildOperators {
     /// Creates an instance of a select operator.
     fn select(&mut self, input: RelNode, filter: Option<BuildFilter>) -> Result<Operator, OptimizerError>;
 
-    /// Creates an instance of an inner join operator.
-    fn inner_join(&mut self, left: RelNode, right: RelNode, condition: BuildFilter)
-        -> Result<Operator, OptimizerError>;
+    /// Creates an instance of a left semi-join operator.
+    fn left_semi_join(
+        &mut self,
+        left: RelNode,
+        right: RelNode,
+        condition: BuildFilter,
+    ) -> Result<Operator, OptimizerError>;
 
     /// Creates an instance of a left join operator.
     fn left_join(&mut self, left: RelNode, right: RelNode, condition: BuildFilter) -> Result<Operator, OptimizerError>;
@@ -199,21 +203,21 @@ where
         // Rewrite:
         //  SELECT a1 FROM a WHERE EXISTS (SELECT 1 FROM b WHERE b1 = a2)
         // >>>>:
-        //   SELECT a1 FROM a JOIN b ON b1 = a2
+        //   SELECT a1 FROM a LEFT SEMI-JOIN b ON b1 = a2
         //
 
         // SELECT a1 FROM a WHERE EXISTS (SELECT 1 FROM b WHERE EXISTS (SELECT 1 FROM c WHERE c1 = b2))
         // >>>>>
-        // SELECT a1 FROM a WHERE EXISTS (SELECT 1 FROM b JOIN c ON c1 = b2)
+        // SELECT a1 FROM a WHERE EXISTS (SELECT 1 FROM b LEFT SEMI-JOIN c ON c1 = b2)
         //
 
         // SELECT a1 FROM a WHERE EXISTS (SELECT 1 FROM b WHERE b1 = a2 AND EXISTS (SELECT 1 FROM c WHERE c1 = b2))
         // >>>>>
         // SELECT a1 FROM a WHERE EXISTS (SELECT 1 FROM b JOIN c ON c1 = b2 WHERE b1 = a2)
         // >>>>>
-        // SELECT a1 FROM a JOIN b ON b1 = a2 JOIN c ON c1 = b2
+        // SELECT a1 FROM a LEFT SEMI-JOIN b ON b1 = a2 LEFT SEMI-JOIN c ON c1 = b2
 
-        let join = builder.inner_join(input, select_input.clone(), filter.clone().into())?;
+        let join = builder.left_semi_join(input, select_input.clone(), filter.clone().into())?;
 
         if remaining_predicates.is_empty() {
             Ok(Some(join))
@@ -297,11 +301,11 @@ where
     if !in_subquery.not {
         // SELECT a1 FROM a WHERE a1 IN (SELECT b1 FROM b)
         //>>>>
-        // SELECT a1 FROM a JOIN b ON b1 = a1 [+ WHERE remaining_predicates]
+        // SELECT a1 FROM a LEFT SEMI-JOIN b ON b1 = a1 [+ WHERE remaining_predicates]
 
         // SELECT a1 FROM a WHERE a1 IN (SELECT b1 FROM b WHERE b2 > 3)
         //>>>>
-        // SELECT a1 FROM a JOIN b ON b1 = a1 AND b2 > 3 [+ WHERE remaining_predicates]
+        // SELECT a1 FROM a LEFT SEMI-JOIN b ON b1 = a1 AND b2 > 3 [+ WHERE remaining_predicates]
 
         let col_id = in_subquery.subquery.props().logical().output_columns()[0];
         let col_expr = builder
@@ -316,7 +320,7 @@ where
             Some(expr) => join_condition.and(expr),
             _ => join_condition,
         };
-        let join = builder.inner_join(input, select_input, join_condition.into())?;
+        let join = builder.left_semi_join(input, select_input, join_condition.into())?;
 
         if remaining_predicates.is_empty() {
             Ok(Some(join))
