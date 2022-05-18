@@ -324,7 +324,8 @@ Empty return_one_row=true
     fn test_values() {
         let mut tester = RuleTester::new(ValuesRule);
         let mut metadata = TestMetadata::with_tables(vec!["A"]);
-        let col = metadata.column("A").build();
+        let col1 = metadata.column("A").build();
+        let col2 = metadata.column("A").build();
 
         let val1 = ScalarExpr::Scalar(ScalarValue::Int32(1));
         let val2 = ScalarExpr::Scalar(ScalarValue::Bool(true));
@@ -332,12 +333,12 @@ Empty return_one_row=true
         let tuple = ScalarNode::from(ScalarExpr::Tuple(vec![val1, val2]));
         let expr = LogicalExpr::Values(LogicalValues {
             values: vec![tuple],
-            columns: vec![col],
+            columns: vec![col1, col2],
         });
         tester.apply(
             &expr,
             r#"
-Values values: [(1, true)]
+Values cols=[1, 2] values: [(1, true)]
         "#,
         )
     }
