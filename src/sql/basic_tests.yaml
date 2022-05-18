@@ -190,19 +190,19 @@ query: |
   SELECT * FROM (VALUES(1, 2 + 2, 3)) t
 ok: |
   LogicalProjection cols=[1, 2, 3] exprs: [col:1, col:2, col:3]
-    input: LogicalValues values: [(1, 2 + 2, 3)]
+    input: LogicalValues cols=[1, 2, 3] values: [(1, 2 + 2, 3)]
 ---
 query: |
   SELECT column1, t.column2 FROM (VALUES (1, 2 + 2, 3)) t
 ok: |
   LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
-    input: LogicalValues values: [(1, 2 + 2, 3)]
+    input: LogicalValues cols=[1, 2, 3] values: [(1, 2 + 2, 3)]
 ---
 query: |
   SELECT column1, t.column2 FROM (VALUES (1, 2, 3), (4, 5, 6) ) t
 ok: |
   LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
-    input: LogicalValues values: [(1, 2, 3), (4, 5, 6)]
+    input: LogicalValues cols=[1, 2, 3] values: [(1, 2, 3), (4, 5, 6)]
 ---
 query: |
   SELECT * FROM (VALUES(1, 2, 3))
@@ -217,4 +217,4 @@ ok: |
   
   Sub query from column 8:
   LogicalProjection cols=[5] outer_cols=[1] exprs: [col:5]
-    input: LogicalValues outer_cols=[1] values: [(col:1, 2, 3)]
+    input: LogicalValues cols=[5, 6, 7] outer_cols=[1] values: [(col:1, 2, 3)]

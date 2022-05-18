@@ -952,7 +952,7 @@ impl Offset {
 
 #[derive(Debug, Clone)]
 pub struct Values {
-    /// A list of tuples where each list is a row.
+    /// A list of tuples where each tuple is a row.
     pub values: Vec<ScalarNode>,
     pub columns: Vec<ColumnId>,
 }
@@ -989,7 +989,8 @@ impl Values {
         F: MemoExprFormatter,
     {
         f.write_name("Values");
-        f.write_exprs("values", self.values.iter())
+        f.write_exprs("values", self.values.iter());
+        f.write_values("cols", &self.columns);
     }
 }
 

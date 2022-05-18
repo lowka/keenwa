@@ -814,7 +814,7 @@ impl LogicalOffset {
 
 #[derive(Debug, Clone)]
 pub struct LogicalValues {
-    /// A list of tuples where each list is a row.
+    /// A list of tuples where each tuple is a row.
     pub values: Vec<ScalarNode>,
     pub columns: Vec<ColumnId>,
 }
@@ -839,7 +839,8 @@ impl LogicalValues {
         F: MemoExprFormatter,
     {
         f.write_name("LogicalValues");
-        f.write_exprs("values", self.values.iter())
+        f.write_exprs("values", self.values.iter());
+        f.write_values("cols", &self.columns);
     }
 
     fn num_children(&self) -> usize {

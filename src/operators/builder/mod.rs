@@ -2433,13 +2433,13 @@ Memo:
 
         tester.expect_expr(
             r#"
-LogicalValues values: [(1, true)]
+LogicalValues cols=[1, 2] values: [(1, true)]
   output cols: [1, 2]
 Metadata:
   col:1 v.column1 Int32
   col:2 v.column2 Bool
 Memo:
-  01 LogicalValues values=[00]
+  01 LogicalValues values=[00] cols=[1, 2]
   00 Expr (1, true)
 "#,
         );
