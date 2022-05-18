@@ -395,12 +395,12 @@ impl RelationInScope {
                 _ if self.name != table => None,
                 _ if self.alias.as_ref().map(|a| a == table) == Some(false) => None,
                 _ => {
-                    let f = |(col_name, col_id): &(String, ColumnId)| col_name == name;
+                    let f = |(col_name, _): &(String, ColumnId)| col_name == name;
                     self.find_column(&f)
                 }
             }
         } else {
-            let f = |(col_name, col_id): &(String, ColumnId)| col_name == name;
+            let f = |(col_name, _): &(String, ColumnId)| col_name == name;
             self.find_column(&f)
         }
     }
