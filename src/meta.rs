@@ -148,12 +148,6 @@ impl ColumnMetadata {
         &self.data_type
     }
 
-    /// Returns the table this column belongs to. If the table is absent then this a synthetic column.
-    #[deprecated]
-    pub fn table(&self) -> Option<&String> {
-        self.table.as_ref()
-    }
-
     /// Returns the identifier of the relation column belongs to. If the relation identifier
     /// is absent then this a synthetic column.
     pub fn relation_id(&self) -> Option<RelationId> {

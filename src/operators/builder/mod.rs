@@ -2436,8 +2436,8 @@ Memo:
 LogicalValues values: [(1, true)]
   output cols: [1, 2]
 Metadata:
-  col:1 .column1 Int32
-  col:2 .column2 Bool
+  col:1 v.column1 Int32
+  col:2 v.column2 Bool
 Memo:
   01 LogicalValues values=[00]
   00 Expr (1, true)
@@ -2607,9 +2607,10 @@ Memo:
                     for column in self.metadata.get_columns() {
                         let id = column.id();
                         let expr = column.expr();
-                        let table = column.table();
+                        let relation_id = column.relation_id();
+                        let table_name = relation_id.map(|id| String::from(self.metadata.get_relation(&id).name()));
                         let column_name = column.name();
-                        let column_info = match (expr, table) {
+                        let column_info = match (expr, table_name) {
                             (None, None) => format!("  col:{} {} {:?}", id, column_name, column.data_type()),
                             (None, Some(table)) => {
                                 format!("  col:{} {}.{} {:?}", id, table, column_name, column.data_type())
