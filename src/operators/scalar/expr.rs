@@ -7,7 +7,7 @@ use itertools::Itertools;
 use crate::datatypes::DataType;
 use crate::memo::MemoExprFormatter;
 use crate::meta::ColumnId;
-use crate::operators::scalar::aggregates::AggregateFunction;
+use crate::operators::scalar::aggregates::{AggregateFunction, WindowFunction};
 use crate::operators::scalar::funcs::ScalarFunction;
 use crate::operators::scalar::value::ScalarValue;
 
@@ -93,6 +93,17 @@ where
         /// A filter expression. Specifies a condition which selects input rows used by this aggregate expression.
         /// (eg. `sum(a) FILTER (WHERE a > 10)`).
         filter: Option<Box<Expr<T>>>,
+    },
+    /// A window aggregate expression.
+    WindowAggregate {
+        /// The window function.
+        func: WindowFunction,
+        /// A list of arguments.
+        args: Vec<Expr<T>>,
+        /// A partitioning.
+        partition_by: Vec<Expr<T>>,
+        /// An ordering within the partition.
+        order_by: Vec<Expr<T>>,
     },
     /// A subquery expression.
     //TODO: Implement table subquery operators such as ALL, ANY, SOME, UNIQUE.
@@ -206,6 +217,22 @@ where
                     f.accept(visitor)?;
                 }
             }
+            Expr::WindowAggregate {
+                args,
+                partition_by,
+                order_by,
+                ..
+            } => {
+                for arg in args {
+                    arg.accept(visitor)?;
+                }
+                for partition in partition_by {
+                    partition.accept(visitor)?;
+                }
+                for order in order_by {
+                    order.accept(visitor)?;
+                }
+            }
             Expr::SubQuery(_) | Expr::Exists { .. } => {
                 // Should be handled by visitor::pre_visit because Expr is generic over
                 // the type of a nested sub query.
@@ -297,6 +324,17 @@ where
                 args: rewrite_vec(args, rewriter)?,
                 filter: rewrite_boxed_option(filter, rewriter)?,
             },
+            Expr::WindowAggregate {
+                func,
+                args,
+                partition_by,
+                order_by,
+            } => Expr::WindowAggregate {
+                func: func.clone(),
+                args: rewrite_vec(args, rewriter)?,
+                partition_by: rewrite_vec(partition_by, rewriter)?,
+                order_by: rewrite_vec(order_by, rewriter)?,
+            },
             Expr::SubQuery(_) => rewriter.rewrite(self)?,
             Expr::Exists { .. } => rewriter.rewrite(self)?,
             Expr::InSubQuery { not, expr, query } => Expr::InSubQuery {
@@ -364,6 +402,17 @@ where
                 if let Some(filter) = filter.clone() {
                     children.push(filter.as_ref().clone())
                 }
+                children
+            }
+            Expr::WindowAggregate {
+                args,
+                partition_by,
+                order_by,
+                ..
+            } => {
+                let mut children: Vec<_> = args.to_vec();
+                children.extend_from_slice(partition_by);
+                children.extend_from_slice(order_by);
                 children
             }
             Expr::SubQuery(_) => vec![],
@@ -521,6 +570,24 @@ where
                     distinct: *distinct,
                     args,
                     filter,
+                }
+            }
+            Expr::WindowAggregate {
+                func,
+                args,
+                partition_by,
+                order_by,
+            } => {
+                expect_children("WindowFunction", children.len(), args.len() + partition_by.len() + order_by.len());
+                let args: Vec<Expr<T>> = children.drain(0..args.len()).collect();
+                let partition_by: Vec<Expr<T>> = children.drain(0..partition_by.len()).collect();
+                let order_by: Vec<Expr<T>> = children.drain(0..order_by.len()).collect();
+
+                Expr::WindowAggregate {
+                    func: func.clone(),
+                    args,
+                    partition_by,
+                    order_by,
                 }
             }
             Expr::SubQuery(node) => {
@@ -783,6 +850,28 @@ where
                 }
                 Ok(())
             }
+            Expr::WindowAggregate {
+                func,
+                args,
+                partition_by,
+                order_by,
+            } => {
+                write!(f, "{}(", func)?;
+                write!(f, "{})", DisplayArgs(args))?;
+                write!(f, " OVER(")?;
+                if !partition_by.is_empty() {
+                    write!(f, "PARTITION BY {}", partition_by.iter().join(", "))?;
+                }
+                if !order_by.is_empty() {
+                    write!(
+                        f,
+                        "{pad}ORDER BY {}",
+                        order_by.iter().join(", "),
+                        pad = if partition_by.is_empty() { "" } else { " " }
+                    )?;
+                }
+                write!(f, ")")
+            }
             Expr::Not(expr) => write!(f, "NOT {}", &*expr),
             Expr::Negation(expr) => write!(f, "-{}", &*expr),
             Expr::Alias(expr, name) => write!(f, "{} AS {}", &*expr, name),
@@ -973,10 +1062,10 @@ where
     T: NestedExpr,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        if self.0.len() == 1 {
-            write!(f, "{}", self.0[0])
-        } else {
-            write!(f, "[{}]", self.0.iter().join(", ").as_str())
+        match self.0.len() {
+            0 => Ok(()),
+            1 => write!(f, "{}", self.0[0]),
+            _ => write!(f, "[{}]", self.0.iter().join(", ").as_str()),
         }
     }
 }
@@ -1336,6 +1425,81 @@ mod test {
                 "post:[true, false, col:a1]",
             ],
         )
+    }
+
+    #[test]
+    fn window_aggregate_traversal() {
+        let expr = Expr::WindowAggregate {
+            func: WindowFunction::FirstValue,
+            args: vec![col("a1")],
+            partition_by: vec![col("a2")],
+            order_by: vec![col("a3")],
+        };
+        expect_traversal_order(
+            &expr,
+            vec![
+                "pre:first_value(col:a1) OVER(PARTITION BY col:a2 ORDER BY col:a3)",
+                "pre:col:a1",
+                "post:col:a1",
+                "pre:col:a2",
+                "post:col:a2",
+                "pre:col:a3",
+                "post:col:a3",
+                "post:first_value(col:a1) OVER(PARTITION BY col:a2 ORDER BY col:a3)",
+            ],
+        );
+
+        let expr = Expr::WindowAggregate {
+            func: WindowFunction::FirstValue,
+            args: vec![col("a1")],
+            partition_by: vec![],
+            order_by: vec![col("a3")],
+        };
+        expect_traversal_order(
+            &expr,
+            vec![
+                "pre:first_value(col:a1) OVER(ORDER BY col:a3)",
+                "pre:col:a1",
+                "post:col:a1",
+                "pre:col:a3",
+                "post:col:a3",
+                "post:first_value(col:a1) OVER(ORDER BY col:a3)",
+            ],
+        );
+
+        let expr = Expr::WindowAggregate {
+            func: WindowFunction::FirstValue,
+            args: vec![col("a1")],
+            partition_by: vec![col("a2")],
+            order_by: vec![],
+        };
+        expect_traversal_order(
+            &expr,
+            vec![
+                "pre:first_value(col:a1) OVER(PARTITION BY col:a2)",
+                "pre:col:a1",
+                "post:col:a1",
+                "pre:col:a2",
+                "post:col:a2",
+                "post:first_value(col:a1) OVER(PARTITION BY col:a2)",
+            ],
+        );
+
+        let expr = Expr::WindowAggregate {
+            func: WindowFunction::FirstValue,
+            args: vec![col("a1")],
+            partition_by: vec![],
+            order_by: vec![],
+        };
+        expect_traversal_order(
+            &expr,
+            vec![
+                "pre:first_value(col:a1) OVER()",
+                "pre:col:a1",
+                "post:col:a1",
+                "post:first_value(col:a1) OVER()",
+            ],
+        );
     }
 
     #[test]

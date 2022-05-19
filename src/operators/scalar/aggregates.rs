@@ -69,14 +69,69 @@ impl Display for AggregateFunction {
     }
 }
 
+/// Supported window functions.
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub enum WindowFunction {
+    RowNumber,
+    Rank,
+    FirstValue,
+    LastValue,
+}
+
+impl WindowFunction {
+    /// Returns the return type of this window function if is called with the given arguments.
+    pub fn get_return_type(&self, arg_types: &[DataType]) -> Result<DataType, OptimizerError> {
+        let signature = self.get_signature();
+        get_return_type(self, &signature, arg_types)
+    }
+
+    fn get_signature(&self) -> FunctionSignature {
+        match self {
+            WindowFunction::RowNumber => FunctionSignatureBuilder::exact(vec![]).return_type(DataType::Int32),
+            WindowFunction::Rank => FunctionSignatureBuilder::exact(vec![]).return_type(DataType::Int32),
+            WindowFunction::FirstValue => FunctionSignatureBuilder::any(NonZeroUsize::new(1).unwrap()).return_mirrors(),
+            WindowFunction::LastValue => FunctionSignatureBuilder::any(NonZeroUsize::new(1).unwrap()).return_mirrors(),
+        }
+    }
+}
+
+impl TryFrom<&str> for WindowFunction {
+    type Error = ();
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "row_number" => Ok(WindowFunction::RowNumber),
+            "rank" => Ok(WindowFunction::Rank),
+            "first_value" => Ok(WindowFunction::FirstValue),
+            "last_value" => Ok(WindowFunction::LastValue),
+            _ => Err(()),
+        }
+    }
+}
+
+impl Display for WindowFunction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WindowFunction::RowNumber => write!(f, "row_number"),
+            WindowFunction::Rank => write!(f, "rank"),
+            WindowFunction::FirstValue => write!(f, "first_value"),
+            WindowFunction::LastValue => write!(f, "last_value"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::datatypes::DataType;
-    use crate::operators::scalar::aggregates::AggregateFunction;
+    use crate::operators::scalar::aggregates::{AggregateFunction, WindowFunction};
     use crate::test_function;
 
     fn test_aggregate_function(f: AggregateFunction, expected_name: &str, expected_signature: &str) {
         test_function!(AggregateFunction, &f, expected_name, expected_signature);
+    }
+
+    fn test_window_aggr_function(f: WindowFunction, expected_name: &str, expected_signature: &str) {
+        test_function!(WindowFunction, &f, expected_name, expected_signature);
     }
 
     #[test]
@@ -107,5 +162,25 @@ mod test {
     #[test]
     fn sum() {
         test_aggregate_function(AggregateFunction::Sum, "sum", "one of [int32] -> <mirrors> immutable");
+    }
+
+    #[test]
+    fn rank() {
+        test_window_aggr_function(WindowFunction::Rank, "rank", "exact -> int32 immutable");
+    }
+
+    #[test]
+    fn row_number() {
+        test_window_aggr_function(WindowFunction::RowNumber, "row_number", "exact -> int32 immutable");
+    }
+
+    #[test]
+    fn first_value() {
+        test_window_aggr_function(WindowFunction::FirstValue, "first_value", "any <1> -> <mirrors> immutable");
+    }
+
+    #[test]
+    fn last_value() {
+        test_window_aggr_function(WindowFunction::LastValue, "last_value", "any <1> -> <mirrors> immutable");
     }
 }

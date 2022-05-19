@@ -96,6 +96,7 @@ pub fn get_subquery(expr: &ScalarExpr) -> Option<&RelNode> {
         ScalarExpr::Array(_) => None,
         ScalarExpr::ScalarFunction { .. } => None,
         ScalarExpr::Aggregate { .. } => None,
+        ScalarExpr::WindowAggregate { .. } => None,
         ScalarExpr::SubQuery(query) => Some(query),
         ScalarExpr::Exists { query, .. } => Some(query),
         ScalarExpr::InSubQuery { query, .. } => Some(query),
