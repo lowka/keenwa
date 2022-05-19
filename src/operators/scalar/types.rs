@@ -140,6 +140,13 @@ where
             let arg_types = arg_types?;
             func.get_return_type(&arg_types)
         }
+        Expr::WindowAggregate { func, args, .. } => {
+            let arg_types: Result<Vec<DataType>, _> =
+                args.iter().map(|arg| resolve_expr_type(arg, column_registry)).collect();
+
+            let arg_types = arg_types?;
+            func.get_return_type(&arg_types)
+        }
         Expr::Exists { .. } | Expr::InSubQuery { .. } => {
             // query must be a valid subquery.
             Ok(DataType::Bool)

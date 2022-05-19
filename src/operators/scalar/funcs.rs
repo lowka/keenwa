@@ -120,8 +120,11 @@ pub mod testing {
 
         match &signature.args {
             ArgumentList::Exact(args) => {
-                buf.push_str("exact ");
-                buf.push_str(args.iter().join(", ").to_lowercase().as_str());
+                buf.push_str("exact");
+                if !args.is_empty() {
+                    buf.push(' ');
+                    buf.push_str(args.iter().join(", ").to_lowercase().as_str());
+                }
             }
             ArgumentList::OneOf(args) => {
                 buf.push_str("one of ");
