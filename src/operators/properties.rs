@@ -7,7 +7,7 @@ use crate::operators::relational::join::{JoinCondition, JoinType};
 use crate::operators::relational::logical::{
     LogicalAggregate, LogicalDistinct, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect,
     LogicalJoin, LogicalLimit, LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, LogicalValues,
-    SetOperator,
+    LogicalWindowAggregate, SetOperator,
 };
 use crate::operators::relational::physical::{PhysicalExpr, Sort};
 use crate::operators::relational::{RelExpr, RelNode};
@@ -158,6 +158,30 @@ where
             outer_columns.add_expr(group_by);
         }
 
+        let outer_columns = outer_columns.build();
+
+        Ok(LogicalProperties {
+            output_columns,
+            outer_columns,
+            has_correlated_subqueries: false,
+            statistics: None,
+        })
+    }
+
+    /// Builds logical properties for the given window aggregate operator.
+    pub fn build_window_aggregate(
+        &self,
+        input: &RelNode,
+        window_expr: &ScalarNode,
+        columns: &[ColumnId],
+        metadata: MetadataRef,
+        outer_scope: &OuterScope,
+    ) -> Result<LogicalProperties, OptimizerError> {
+        let output_columns = columns.to_vec();
+
+        let mut outer_columns = OuterColumnsBuilder::new(outer_scope, metadata);
+        outer_columns.add_input(input);
+        outer_columns.add_expr(window_expr);
         let outer_columns = outer_columns.build();
 
         Ok(LogicalProperties {
@@ -368,6 +392,11 @@ where
                         group_exprs,
                         ..
                     }) => self.build_aggregate(input, columns, group_exprs, metadata.clone(), scope),
+                    LogicalExpr::WindowAggregate(LogicalWindowAggregate {
+                        input,
+                        window_expr,
+                        columns,
+                    }) => self.build_window_aggregate(input, window_expr, columns, metadata.clone(), scope),
                     LogicalExpr::Join(LogicalJoin {
                         join_type,
                         left,

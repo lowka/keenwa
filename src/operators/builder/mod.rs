@@ -15,13 +15,14 @@ use crate::catalog::CatalogRef;
 use crate::error::OptimizerError;
 use crate::memo::MemoExprState;
 use crate::meta::{ColumnId, ColumnMetadata, MetadataRef, MutableMetadata};
+use crate::not_implemented;
 use crate::operators::builder::subqueries::{
     decorrelate_subqueries, possibly_has_correlated_subqueries, BuildFilter, BuildOperators,
 };
 use crate::operators::relational::join::{JoinCondition, JoinOn, JoinType, JoinUsing};
 use crate::operators::relational::logical::{
     LogicalDistinct, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin, LogicalLimit,
-    LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, LogicalValues, SetOperator,
+    LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, LogicalValues, LogicalWindowAggregate, SetOperator,
 };
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::ExprRewriter;
@@ -303,8 +304,7 @@ impl OperatorBuilder {
     pub fn project(mut self, exprs: Vec<ScalarExpr>) -> Result<Self, OptimizerError> {
         let (input, scope) = self.rel_node()?;
         let input_is_projection = matches!(input.expr().logical(), &LogicalExpr::Projection(_));
-
-        let mut projection_builder = ProjectionListBuilder::new(&mut self, &scope);
+        let mut projection_builder = ProjectionListBuilder::new(&mut self, &scope, false);
 
         for expr in exprs {
             projection_builder.add_expr(expr)?;
@@ -315,6 +315,91 @@ impl OperatorBuilder {
             output_columns,
             projection: new_exprs,
         } = projection_builder.build();
+
+        struct WindowExprKey {
+            expr: ScalarNode,
+            partition_keys: usize,
+        }
+
+        //
+        // Select Window Aggregate expressions sorted by the number of partition options from the less specific to more specific.
+        // So that the former are placed closer to the root node of an operator tree:
+        //
+        // SELECT rank OVER (col:1, col:2), rank OVER (), rank OVER (col:1, col:2, col:3)
+        //
+        // Translated into:
+        //
+        // WindowAggregate expr=rank() partition=[]
+        //   input: WindowAggregate expr=rank() partition=[col:1, col:2]
+        //     input: WindowAggregate expr=rank() partition=[col:1, col:2, col:3]
+        //       input: Scan A
+        //
+        let mut window_aggregates: Vec<ScalarNode> = new_exprs
+            .iter()
+            .filter(|expr| matches!(expr.expr(), ScalarExpr::WindowAggregate { .. }))
+            .cloned()
+            .map(|expr| {
+                if let ScalarExpr::WindowAggregate { partition_by, .. } = expr.expr() {
+                    WindowExprKey {
+                        partition_keys: partition_by.len(),
+                        expr,
+                    }
+                } else {
+                    unreachable!()
+                }
+            })
+            .sorted_by(|a, b| a.partition_keys.cmp(&b.partition_keys).reverse())
+            .map(|expr| expr.expr)
+            .collect();
+
+        let (input, scope) = if !window_aggregates.is_empty() {
+            let mut input = input;
+            let mut scope = scope;
+            let mut window_idx = 0;
+
+            while !window_aggregates.is_empty() {
+                let mut window_expr_output_cols = vec![];
+                let mut num_windows = 0;
+
+                for (col_id, expr) in column_ids.iter().zip(new_exprs.iter()) {
+                    match expr.expr() {
+                        ScalarExpr::WindowAggregate { .. } => {
+                            if num_windows <= window_idx {
+                                window_expr_output_cols.push(*col_id);
+                                num_windows += 1;
+                            }
+                        }
+                        _ => window_expr_output_cols.push(*col_id),
+                    }
+                }
+
+                let window_expr = window_aggregates.swap_remove(0);
+                let window_aggregate = LogicalExpr::WindowAggregate(LogicalWindowAggregate {
+                    input,
+                    window_expr,
+                    columns: window_expr_output_cols,
+                });
+                self.add_operator_and_scope(window_aggregate, scope);
+                window_idx += 1;
+
+                let (rel_node, rel_expr_scope) = self.rel_node()?;
+                input = rel_node;
+                scope = rel_expr_scope;
+            }
+
+            (input, scope)
+        } else {
+            (input, scope)
+        };
+
+        let new_exprs: Vec<ScalarNode> = new_exprs
+            .into_iter()
+            .zip(column_ids.iter())
+            .map(|(expr, id)| match expr.expr() {
+                ScalarExpr::WindowAggregate { .. } => self.add_scalar_node(ScalarExpr::Column(*id), &scope),
+                _ => expr,
+            })
+            .collect();
 
         let expr = LogicalExpr::Projection(LogicalProjection {
             input,
@@ -958,6 +1043,7 @@ where
             metadata,
             validator: ExprValidator {
                 aggregate_depth: 0,
+                window_func_depth: 0,
                 alias_depth: 0,
                 validator,
             },
@@ -1046,7 +1132,7 @@ where
                 self.referenced_outer_columns.push(*id);
             }
         }
-        self.validator.after_expr(&expr);
+        self.validator.after_expr(&expr)?;
         Ok(expr)
     }
 }
@@ -1066,6 +1152,7 @@ impl Display for DisplayColumns<'_> {
 
 struct ExprValidator<T> {
     aggregate_depth: usize,
+    window_func_depth: usize,
     alias_depth: usize,
     validator: T,
 }
@@ -1078,6 +1165,7 @@ where
         match expr {
             ScalarExpr::Alias(_, _) => self.alias_depth += 1,
             ScalarExpr::Aggregate { .. } => self.aggregate_depth += 1,
+            ScalarExpr::WindowAggregate { .. } => self.window_func_depth += 1,
             _ => {}
         }
         if self.aggregate_depth > 1 {
@@ -1088,6 +1176,10 @@ where
             // query error
             return Err(OptimizerError::Internal("Nested alias expressions are not allowed".to_string()));
         }
+        if self.window_func_depth > 1 {
+            // query error
+            return Err(OptimizerError::Internal("Nested window functions are not allowed".to_string()));
+        }
         self.validator.pre_validate(expr)?;
         Ok(())
     }
@@ -1097,12 +1189,32 @@ where
         Ok(())
     }
 
-    fn after_expr(&mut self, expr: &ScalarExpr) {
+    fn after_expr(&mut self, expr: &ScalarExpr) -> Result<(), OptimizerError> {
         match expr {
             ScalarExpr::Alias(_, _) => self.alias_depth -= 1,
             ScalarExpr::Aggregate { .. } => self.aggregate_depth -= 1,
+            ScalarExpr::WindowAggregate {
+                func,
+                args,
+                partition_by,
+                ..
+            } => {
+                let non_column_args =
+                    args.iter().any(|expr| !matches!(expr, ScalarExpr::Column(_) | ScalarExpr::Scalar(_)));
+                not_implemented!(non_column_args, "WINDOW FUNCTION: non column arguments in function: {}", func);
+
+                let non_column_exprs = partition_by.iter().any(|expr| !matches!(expr, ScalarExpr::Column(_)));
+                not_implemented!(
+                    non_column_exprs,
+                    "WINDOW FUNCTION: non column expressions are allowed in PARTITION BY clause: {}",
+                    expr
+                );
+
+                self.window_func_depth -= 1;
+            }
             _ => {}
         }
+        Ok(())
     }
 }
 
@@ -1360,6 +1472,7 @@ mod test {
     use crate::memo::format_memo;
     use crate::operators::format::{OperatorFormatter, OperatorTreeFormatter, SubQueriesFormatter};
     use crate::operators::properties::LogicalPropertiesBuilder;
+    use crate::operators::scalar::aggregates::{AggregateFunction, WindowFunction};
     use crate::operators::scalar::{col, qualified_wildcard, scalar, wildcard};
     use crate::operators::{OperatorMemoBuilder, Properties, RelationalProperties};
     use crate::properties::logical::LogicalProperties;
@@ -1714,6 +1827,26 @@ Memo:
   00 LogicalGet A cols=[1, 2]
 "#,
         );
+    }
+
+    #[test]
+    fn test_projection_with_aggr_expressions_are_not_allowed() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let from_a = builder.from("A")?;
+            let count_a2 = ScalarExpr::Aggregate {
+                func: AggregateFunction::Avg,
+                distinct: false,
+                args: vec![col("a2")],
+                filter: None,
+            };
+            let projection_list = vec![col("a1"), count_a2];
+
+            from_a.project(projection_list)?.build()
+        });
+
+        tester.expect_error("Aggregate expressions are not allowed in projection operator");
     }
 
     #[test]
@@ -2081,6 +2214,93 @@ Memo:
   03 Expr col:1 > 100
   02 Expr sum(col:1)
   01 Expr col:1
+  00 LogicalGet A cols=[1, 2]
+"#,
+        );
+    }
+
+    #[test]
+    fn test_window_aggregate_function() {
+        let mut tester = OperatorBuilderTester::new();
+        tester.build_operator(|builder| {
+            let mut from_a = builder.get("A", vec!["a1", "a2"])?;
+            let row_number = ScalarExpr::WindowAggregate {
+                func: WindowFunction::RowNumber.into(),
+                args: vec![],
+                partition_by: vec![col("a1")],
+                order_by: vec![],
+            };
+            let window = from_a.project(vec![col("a1"), row_number])?;
+
+            window.build()
+        });
+        tester.expect_expr(
+            r#"
+LogicalProjection cols=[1, 3] exprs: [col:1, col:3]
+  input: LogicalWindowAggregate cols=[1, 3]
+    input: LogicalGet A cols=[1, 2]
+    window_expr: Expr row_number() OVER(PARTITION BY col:1)
+  output cols: [1, 3]
+Metadata:
+  col:1 A.a1 Int32
+  col:2 A.a2 Int32
+  col:3 row_number Int32, expr: row_number() OVER(PARTITION BY col:1)
+Memo:
+  05 LogicalProjection input=03 exprs=[01, 04] cols=[1, 3]
+  04 Expr col:3
+  03 LogicalWindowAggregate input=00 window_expr=02 cols=[1, 3]
+  02 Expr row_number() OVER(PARTITION BY col:1)
+  01 Expr col:1
+  00 LogicalGet A cols=[1, 2]
+"#,
+        );
+    }
+
+    #[test]
+    fn test_multiple_window_aggregate_functions() {
+        let mut tester = OperatorBuilderTester::new();
+        tester.build_operator(|builder| {
+            let mut from_a = builder.get("A", vec!["a1", "a2"])?;
+
+            let rank = ScalarExpr::WindowAggregate {
+                func: WindowFunction::Rank.into(),
+                args: vec![],
+                partition_by: vec![col("a1")],
+                order_by: vec![],
+            };
+            let row_number = ScalarExpr::WindowAggregate {
+                func: WindowFunction::RowNumber.into(),
+                args: vec![],
+                partition_by: vec![],
+                order_by: vec![],
+            };
+            let window = from_a.project(vec![rank, col("a2"), row_number])?;
+
+            window.build()
+        });
+        tester.expect_expr(
+            r#"
+LogicalProjection cols=[3, 2, 4] exprs: [col:3, col:2, col:4]
+  input: LogicalWindowAggregate cols=[3, 2, 4]
+    input: LogicalWindowAggregate cols=[3, 2]
+      input: LogicalGet A cols=[1, 2]
+      window_expr: Expr rank() OVER(PARTITION BY col:1)
+    window_expr: Expr row_number() OVER()
+  output cols: [3, 2, 4]
+Metadata:
+  col:1 A.a1 Int32
+  col:2 A.a2 Int32
+  col:3 rank Int32, expr: rank() OVER(PARTITION BY col:1)
+  col:4 row_number Int32, expr: row_number() OVER()
+Memo:
+  08 LogicalProjection input=05 exprs=[06, 02, 07] cols=[3, 2, 4]
+  07 Expr col:4
+  06 Expr col:3
+  05 LogicalWindowAggregate input=04 window_expr=03 cols=[3, 2, 4]
+  04 LogicalWindowAggregate input=00 window_expr=01 cols=[3, 2]
+  03 Expr row_number() OVER()
+  02 Expr col:2
+  01 Expr rank() OVER(PARTITION BY col:1)
   00 LogicalGet A cols=[1, 2]
 "#,
         );

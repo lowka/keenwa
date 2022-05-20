@@ -7,7 +7,7 @@ use itertools::Itertools;
 use crate::datatypes::DataType;
 use crate::memo::MemoExprFormatter;
 use crate::meta::ColumnId;
-use crate::operators::scalar::aggregates::{AggregateFunction, WindowFunction};
+use crate::operators::scalar::aggregates::{AggregateFunction, WindowOrAggregateFunction};
 use crate::operators::scalar::funcs::ScalarFunction;
 use crate::operators::scalar::value::ScalarValue;
 
@@ -97,7 +97,7 @@ where
     /// A window aggregate expression.
     WindowAggregate {
         /// The window function.
-        func: WindowFunction,
+        func: WindowOrAggregateFunction,
         /// A list of arguments.
         args: Vec<Expr<T>>,
         /// A partitioning.
@@ -330,7 +330,7 @@ where
                 partition_by,
                 order_by,
             } => Expr::WindowAggregate {
-                func: func.clone(),
+                func,
                 args: rewrite_vec(args, rewriter)?,
                 partition_by: rewrite_vec(partition_by, rewriter)?,
                 order_by: rewrite_vec(order_by, rewriter)?,
@@ -1102,6 +1102,7 @@ impl Scalar for String {
 
 #[cfg(test)]
 mod test {
+    use crate::operators::scalar::aggregates::WindowFunction;
     use std::cell::Cell;
     use std::convert::Infallible;
     use std::hash::Hasher;
@@ -1430,7 +1431,7 @@ mod test {
     #[test]
     fn window_aggregate_traversal() {
         let expr = Expr::WindowAggregate {
-            func: WindowFunction::FirstValue,
+            func: WindowFunction::FirstValue.into(),
             args: vec![col("a1")],
             partition_by: vec![col("a2")],
             order_by: vec![col("a3")],
@@ -1450,7 +1451,7 @@ mod test {
         );
 
         let expr = Expr::WindowAggregate {
-            func: WindowFunction::FirstValue,
+            func: WindowFunction::FirstValue.into(),
             args: vec![col("a1")],
             partition_by: vec![],
             order_by: vec![col("a3")],
@@ -1468,7 +1469,7 @@ mod test {
         );
 
         let expr = Expr::WindowAggregate {
-            func: WindowFunction::FirstValue,
+            func: WindowFunction::FirstValue.into(),
             args: vec![col("a1")],
             partition_by: vec![col("a2")],
             order_by: vec![],
@@ -1486,7 +1487,7 @@ mod test {
         );
 
         let expr = Expr::WindowAggregate {
-            func: WindowFunction::FirstValue,
+            func: WindowFunction::FirstValue.into(),
             args: vec![col("a1")],
             partition_by: vec![],
             order_by: vec![],

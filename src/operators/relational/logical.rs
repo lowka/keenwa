@@ -17,6 +17,7 @@ pub enum LogicalExpr {
     Projection(LogicalProjection),
     Select(LogicalSelect),
     Aggregate(LogicalAggregate),
+    WindowAggregate(LogicalWindowAggregate),
     Join(LogicalJoin),
     Get(LogicalGet),
     Union(LogicalUnion),
@@ -38,6 +39,7 @@ impl LogicalExpr {
             LogicalExpr::Join(expr) => expr.copy_in(visitor, expr_ctx),
             LogicalExpr::Get(_) => {}
             LogicalExpr::Aggregate(expr) => expr.copy_in(visitor, expr_ctx),
+            LogicalExpr::WindowAggregate(expr) => expr.copy_in(visitor, expr_ctx),
             LogicalExpr::Union(expr) => expr.copy_in(visitor, expr_ctx),
             LogicalExpr::Intersect(expr) => expr.copy_in(visitor, expr_ctx),
             LogicalExpr::Except(expr) => expr.copy_in(visitor, expr_ctx),
@@ -56,6 +58,7 @@ impl LogicalExpr {
             LogicalExpr::Join(expr) => LogicalExpr::Join(expr.with_new_inputs(inputs)),
             LogicalExpr::Get(expr) => LogicalExpr::Get(expr.with_new_inputs(inputs)),
             LogicalExpr::Aggregate(expr) => LogicalExpr::Aggregate(expr.with_new_inputs(inputs)),
+            LogicalExpr::WindowAggregate(expr) => LogicalExpr::WindowAggregate(expr.with_new_inputs(inputs)),
             LogicalExpr::Union(expr) => LogicalExpr::Union(expr.with_new_inputs(inputs)),
             LogicalExpr::Intersect(expr) => LogicalExpr::Intersect(expr.with_new_inputs(inputs)),
             LogicalExpr::Except(expr) => LogicalExpr::Except(expr.with_new_inputs(inputs)),
@@ -74,6 +77,7 @@ impl LogicalExpr {
             LogicalExpr::Join(expr) => expr.num_children(),
             LogicalExpr::Get(expr) => expr.num_children(),
             LogicalExpr::Aggregate(expr) => expr.num_children(),
+            LogicalExpr::WindowAggregate(expr) => expr.num_children(),
             LogicalExpr::Union(expr) => expr.num_children(),
             LogicalExpr::Intersect(expr) => expr.num_children(),
             LogicalExpr::Except(expr) => expr.num_children(),
@@ -90,6 +94,7 @@ impl LogicalExpr {
             LogicalExpr::Projection(expr) => expr.get_child(i),
             LogicalExpr::Select(expr) => expr.get_child(i),
             LogicalExpr::Aggregate(expr) => expr.get_child(i),
+            LogicalExpr::WindowAggregate(expr) => expr.get_child(i),
             LogicalExpr::Join(expr) => expr.get_child(i),
             LogicalExpr::Get(expr) => expr.get_child(i),
             LogicalExpr::Union(expr) => expr.get_child(i),
@@ -113,6 +118,7 @@ impl LogicalExpr {
             LogicalExpr::Join(expr) => expr.format_expr(f),
             LogicalExpr::Get(expr) => expr.format_expr(f),
             LogicalExpr::Aggregate(expr) => expr.format_expr(f),
+            LogicalExpr::WindowAggregate(expr) => expr.format_expr(f),
             LogicalExpr::Union(expr) => expr.format_expr(f),
             LogicalExpr::Intersect(expr) => expr.format_expr(f),
             LogicalExpr::Except(expr) => expr.format_expr(f),
@@ -193,6 +199,10 @@ impl LogicalExpr {
                 for group_expr in group_exprs {
                     group_expr.expr().accept(&mut expr_visitor)?;
                 }
+                input.expr().logical().accept(visitor)?;
+            }
+            LogicalExpr::WindowAggregate(LogicalWindowAggregate { input, window_expr, .. }) => {
+                window_expr.expr().accept(&mut expr_visitor)?;
                 input.expr().logical().accept(visitor)?;
             }
             LogicalExpr::Join(LogicalJoin {
@@ -431,6 +441,54 @@ impl LogicalAggregate {
         f.write_exprs("aggr_exprs", self.aggr_exprs.iter());
         f.write_exprs("group_exprs", self.group_exprs.iter());
         f.write_expr_if_present("having", self.having.as_ref());
+        f.write_values("cols", &self.columns);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LogicalWindowAggregate {
+    pub input: RelNode,
+    pub window_expr: ScalarNode,
+    /// Output columns produced by a window aggregate operator.
+    pub columns: Vec<ColumnId>,
+}
+
+impl LogicalWindowAggregate {
+    fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+        visitor.visit_rel(expr_ctx, &self.input);
+        visitor.visit_scalar(expr_ctx, &self.window_expr);
+    }
+
+    fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
+        let num = 2;
+        inputs.expect_len(num, "LogicalWindowAggregate");
+
+        LogicalWindowAggregate {
+            input: inputs.rel_node(),
+            window_expr: inputs.scalar_node(),
+            columns: self.columns.clone(),
+        }
+    }
+
+    fn num_children(&self) -> usize {
+        2
+    }
+
+    fn get_child(&self, i: usize) -> Option<&Operator> {
+        match i {
+            0 => Some(self.input.mexpr()),
+            1 => Some(self.window_expr.mexpr()),
+            _ => None,
+        }
+    }
+
+    fn format_expr<F>(&self, f: &mut F)
+    where
+        F: MemoExprFormatter,
+    {
+        f.write_name("LogicalWindowAggregate");
+        f.write_expr("input", &self.input);
+        f.write_expr("window_expr", &self.window_expr);
         f.write_values("cols", &self.columns);
     }
 }

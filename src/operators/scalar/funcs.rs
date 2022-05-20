@@ -87,19 +87,9 @@ pub mod testing {
     use itertools::Itertools;
 
     #[macro_export]
-    macro_rules! test_function {
-        ($func_type:tt, $func_var:expr, $expected_name:expr, $expected_signature: expr) => {
-            fn expect_from_str(expected: &$func_type, expected_str: &str) {
-                use std::convert::TryFrom;
-
-                let actual_str = format!("{}", expected);
-                assert_eq!(actual_str, expected_str, "display and string representation do not match");
-                assert_eq!(
-                    Ok(expected),
-                    $func_type::try_from(actual_str.as_str()).as_ref(),
-                    "try_from conversion does not match"
-                );
-            }
+    macro_rules! test_function_signature {
+        ($func_type:tt, $func_var:expr, $expected_name:expr, $expected_signature: expr) => {{
+            $crate::test_from_str!($func_type, $func_var, $expected_name);
 
             fn expect_signature(f: &$func_type, expected: &str) {
                 use crate::operators::scalar::funcs::testing::signature_to_test_string;
@@ -108,10 +98,27 @@ pub mod testing {
                 let actual_signature = signature_to_test_string(&signature);
                 assert_eq!(actual_signature, expected, "signature");
             }
-
-            expect_from_str($func_var, $expected_name);
             expect_signature($func_var, $expected_signature);
-        };
+        }};
+    }
+
+    #[macro_export]
+    macro_rules! test_from_str {
+        ($tpe:tt, $var:expr, $expected_str:expr) => {{
+            fn expect_from_str(expected: &$tpe, expected_str: &str) {
+                use std::convert::TryFrom;
+
+                let actual_str = format!("{}", expected);
+                assert_eq!(actual_str, expected_str, "display and string representation do not match");
+                assert_eq!(
+                    Ok(expected),
+                    $tpe::try_from(actual_str.as_str()).as_ref(),
+                    "try_from conversion does not match"
+                );
+            }
+
+            expect_from_str($var, $expected_str);
+        }};
     }
 
     /// Converts the given function signature to a string representation that is used by tests.
@@ -165,10 +172,10 @@ pub mod testing {
 #[cfg(test)]
 mod test {
     use crate::operators::scalar::funcs::ScalarFunction;
-    use crate::test_function;
+    use crate::test_function_signature;
 
     fn test_scalar_function(f: ScalarFunction, expected_name: &str, expected_signature: &str) {
-        test_function!(ScalarFunction, &f, expected_name, expected_signature);
+        test_function_signature!(ScalarFunction, &f, expected_name, expected_signature);
     }
 
     #[test]

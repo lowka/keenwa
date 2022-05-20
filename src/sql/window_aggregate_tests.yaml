@@ -1,0 +1,63 @@
+query: |
+  SELECT row_number() OVER (PARTITION BY a1) FROM a
+ok: |
+  LogicalProjection cols=[5] exprs: [col:5]
+    input: LogicalWindowAggregate cols=[5]
+      input: LogicalGet a cols=[1, 2, 3, 4]
+      window_expr: Expr row_number() OVER(PARTITION BY col:1)
+---
+query: |
+  SELECT a2, rank() OVER (PARTITION BY a1) FROM a
+ok: |
+  LogicalProjection cols=[2, 5] exprs: [col:2, col:5]
+    input: LogicalWindowAggregate cols=[2, 5]
+      input: LogicalGet a cols=[1, 2, 3, 4]
+      window_expr: Expr rank() OVER(PARTITION BY col:1)
+---
+query: |
+  SELECT row_number() OVER(), a2, rank() OVER (PARTITION BY a1) FROM a
+ok: |
+  LogicalProjection cols=[5, 2, 6] exprs: [col:5, col:2, col:6]
+    input: LogicalWindowAggregate cols=[5, 2, 6]
+      input: LogicalWindowAggregate cols=[5, 2]
+        input: LogicalGet a cols=[1, 2, 3, 4]
+        window_expr: Expr rank() OVER(PARTITION BY col:1)
+      window_expr: Expr row_number() OVER()
+---
+query: |
+  SELECT rank() OVER (PARTITION BY a1,a2), row_number() OVER(), a2, rank() OVER (PARTITION BY a1) FROM a
+ok: |
+  LogicalProjection cols=[5, 6, 2, 7] exprs: [col:5, col:6, col:2, col:7]
+    input: LogicalWindowAggregate cols=[5, 6, 2, 7]
+      input: LogicalWindowAggregate cols=[5, 6, 2]
+        input: LogicalWindowAggregate cols=[5, 2]
+          input: LogicalGet a cols=[1, 2, 3, 4]
+          window_expr: Expr rank() OVER(PARTITION BY col:1, col:2)
+        window_expr: Expr row_number() OVER()
+      window_expr: Expr rank() OVER(PARTITION BY col:1)
+---
+query: |
+  SELECT row_number() OVER (PARTITION BY a1+1) FROM a
+error: |
+  Not implemented: WINDOW FUNCTION: non column expressions are allowed in PARTITION BY clause: row_number() OVER(PARTITION BY col:1 + 1)
+---
+query:
+  SELECT count(1) OVER (PARTITION BY a1) FROM a
+ok: |
+  LogicalProjection cols=[5] exprs: [col:5]
+    input: LogicalWindowAggregate cols=[5]
+      input: LogicalGet a cols=[1, 2, 3, 4]
+      window_expr: Expr count(1) OVER(PARTITION BY col:1)
+---
+query:
+  SELECT sum(a2) OVER (PARTITION BY a1) FROM a
+ok: |
+  LogicalProjection cols=[5] exprs: [col:5]
+    input: LogicalWindowAggregate cols=[5]
+      input: LogicalGet a cols=[1, 2, 3, 4]
+      window_expr: Expr sum(col:2) OVER(PARTITION BY col:1)
+---
+query: |
+  SELECT first_value(count(a1)) OVER (PARTITION BY a1) FROM a
+error: |
+  Not implemented: WINDOW FUNCTION: non column arguments in function: first_value

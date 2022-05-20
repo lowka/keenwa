@@ -5,18 +5,20 @@ use crate::operators::builder::{OperatorBuilder, RewriteExprs, ValidateProjectio
 use crate::operators::scalar::types::resolve_expr_type;
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
 
-pub struct ProjectionListBuilder<'a> {
+pub(super) struct ProjectionListBuilder<'a> {
     builder: &'a mut OperatorBuilder,
     scope: &'a OperatorScope,
     projection: ProjectionList,
+    allow_aggregates: bool,
 }
 
 impl<'a> ProjectionListBuilder<'a> {
-    pub fn new(builder: &'a mut OperatorBuilder, scope: &'a OperatorScope) -> Self {
+    pub fn new(builder: &'a mut OperatorBuilder, scope: &'a OperatorScope, allow_aggregates: bool) -> Self {
         ProjectionListBuilder {
             builder,
             scope,
             projection: ProjectionList::default(),
+            allow_aggregates,
         }
     }
 
@@ -50,6 +52,9 @@ impl<'a> ProjectionListBuilder<'a> {
                     ScalarExpr::Aggregate { ref func, .. } => {
                         self.add_synthetic_column(expr.clone(), format!("{}", func), expr)?
                     }
+                    ScalarExpr::WindowAggregate { ref func, .. } => {
+                        self.add_synthetic_column(expr.clone(), format!("{}", func), expr)?
+                    }
                     _ => self.add_synthetic_column(expr.clone(), "?column?".into(), expr)?,
                 };
             }
@@ -74,6 +79,12 @@ impl<'a> ProjectionListBuilder<'a> {
         name: String,
         column_expr: ScalarExpr,
     ) -> Result<(), OptimizerError> {
+        if matches!(&expr, ScalarExpr::Aggregate { .. }) && !self.allow_aggregates {
+            return Err(OptimizerError::Argument(
+                "Aggregate expressions are not allowed in projection operator. Use AggregateBuilder to construct aggregate operators".to_string(),
+            ));
+        }
+
         let data_type = resolve_expr_type(&expr, &self.builder.metadata)?;
         let column_meta = ColumnMetadata::new_synthetic_column(name.clone(), data_type, Some(column_expr));
         let id = self.builder.metadata.add_column(column_meta);

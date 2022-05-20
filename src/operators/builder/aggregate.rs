@@ -81,7 +81,7 @@ impl AggregateBuilder<'_> {
 
         let aggr_exprs = std::mem::take(&mut self.aggr_exprs);
         let metadata = self.builder.metadata.clone();
-        let mut projection_builder = ProjectionListBuilder::new(self.builder, &scope);
+        let mut projection_builder = ProjectionListBuilder::new(self.builder, &scope, true);
         let mut non_aggregate_columns = HashSet::new();
 
         for expr in aggr_exprs {
@@ -104,6 +104,11 @@ impl AggregateBuilder<'_> {
                     let (column_id, _) = projection_builder.add_expr(expr)?;
 
                     non_aggregate_columns.insert(column_id);
+                }
+                AggrExpr::Expr(ScalarExpr::WindowAggregate { .. }) => {
+                    return Err(OptimizerError::Argument(
+                        "Window aggregate expression can not be added to aggregate builder".to_string(),
+                    ))
                 }
                 AggrExpr::Expr(expr) => {
                     let (_, expr) = projection_builder.add_expr(expr)?;
