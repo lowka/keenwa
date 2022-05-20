@@ -120,18 +120,68 @@ impl Display for WindowFunction {
     }
 }
 
+/// Function that can be used by window aggregate expressions.
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub enum WindowOrAggregateFunction {
+    Aggregate(AggregateFunction),
+    Window(WindowFunction),
+}
+
+impl TryFrom<&str> for WindowOrAggregateFunction {
+    type Error = ();
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match AggregateFunction::try_from(value) {
+            Ok(f) => Ok(WindowOrAggregateFunction::Aggregate(f)),
+            Err(_) => WindowFunction::try_from(value).map(WindowOrAggregateFunction::Window),
+        }
+    }
+}
+
+impl WindowOrAggregateFunction {
+    pub fn get_return_type(&self, args_types: &[DataType]) -> Result<DataType, OptimizerError> {
+        match self {
+            WindowOrAggregateFunction::Aggregate(f) => f.get_return_type(args_types),
+            WindowOrAggregateFunction::Window(f) => f.get_return_type(args_types),
+        }
+    }
+}
+
+impl From<AggregateFunction> for WindowOrAggregateFunction {
+    fn from(f: AggregateFunction) -> Self {
+        WindowOrAggregateFunction::Aggregate(f)
+    }
+}
+
+impl From<WindowFunction> for WindowOrAggregateFunction {
+    fn from(f: WindowFunction) -> Self {
+        WindowOrAggregateFunction::Window(f)
+    }
+}
+
+impl Display for WindowOrAggregateFunction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WindowOrAggregateFunction::Aggregate(func) => write!(f, "{}", func),
+            WindowOrAggregateFunction::Window(func) => write!(f, "{}", func),
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::datatypes::DataType;
-    use crate::operators::scalar::aggregates::{AggregateFunction, WindowFunction};
-    use crate::test_function;
+    use crate::operators::scalar::aggregates::{AggregateFunction, WindowFunction, WindowOrAggregateFunction};
+    use crate::{test_from_str, test_function_signature};
 
     fn test_aggregate_function(f: AggregateFunction, expected_name: &str, expected_signature: &str) {
-        test_function!(AggregateFunction, &f, expected_name, expected_signature);
+        test_function_signature!(AggregateFunction, &f, expected_name, expected_signature);
+        test_from_str!(WindowOrAggregateFunction, &WindowOrAggregateFunction::Aggregate(f), expected_name);
     }
 
     fn test_window_aggr_function(f: WindowFunction, expected_name: &str, expected_signature: &str) {
-        test_function!(WindowFunction, &f, expected_name, expected_signature);
+        test_function_signature!(WindowFunction, &f, expected_name, expected_signature);
+        test_from_str!(WindowOrAggregateFunction, &WindowOrAggregateFunction::Window(f), expected_name);
     }
 
     #[test]

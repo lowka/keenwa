@@ -73,6 +73,7 @@ fn rewrite(expr: &RelNode, keep_projection: bool) -> RelNode {
                     rewrite_inputs(expr)
                 }
             }
+            LogicalExpr::WindowAggregate(_) => rewrite_inputs(expr),
             LogicalExpr::Get(LogicalGet { columns, .. }) => {
                 if columns == &projection.columns {
                     // Projection that only contains columns from the scan is redundant.

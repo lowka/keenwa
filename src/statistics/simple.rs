@@ -12,7 +12,8 @@ use crate::meta::{ColumnId, MetadataRef};
 use crate::operators::relational::join::{JoinCondition, JoinType};
 use crate::operators::relational::logical::{
     LogicalAggregate, LogicalDistinct, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin,
-    LogicalLimit, LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, LogicalValues, SetOperator,
+    LogicalLimit, LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, LogicalValues, LogicalWindowAggregate,
+    SetOperator,
 };
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::ExprRewriter;
@@ -106,6 +107,19 @@ where
         Ok(Some(Statistics::from_row_count(max_groups)))
     }
 
+    fn build_window_aggregate(
+        &self,
+        input: &RelNode,
+        _window_expr: &ScalarNode,
+        _columns: &[ColumnId],
+    ) -> Result<Option<Statistics>, OptimizerError> {
+        let logical = input.props().logical();
+        let statistics = logical.statistics().unwrap();
+        let row_count = statistics.row_count();
+
+        Ok(Some(Statistics::from_row_count(row_count)))
+    }
+
     fn build_set_operator(
         &self,
         _set_op: SetOperator,
@@ -183,9 +197,17 @@ where
             LogicalExpr::Select(LogicalSelect { input, filter, .. }) => {
                 self.build_select(input, filter.as_ref(), metadata)
             }
-            LogicalExpr::Aggregate(LogicalAggregate { input, group_exprs, .. }) => {
-                self.build_aggregate(input, group_exprs, &[])
-            }
+            LogicalExpr::Aggregate(LogicalAggregate {
+                input,
+                group_exprs,
+                columns,
+                ..
+            }) => self.build_aggregate(input, group_exprs, columns),
+            LogicalExpr::WindowAggregate(LogicalWindowAggregate {
+                input,
+                window_expr,
+                columns,
+            }) => self.build_window_aggregate(input, window_expr, columns),
             LogicalExpr::Join(LogicalJoin {
                 join_type,
                 left,

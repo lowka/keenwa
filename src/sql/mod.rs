@@ -12,7 +12,7 @@ use crate::operators::builder::{
 use crate::operators::properties::LogicalPropertiesBuilder;
 use crate::operators::relational::join::JoinType;
 use crate::operators::relational::RelNode;
-use crate::operators::scalar::aggregates::AggregateFunction;
+use crate::operators::scalar::aggregates::WindowOrAggregateFunction;
 use crate::operators::scalar::expr::{BinaryOp, ExprVisitor};
 use crate::operators::scalar::funcs::ScalarFunction;
 use crate::operators::scalar::value::{parse_date, parse_time, parse_timestamp, Interval, ScalarValue};
@@ -23,7 +23,7 @@ use itertools::Itertools;
 use sqlparser::ast::{
     BinaryOperator, DataType as SqlDataType, DateTimeField, Expr, Function, FunctionArg, FunctionArgExpr, Ident, Join,
     JoinConstraint, JoinOperator, ObjectName, OrderByExpr, Query, Select, SelectItem, SetExpr, SetOperator, Statement,
-    TableAlias as SqlTableAlias, TableFactor, TableWithJoins, UnaryOperator, Value, Values,
+    TableAlias as SqlTableAlias, TableFactor, TableWithJoins, UnaryOperator, Value, Values, WindowSpec,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::{Parser, ParserError};
@@ -229,25 +229,35 @@ fn build_select(builder: OperatorBuilder, select: Select) -> Result<OperatorBuil
             }
             SelectItem::Wildcard => ScalarExpr::Wildcard(None),
         };
+        #[derive(Default)]
         struct IsAggregate {
+            in_window_function: bool,
             is_aggr: bool,
         }
         impl ExprVisitor<RelNode> for IsAggregate {
             type Error = Infallible;
 
-            fn pre_visit(&mut self, _expr: &ScalarExpr) -> Result<bool, Self::Error> {
+            fn pre_visit(&mut self, expr: &ScalarExpr) -> Result<bool, Self::Error> {
+                if let ScalarExpr::WindowAggregate { .. } = expr {
+                    self.in_window_function = true;
+                }
+
                 Ok(!self.is_aggr)
             }
 
             fn post_visit(&mut self, expr: &ScalarExpr) -> Result<(), Self::Error> {
-                if let ScalarExpr::Aggregate { .. } = expr {
-                    self.is_aggr = true;
+                match expr {
+                    ScalarExpr::WindowAggregate { .. } => {
+                        self.in_window_function = false;
+                    }
+                    ScalarExpr::Aggregate { .. } if !self.in_window_function => self.is_aggr = true,
+                    _ => {}
                 }
                 Ok(())
             }
         }
         if !is_aggregate {
-            let mut visitor = IsAggregate { is_aggr: false };
+            let mut visitor = IsAggregate::default();
             // IsAggregate never returns an error.
             expr.accept(&mut visitor).unwrap();
             if visitor.is_aggr {
@@ -880,10 +890,13 @@ fn build_interval_literal(
 }
 
 fn build_function_expr(func: Function, builder: OperatorBuilder) -> Result<ScalarExpr, OptimizerError> {
-    not_implemented!(func.over.is_some(), "FUNCTION: window specification");
-
     let name = func.name.to_string().to_lowercase();
     let distinct = func.distinct;
+    let window_spec = if let Some(spec) = func.over {
+        Some(build_window_spec(builder.clone(), spec)?)
+    } else {
+        None
+    };
 
     let mut args = vec![];
     for arg in func.args {
@@ -904,30 +917,76 @@ fn build_function_expr(func: Function, builder: OperatorBuilder) -> Result<Scala
         }
     }
 
-    let aggr_func = AggregateFunction::try_from(name.as_str());
-    if distinct && aggr_func.is_err() {
-        let message = format!("FUNCTION: non-aggregate function {} with DISTINCT option set", name);
-        return Err(OptimizerError::Argument(message));
-    }
-
-    match aggr_func {
-        Ok(func) => Ok(ScalarExpr::Aggregate {
-            func,
-            distinct,
-            args,
-            filter: None,
-        }),
-        // DISTINCT ON (expr) workaround:
-        // Convert function ON (expr1, expr2, ..) into its first argument.
-        Err(_) if name.eq_ignore_ascii_case("ON") => Ok(args.swap_remove(0)),
-        Err(_) => match ScalarFunction::try_from(name.as_str()) {
-            Ok(func) => Ok(ScalarExpr::ScalarFunction { func, args }),
-            Err(_) => {
-                let msg = format!("FUNCTION: non aggregate function: {}", name);
-                not_implemented!(msg)
+    // DISTINCT ON (expr) workaround:
+    // Convert function ON (expr1) into its first argument.
+    // FIXME: Support multiple arguments in DISTINCT ON operator
+    if name.eq_ignore_ascii_case("ON") && args.len() == 1 {
+        Ok(args.swap_remove(0))
+    } else {
+        let func = WindowOrAggregateFunction::try_from(name.as_str());
+        match func {
+            Ok(WindowOrAggregateFunction::Window(_)) if distinct => {
+                let message = format!("FUNCTION: window function {} with DISTINCT option set", name);
+                return Err(OptimizerError::Argument(message));
             }
-        },
+            Err(_) if distinct => {
+                let message = format!("FUNCTION: non-aggregate function {} with DISTINCT option set", name);
+                return Err(OptimizerError::Argument(message));
+            }
+            _ => {}
+        }
+
+        match (func, window_spec) {
+            (Ok(func), Some(spec)) => {
+                let FunctionExprWindowSpec { partition_by, order_by } = spec;
+                Ok(ScalarExpr::WindowAggregate {
+                    func,
+                    args,
+                    partition_by,
+                    order_by,
+                })
+            }
+            (Ok(WindowOrAggregateFunction::Aggregate(func)), None) => Ok(ScalarExpr::Aggregate {
+                func,
+                distinct,
+                args,
+                filter: None,
+            }),
+            (Ok(WindowOrAggregateFunction::Window(func)), None) => {
+                let msg = format!("WINDOW FUNCTION: no window specification for function: {}", func);
+                not_supported!(msg)
+            }
+            _ => {
+                if let Ok(func) = ScalarFunction::try_from(name.as_str()) {
+                    Ok(ScalarExpr::ScalarFunction { func, args })
+                } else {
+                    let msg = format!("FUNCTION: non aggregate function: {}", name);
+                    not_implemented!(msg)
+                }
+            }
+        }
     }
+}
+
+#[derive(Debug)]
+struct FunctionExprWindowSpec {
+    partition_by: Vec<ScalarExpr>,
+    order_by: Vec<ScalarExpr>,
+}
+
+fn build_window_spec(builder: OperatorBuilder, window: WindowSpec) -> Result<FunctionExprWindowSpec, OptimizerError> {
+    not_implemented!(!window.order_by.is_empty(), "WINDOW SPEC: order by ");
+    not_implemented!(window.window_frame.is_some(), "WINDOW SPEC: window frame");
+
+    let partition_by: Vec<Expr> = window.partition_by;
+    let _order_by: Vec<OrderByExpr> = window.order_by;
+    let partition_by: Result<Vec<ScalarExpr>, OptimizerError> =
+        partition_by.into_iter().map(|expr| build_scalar_expr(expr, builder.clone())).collect();
+
+    Ok(FunctionExprWindowSpec {
+        partition_by: partition_by?,
+        order_by: vec![],
+    })
 }
 
 fn convert_data_type(input: SqlDataType) -> Result<DataType, OptimizerError> {
@@ -1068,6 +1127,12 @@ catalog:
     #[test]
     fn test_aggregates() {
         let text = include_str!("aggregate_tests.yaml");
+        run_test_cases(text);
+    }
+
+    #[test]
+    fn test_window_aggregates() {
+        let text = include_str!("window_aggregate_tests.yaml");
         run_test_cases(text);
     }
 
