@@ -93,7 +93,7 @@ pub fn expr_retains_property(expr: &PhysicalExpr, required: &RequiredProperties)
             Some(ordering),
         ) => join_provides_ordering(left, right, condition, Some(ordering)),
         (PhysicalExpr::IndexScan(IndexScan { columns, .. }), Some(ordering)) => {
-            let idx_ordering = OrderingChoice::new(columns.clone());
+            let idx_ordering = OrderingChoice::from_columns(columns.clone());
             ordering_is_preserved(&idx_ordering, Some(ordering))
         }
         (
@@ -119,7 +119,7 @@ pub fn expr_provides_property(expr: &PhysicalExpr, required: &RequiredProperties
             Some(ordering),
         ) => join_provides_ordering(left, right, condition, Some(ordering)),
         (PhysicalExpr::IndexScan(IndexScan { columns, .. }), Some(ordering)) => {
-            let idx_ordering = OrderingChoice::new(columns.clone());
+            let idx_ordering = OrderingChoice::from_columns(columns.clone());
             ordering_is_preserved(&idx_ordering, Some(ordering))
         }
         (
@@ -144,13 +144,13 @@ fn join_provides_ordering(
 
     if let Some((left, right)) = get_join_columns_pair(left, right, condition) {
         let left_side_ordered = if !left.is_empty() {
-            let left_ordering = OrderingChoice::new(left);
+            let left_ordering = OrderingChoice::from_columns(left);
             ordering_is_preserved(&left_ordering, ordering)
         } else {
             false
         };
         let right_side_ordered = if !right.is_empty() {
-            let right_ordering = OrderingChoice::new(right);
+            let right_ordering = OrderingChoice::from_columns(right);
             ordering_is_preserved(&right_ordering, ordering)
         } else {
             false

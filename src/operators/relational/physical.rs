@@ -451,8 +451,8 @@ impl MergeSortJoin {
     fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         match get_join_columns_pair(&self.left, &self.right, &self.condition) {
             Some((left, right)) if !left.is_empty() && !right.is_empty() => {
-                let left_ordering = RequiredProperties::new_with_ordering(OrderingChoice::new(left));
-                let right_ordering = RequiredProperties::new_with_ordering(OrderingChoice::new(right));
+                let left_ordering = RequiredProperties::new_with_ordering(OrderingChoice::from_columns(left));
+                let right_ordering = RequiredProperties::new_with_ordering(OrderingChoice::from_columns(right));
 
                 Some(vec![Some(left_ordering), Some(right_ordering)])
             }
@@ -760,7 +760,7 @@ impl Unique {
             .iter()
             .map(|input| {
                 let columns = input.props().logical().output_columns().to_vec();
-                Some(RequiredProperties::new_with_ordering(OrderingChoice::new(columns)))
+                Some(RequiredProperties::new_with_ordering(OrderingChoice::from_columns(columns)))
             })
             .collect();
         if self.on_expr.is_some() {

@@ -32,7 +32,7 @@ use crate::operators::scalar::value::ScalarValue;
 use crate::operators::scalar::{get_subquery, ScalarExpr, ScalarNode};
 use crate::operators::{ExprMemo, Operator, OperatorExpr, OperatorMetadata, OuterScope, Properties, ScalarProperties};
 use crate::properties::physical::{PhysicalProperties, RequiredProperties};
-use crate::properties::OrderingChoice;
+use crate::properties::{OrderingChoice, OrderingColumn};
 
 mod aggregate;
 mod projection;
@@ -504,7 +504,7 @@ impl OperatorBuilder {
                             self.metadata.add_column(column_meta)
                         }
                     };
-                    ordering_columns.push(column_id);
+                    ordering_columns.push(OrderingColumn::ord(column_id, _descending));
                 }
 
                 let ordering = OrderingChoice::new(ordering_columns);
@@ -1554,7 +1554,7 @@ Memo:
 
         tester.expect_expr(
             r#"
-LogicalGet A cols=[1] ordering=[1]
+LogicalGet A cols=[1] ordering=[+1]
   output cols: [1]
 Metadata:
   col:1 A.a1 Int32
@@ -1578,7 +1578,7 @@ Memo:
 
         tester.expect_expr(
             r#"
-LogicalProjection cols=[3, 2] ordering=[3] exprs: [col:1 AS x, col:2]
+LogicalProjection cols=[3, 2] ordering=[+3] exprs: [col:1 AS x, col:2]
   input: LogicalGet A cols=[1, 2]
   output cols: [3, 2]
 Metadata:
@@ -1607,7 +1607,7 @@ Memo:
 
         tester.expect_expr(
             r#"
-LogicalGet A cols=[1, 2, 3] ordering=[2]
+LogicalGet A cols=[1, 2, 3] ordering=[+2]
   output cols: [1, 2, 3]
 Metadata:
   col:1 A.a2 Int32

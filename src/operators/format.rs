@@ -628,7 +628,7 @@ LogicalAggregate cols=[3, 4]
                 statistics: None,
             },
             physical: PhysicalProperties {
-                required: Some(RequiredProperties::new_with_ordering(OrderingChoice::new(vec![col1]))),
+                required: Some(RequiredProperties::new_with_ordering(OrderingChoice::from_columns(vec![col1]))),
                 presentation: None,
             },
         });
@@ -638,7 +638,7 @@ LogicalAggregate cols=[3, 4]
 
         expect_formatted_tree(
             r#"
-LogicalProjection cols=[1, 2] outer_cols=[1] ordering=[1] exprs: [col:1, col:2]
+LogicalProjection cols=[1, 2] outer_cols=[1] ordering=[+1] exprs: [col:1, col:2]
   input: LogicalEmpty return_one_row=true
   output cols: [1, 2]
 "#,

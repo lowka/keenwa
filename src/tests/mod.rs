@@ -132,7 +132,7 @@ fn test_get_ordered_top_level_enforcer() {
 
     tester.optimize(
         r#"
-02 Sort [02] ord=[2]
+02 Sort [02] ord=[+2]
 02 Select [00 01]
 01 Expr col:1 > 10
 00 Scan A cols=[1, 2]
@@ -159,9 +159,9 @@ fn test_get_ordered_no_top_level_enforcer() {
     tester.explore_with_enforcer(false);
     tester.optimize(
         r#"
-02 Select [ord:[2]=00 ord:[2]=01]
+02 Select [ord:[+2]=00 ord:[+2]=01]
 01 Expr col:1 > 10
-00 Sort [00] ord=[2]
+00 Sort [00] ord=[+2]
 00 Scan A cols=[1, 2]
 "#,
     );
@@ -183,7 +183,7 @@ fn test_get_ordered() {
     tester.set_table_row_count("A", 100);
     tester.optimize(
         r#"
-00 Sort [00] ord=[1]
+00 Sort [00] ord=[+1]
 00 Scan A cols=[1, 2]
 "#,
     );
@@ -244,7 +244,7 @@ fn test_join_commutativity_ordered() {
 
     tester.optimize(
         r#"
-04 Sort [04] ord=[1]
+04 Sort [04] ord=[+1]
 04 Select [02 03]
 03 Expr col:1 > 10
 02 HashJoin [00 01] type=Inner using=[(1, 2)]
@@ -308,10 +308,10 @@ fn test_merge_join_requires_sorted_inputs() {
 
     tester.optimize(
         r#"
-02 MergeSortJoin [ord:[1]=00 ord:[4]=01] type=Inner using=[(1, 4)]
-01 Sort [01] ord=[4]
+02 MergeSortJoin [ord:[+1]=00 ord:[+4]=01] type=Inner using=[(1, 4)]
+01 Sort [01] ord=[+4]
 01 Scan B cols=[3, 4]
-00 Sort [00] ord=[1]
+00 Sort [00] ord=[+1]
 00 Scan A cols=[1, 2]
 "#,
     );
@@ -338,10 +338,10 @@ fn test_merge_join_satisfies_ordering_requirements() {
 
     tester.optimize(
         r#"
-02 MergeSortJoin [ord:[1]=00 ord:[4]=01] type=Inner using=[(1, 4)]
-01 Sort [01] ord=[4]
+02 MergeSortJoin [ord:[+1]=00 ord:[+4]=01] type=Inner using=[(1, 4)]
+01 Sort [01] ord=[+4]
 01 Scan B cols=[3, 4]
-00 Sort [00] ord=[1]
+00 Sort [00] ord=[+1]
 00 Scan A cols=[1, 2]
 "#,
     );
@@ -368,11 +368,11 @@ fn test_merge_join_does_no_satisfy_ordering_requirements() {
 
     tester.optimize(
         r#"
-02 Sort [02] ord=[3]
-02 MergeSortJoin [ord:[1]=00 ord:[4]=01] type=Inner using=[(1, 4)]
-01 Sort [01] ord=[4]
+02 Sort [02] ord=[+3]
+02 MergeSortJoin [ord:[+1]=00 ord:[+4]=01] type=Inner using=[(1, 4)]
+01 Sort [01] ord=[+4]
 01 Scan B cols=[3, 4]
-00 Sort [00] ord=[1]
+00 Sort [00] ord=[+1]
 00 Scan A cols=[1, 2]
 "#,
     );
@@ -399,7 +399,7 @@ fn test_self_joins() {
 
     tester.optimize(
         r#"
-01 Sort [01] ord=[1]
+01 Sort [01] ord=[+1]
 01 HashJoin [00 00] type=Inner using=[(1, 1)]
 00 Scan A cols=[1, 2]
 00 Scan A cols=[1, 2]
@@ -410,10 +410,10 @@ fn test_self_joins() {
 
     tester.optimize(
         r#"
-01 MergeSortJoin [ord:[1]=00 ord:[1]=00] type=Inner using=[(1, 1)]
-00 Sort [00] ord=[1]
+01 MergeSortJoin [ord:[+1]=00 ord:[+1]=00] type=Inner using=[(1, 1)]
+00 Sort [00] ord=[+1]
 00 Scan A cols=[1, 2]
-00 Sort [00] ord=[1]
+00 Sort [00] ord=[+1]
 00 Scan A cols=[1, 2]
 "#,
     );
@@ -446,13 +446,13 @@ fn test_self_joins_inner_sort_should_be_ignored() {
 
     tester.optimize(
         r#"
-02 MergeSortJoin [ord:[1]=01 ord:[1]=00] type=Inner using=[(1, 1)]
-00 Sort [00] ord=[1]
+02 MergeSortJoin [ord:[+1]=01 ord:[+1]=00] type=Inner using=[(1, 1)]
+00 Sort [00] ord=[+1]
 00 Scan A cols=[1, 2]
-01 MergeSortJoin [ord:[1]=00 ord:[1]=00] type=Inner using=[(1, 1)]
-00 Sort [00] ord=[1]
+01 MergeSortJoin [ord:[+1]=00 ord:[+1]=00] type=Inner using=[(1, 1)]
+00 Sort [00] ord=[+1]
 00 Scan A cols=[1, 2]
-00 Sort [00] ord=[1]
+00 Sort [00] ord=[+1]
 00 Scan A cols=[1, 2]
 "#,
     );
@@ -464,7 +464,7 @@ fn test_self_joins_inner_sort_should_be_ignored() {
     // Ignore ordering requirement from inner node because parent node also requires ordering
     tester.optimize(
         r#"
-02 Sort [02] ord=[1]
+02 Sort [02] ord=[+1]
 02 HashJoin [01 00] type=Inner using=[(1, 1)]
 00 Scan A cols=[1, 2]
 01 HashJoin [00 00] type=Inner using=[(1, 1)]
@@ -496,9 +496,9 @@ fn test_inner_sort_with_enforcer() {
 
     tester.optimize(
         r#"
-03 Select [ord:[1]=01 02]
+03 Select [ord:[+1]=01 02]
 02 Expr col:1 > 10
-01 Sort [01] ord=[1]
+01 Sort [01] ord=[+1]
 01 HashJoin [00 00] type=Inner using=[(1, 1)]
 00 Scan A cols=[1, 2]
 00 Scan A cols=[1, 2]
@@ -529,12 +529,12 @@ fn test_inner_sort_satisfied_by_ordering_providing_operator() {
 
     tester.optimize(
         r#"
-03 Select [ord:[1]=01 02]
+03 Select [ord:[+1]=01 02]
 02 Expr col:1 > 10
-01 MergeSortJoin [ord:[1]=00 ord:[1]=00] type=Inner using=[(1, 1)]
-00 Sort [00] ord=[1]
+01 MergeSortJoin [ord:[+1]=00 ord:[+1]=00] type=Inner using=[(1, 1)]
+00 Sort [00] ord=[+1]
 00 Scan A cols=[1, 2]
-00 Sort [00] ord=[1]
+00 Sort [00] ord=[+1]
 00 Scan A cols=[1, 2]
 "#,
     );
@@ -683,10 +683,10 @@ fn test_union() {
 
     tester.optimize(
         r#"query: union all=false -> unique
-02 Unique [ord:[1, 2]=00 ord:[3, 4]=01] cols=[5, 6]
-01 Sort [01] ord=[3, 4]
+02 Unique [ord:[+1, +2]=00 ord:[+3, +4]=01] cols=[5, 6]
+01 Sort [01] ord=[+3, +4]
 01 Scan B cols=[3, 4]
-00 Sort [00] ord=[1, 2]
+00 Sort [00] ord=[+1, +2]
 00 Scan A cols=[1, 2]
 "#,
     );
@@ -779,9 +779,9 @@ fn test_distinct_on_expr_as_unique() {
 
     tester.optimize(
         r#"
-02 Unique [ord:[1, 2]=00 01] cols=[1, 2]
+02 Unique [ord:[+1, +2]=00 01] cols=[1, 2]
 01 Expr col:1
-00 Sort [00] ord=[1, 2]
+00 Sort [00] ord=[+1, +2]
 00 Scan A cols=[1, 2]
 "#,
     );
