@@ -1,4 +1,4 @@
-use crate::catalog::{Catalog, IndexBuilder, DEFAULT_SCHEMA};
+use crate::catalog::{Catalog, IndexBuilder, OrderingBuilder, DEFAULT_SCHEMA};
 use crate::operators::builder::{OrderingOption, OrderingOptions};
 use crate::operators::relational::join::JoinType;
 use crate::operators::relational::RelNode;
@@ -122,7 +122,7 @@ fn test_get_ordered_top_level_enforcer() {
         let from_a = builder.get("A", vec!["a1", "a2"])?;
         let filter = col("a1").gt(scalar(10));
         let select = from_a.select(Some(filter))?;
-        let select = select.order_by(OrderingOption::by(("a2", false)))?;
+        let select = select.order_by(OrderingOption::by("a2", false))?;
 
         select.build()
     });
@@ -148,7 +148,7 @@ fn test_get_ordered_no_top_level_enforcer() {
         let from_a = builder.get("A", vec!["a1", "a2"])?;
         let filter = col("a1").gt(scalar(10));
         let select = from_a.select(Some(filter))?;
-        let select = select.order_by(OrderingOption::by(("a2", false)))?;
+        let select = select.order_by(OrderingOption::by("a2", false))?;
 
         select.build()
     });
@@ -173,7 +173,7 @@ fn test_get_ordered() {
 
     tester.set_operator(|builder| {
         let from_a = builder.get("A", vec!["a1", "a2"])?;
-        let ordered = from_a.order_by(OrderingOption::by(("a1", false)))?;
+        let ordered = from_a.order_by(OrderingOption::by("a1", false))?;
 
         ordered.build()
     });
@@ -231,7 +231,7 @@ fn test_join_commutativity_ordered() {
         let join = left.join_using(right, JoinType::Inner, vec![("a1", "b1")])?;
         let filter = col("a1").gt(scalar(10));
         let select = join.select(Some(filter))?;
-        let ordered = select.order_by(OrderingOption::by(("a1", false)))?;
+        let ordered = select.order_by(OrderingOption::by("a1", false))?;
 
         ordered.build()
     });
@@ -260,7 +260,7 @@ fn test_prefer_already_sorted_data() {
 
     tester.set_operator(|builder| {
         let from_a = builder.get("A", vec!["a1", "a2"])?;
-        let ordering = vec![OrderingOption::by(("a1", false)), OrderingOption::by(("a2", false))];
+        let ordering = vec![OrderingOption::by("a1", false), OrderingOption::by("a2", false)];
         let ordered = from_a.order_by(OrderingOptions::new(ordering))?;
 
         ordered.build()
@@ -269,11 +269,12 @@ fn test_prefer_already_sorted_data() {
     tester.add_rules(|catalog| vec![Box::new(IndexOnlyScanRule::new(catalog))]);
     tester.update_catalog(|catalog| {
         let table = catalog.get_table("A").expect("Table does not exist");
+        let index_ordering = OrderingBuilder::new(table.clone()).add_asc("a1").add_asc("a2").build();
 
-        let index = IndexBuilder::new("my_index")
-            .table("A")
-            .add_column(table.get_column("a1").unwrap())
-            .add_column(table.get_column("a2").unwrap())
+        let index = IndexBuilder::new(table, "my_index")
+            .add_column("a1")
+            .add_column("a2")
+            .ordering(index_ordering)
             .build();
 
         catalog.add_index(DEFAULT_SCHEMA, index);
@@ -326,7 +327,7 @@ fn test_merge_join_satisfies_ordering_requirements() {
         let right = builder.get("B", vec!["b1", "b2"])?;
 
         let join = left.join_using(right, JoinType::Inner, vec![("a1", "b2")])?;
-        let ordered = join.order_by(OrderingOption::by(("a1", false)))?;
+        let ordered = join.order_by(OrderingOption::by("a1", false))?;
 
         ordered.build()
     });
@@ -356,7 +357,7 @@ fn test_merge_join_does_no_satisfy_ordering_requirements() {
         let right = builder.get("B", vec!["b1", "b2"])?;
 
         let join = left.join_using(right, JoinType::Inner, vec![("a1", "b2")])?;
-        let ordered = join.order_by(OrderingOption::by(("b1", false)))?;
+        let ordered = join.order_by(OrderingOption::by("b1", false))?;
 
         ordered.build()
     });
@@ -387,7 +388,7 @@ fn test_self_joins() {
         let right = builder.get("A", vec!["a1", "a2"])?;
 
         let join = left.join_using(right, JoinType::Inner, vec![("a1", "a1")])?;
-        let ordered = join.order_by(OrderingOption::by(("a1", false)))?;
+        let ordered = join.order_by(OrderingOption::by("a1", false))?;
 
         ordered.build()
     });
@@ -428,11 +429,11 @@ fn test_self_joins_inner_sort_should_be_ignored() {
         let right = builder.clone().get("A", vec!["a1", "a2"])?;
 
         let join = left.join_using(right, JoinType::Inner, vec![("a1", "a1")])?;
-        let inner = join.order_by(OrderingOption::by(("a1", false)))?;
+        let inner = join.order_by(OrderingOption::by("a1", false))?;
 
         let right = builder.get("A", vec!["a1", "a2"])?;
         let join = inner.join_using(right, JoinType::Inner, vec![("a1", "a1")])?;
-        let ordered = join.order_by(OrderingOption::by(("a1", false)))?;
+        let ordered = join.order_by(OrderingOption::by("a1", false))?;
 
         ordered.build()
     });
@@ -482,7 +483,7 @@ fn test_inner_sort_with_enforcer() {
         let left = builder.clone().get("A", vec!["a1", "a2"])?;
         let right = builder.get("A", vec!["a1", "a2"])?;
         let join = left.join_using(right, JoinType::Inner, vec![("a1", "a1")])?;
-        let ordered = join.order_by(OrderingOption::by(("a1", false)))?;
+        let ordered = join.order_by(OrderingOption::by("a1", false))?;
         let filter = col("a1").gt(scalar(10));
         let select = ordered.select(Some(filter))?;
 
@@ -514,7 +515,7 @@ fn test_inner_sort_satisfied_by_ordering_providing_operator() {
         let left = builder.clone().get("A", vec!["a1", "a2"])?;
         let right = builder.get("A", vec!["a1", "a2"])?;
         let join = left.join_using(right, JoinType::Inner, vec![("a1", "a1")])?;
-        let ordered = join.order_by(OrderingOption::by(("a1", false)))?;
+        let ordered = join.order_by(OrderingOption::by("a1", false))?;
         let filter = col("a1").gt(scalar(10));
         let select = ordered.select(Some(filter))?;
 

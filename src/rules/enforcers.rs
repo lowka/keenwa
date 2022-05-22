@@ -92,10 +92,16 @@ pub fn expr_retains_property(expr: &PhysicalExpr, required: &RequiredProperties)
             }),
             Some(ordering),
         ) => join_provides_ordering(left, right, condition, Some(ordering)),
-        (PhysicalExpr::IndexScan(IndexScan { columns, .. }), Some(ordering)) => {
-            let idx_ordering = OrderingChoice::from_columns(columns.clone());
-            ordering_is_preserved(&idx_ordering, Some(ordering))
-        }
+        (
+            PhysicalExpr::IndexScan(IndexScan {
+                ordering: column_ordering,
+                ..
+            }),
+            Some(ordering),
+        ) => column_ordering
+            .as_ref()
+            .map(|ord| ordering_is_preserved(ord, Some(ordering)))
+            .unwrap_or_default(),
         (
             PhysicalExpr::Sort(Sort {
                 ordering: sort_ordering,
@@ -118,10 +124,16 @@ pub fn expr_provides_property(expr: &PhysicalExpr, required: &RequiredProperties
             }),
             Some(ordering),
         ) => join_provides_ordering(left, right, condition, Some(ordering)),
-        (PhysicalExpr::IndexScan(IndexScan { columns, .. }), Some(ordering)) => {
-            let idx_ordering = OrderingChoice::from_columns(columns.clone());
-            ordering_is_preserved(&idx_ordering, Some(ordering))
-        }
+        (
+            PhysicalExpr::IndexScan(IndexScan {
+                ordering: column_ordering,
+                ..
+            }),
+            Some(ordering),
+        ) => column_ordering
+            .as_ref()
+            .map(|ord| ordering_is_preserved(ord, Some(ordering)))
+            .unwrap_or_default(),
         (
             PhysicalExpr::Sort(Sort {
                 ordering: sort_ordering,
@@ -162,14 +174,9 @@ fn join_provides_ordering(
     }
 }
 
-fn ordering_is_preserved(ord: &OrderingChoice, other: Option<&OrderingChoice>) -> bool {
-    match other {
-        Some(other) => {
-            let columns = ord.columns();
-            let other_columns = other.columns();
-            let ord_match_num = columns.iter().zip(other_columns).filter(|(s, r)| s == r).count();
-            columns.len() == ord_match_num
-        }
+fn ordering_is_preserved(ord: &OrderingChoice, required: Option<&OrderingChoice>) -> bool {
+    match required {
+        Some(required) => required.prefix_of(ord),
         None => false,
     }
 }

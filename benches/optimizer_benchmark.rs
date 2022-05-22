@@ -106,7 +106,7 @@ fn memo_bench(c: &mut Criterion) {
         stats.set_selectivity("col:a1 > 100", 0.1);
 
         let select = join.select(Some(filter))?;
-        let order_by = select.order_by(OrderingOption::by(("a1", false)))?;
+        let order_by = select.order_by(OrderingOption::by("a1", false))?;
 
         order_by.build()
     }

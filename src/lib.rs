@@ -1,3 +1,5 @@
+extern crate core;
+
 pub mod catalog;
 pub mod cost;
 pub mod datatypes;

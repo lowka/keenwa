@@ -32,18 +32,26 @@ impl OrderingChoice {
     /// Creates an ordering from the given columns.
     /// Returns an ordering where all columns are ordered in ascending order.
     pub fn from_columns(columns: Vec<ColumnId>) -> Self {
-        OrderingChoice::new(columns.into_iter().map(|id| OrderingColumn::asc(id)).collect())
+        OrderingChoice::new(columns.into_iter().map(OrderingColumn::asc).collect())
     }
 
     /// A reference to the ordering columns.
     pub fn columns(&self) -> &[OrderingColumn] {
         &self.columns
     }
+
+    /// Returns true if the this ordering is the prefix of the given ordering.
+    pub fn prefix_of(&self, other: &OrderingChoice) -> bool {
+        if self.columns.len() > other.columns.len() {
+            return false;
+        }
+        self.columns.iter().zip(other.columns.iter()).all(|(l, r)| l == r)
+    }
 }
 
 impl Display for OrderingChoice {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "[{}]", self.columns().iter().join(", "))
+        write!(f, "[{}]", self.columns.iter().join(", "))
     }
 }
 
@@ -112,7 +120,7 @@ impl Display for OrderingColumn {
 mod test {
     use crate::meta::testing::TestMetadata;
     use crate::meta::ColumnId;
-    use crate::properties::OrderingColumn;
+    use crate::properties::{OrderingChoice, OrderingColumn};
 
     fn new_column() -> ColumnId {
         let mut metadata = TestMetadata::with_tables(vec!["A"]);
@@ -171,8 +179,60 @@ mod test {
         assert_eq!(col1_desc.to_asc(), col1_asc, "col:1 to_asc")
     }
 
+    #[test]
+    fn prefix_of() {
+        let mut metadata = TestMetadata::with_tables(vec!["A"]);
+        let _ = metadata.column("A").named("a1").build();
+        let _ = metadata.column("A").named("a2").build();
+        let _ = metadata.column("A").named("a3").build();
+
+        let left = build_ordering(&metadata, "A", &["a1:asc"]);
+        let right = build_ordering(&metadata, "A", &["a1:asc", "a2:asc"]);
+        assert!(left.prefix_of(&right), "left: {} right {}", left, right);
+
+        let left = build_ordering(&metadata, "A", &["a1:asc", "a2:asc"]);
+        let right = build_ordering(&metadata, "A", &["a1:asc", "a2:asc"]);
+        assert!(left.prefix_of(&right), "left: {} right {}", left, right);
+
+        let left = build_ordering(&metadata, "A", &["a1:desc", "a2:asc"]);
+        let right = build_ordering(&metadata, "A", &["a1:desc", "a2:asc"]);
+        assert!(left.prefix_of(&right), "left: {} right {}", left, right);
+    }
+
+    #[test]
+    fn not_prefix_of() {
+        let mut metadata = TestMetadata::with_tables(vec!["A"]);
+        let _ = metadata.column("A").named("a1").build();
+        let _ = metadata.column("A").named("a2").build();
+        let _ = metadata.column("A").named("a3").build();
+
+        let left = build_ordering(&metadata, "A", &["a1:asc", "a2:asc", "a3:asc"]);
+        let right = build_ordering(&metadata, "A", &["a1:asc", "a2:asc"]);
+        assert!(!left.prefix_of(&right), "NOT prefix left: {} right {}", left, right);
+
+        let left = build_ordering(&metadata, "A", &["a1:desc"]);
+        let right = build_ordering(&metadata, "A", &["a1:asc", "a2:asc"]);
+        assert!(!left.prefix_of(&right), "NOT prefix left: {} right {}", left, right);
+    }
+
     fn expect_format(ord: &OrderingColumn, expected: &str, name: &str) {
         let actual = format!("{}", ord);
         assert_eq!(actual, expected, "{}", name);
+    }
+
+    fn build_ordering(metadata: &TestMetadata, table: &str, columns: &[&str]) -> OrderingChoice {
+        let columns = columns
+            .iter()
+            .map(|name| {
+                let (name, ord) = name.split_once(":").unwrap();
+                let id = metadata.find_column(table, name);
+                match ord {
+                    "asc" => OrderingColumn::asc(id),
+                    "desc" => OrderingColumn::desc(id),
+                    _ => panic!("Unexpected column ordering: {}", name),
+                }
+            })
+            .collect();
+        OrderingChoice::new(columns)
     }
 }

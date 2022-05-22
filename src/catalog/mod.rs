@@ -204,32 +204,25 @@ impl Index {
 #[derive(Debug, Clone)]
 pub struct IndexBuilder {
     name: String,
-    table: Option<String>,
-    columns: Vec<ColumnRef>,
+    table: TableRef,
+    columns: Vec<String>,
     ordering: Option<Ordering>,
 }
 
 impl IndexBuilder {
     /// Creates a builder for an index with the given name.
-    pub fn new(name: &str) -> Self {
+    pub fn new(table: TableRef, name: &str) -> Self {
         IndexBuilder {
             name: name.to_string(),
-            table: None,
+            table,
             columns: Vec::new(),
             ordering: None,
         }
     }
 
-    /// Specifies table this index belongs to.
-    pub fn table(mut self, table: &str) -> IndexBuilder {
-        self.table = Some(table.to_string());
-        self
-    }
-
     /// Adds a column covered by this index.
-    pub fn add_column(mut self, column: ColumnRef) -> IndexBuilder {
-        assert!(column.table.is_some(), "Index can not contain columns that do not belong to a table: {:?}", column);
-        self.columns.push(column);
+    pub fn add_column(mut self, column: &str) -> IndexBuilder {
+        self.columns.push(column.into());
         self
     }
 
@@ -242,13 +235,13 @@ impl IndexBuilder {
     /// Creates an instance of an [index] with previously specified properties.
     ///
     /// [index]: crate::catalog::Index
-    pub fn build(self) -> Index {
+    pub fn build(mut self) -> Index {
         assert!(!self.columns.is_empty(), "No columns have been specified");
 
         if let Some(ordering) = self.ordering.as_ref() {
             for opt in ordering.options.iter() {
                 assert!(
-                    self.columns.iter().any(|c| c == &opt.column),
+                    self.columns.iter().any(|c| c == &opt.column.name),
                     "ordering option {:?} is not covered by index. Columns: {:?}",
                     opt,
                     self.columns
@@ -256,10 +249,21 @@ impl IndexBuilder {
             }
         }
 
+        let columns = std::mem::take(&mut self.columns);
+
+        let columns = columns
+            .into_iter()
+            .map(|name| {
+                self.table
+                    .get_column(name.as_str())
+                    .unwrap_or_else(|| panic!("Column does not exist. Table: {}, column: {}", &self.table.name, name))
+            })
+            .collect();
+
         Index {
             name: self.name,
-            table: self.table.expect("table is not specified"),
-            columns: self.columns,
+            table: self.table.name.clone(),
+            columns,
             ordering: self.ordering,
         }
     }
@@ -269,6 +273,55 @@ impl IndexBuilder {
 #[derive(Debug, Clone)]
 pub struct Ordering {
     options: Vec<OrderingOption>,
+}
+
+/// A builder to create instances of [Ordering].
+#[derive(Debug, Clone)]
+pub struct OrderingBuilder {
+    table: TableRef,
+    columns: Vec<(String, bool)>,
+}
+
+impl OrderingBuilder {
+    /// Creates a new instance of a builder to create an ordering from the columns of the given table.
+    pub fn new(table: TableRef) -> Self {
+        OrderingBuilder {
+            table,
+            columns: Vec::new(),
+        }
+    }
+
+    /// Add a descending ordering for the given column.
+    pub fn add_desc(self, column: &str) -> Self {
+        self.add(column, true)
+    }
+
+    /// Add an ascending a ordering for the given column.
+    pub fn add_asc(self, column: &str) -> Self {
+        self.add(column, false)
+    }
+
+    /// Add an ordering for the given column.
+    pub fn add(mut self, column: &str, descending: bool) -> Self {
+        self.columns.push((String::from(column), descending));
+        self
+    }
+
+    /// Creates an instance of [Ordering].
+    pub fn build(self) -> Ordering {
+        let mut options = vec![];
+        let table = self.table;
+
+        for (name, descending) in self.columns {
+            let column = table
+                .get_column(name.as_str())
+                .unwrap_or_else(|| panic!("Column does not exist. Table: {}, column: {}", table.name, name));
+
+            options.push(OrderingOption { column, descending })
+        }
+
+        Ordering { options }
+    }
 }
 
 impl Ordering {
@@ -294,12 +347,12 @@ pub struct OrderingOption {
 
 impl OrderingOption {
     /// The column this ordering is applied to.
-    fn column(&self) -> ColumnRef {
+    pub fn column(&self) -> ColumnRef {
         self.column.clone()
     }
 
     /// Whether the values are sorted in descending order or not.
-    fn descending(&self) -> bool {
+    pub fn descending(&self) -> bool {
         self.descending
     }
 }
@@ -307,8 +360,6 @@ impl OrderingOption {
 /// A column of a database table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Column {
-    //FIXME Column names may be optional. For example: SELECT 1 as a, count(1).
-    // The second column in the query above has no name and can not be referenced from the parent scope.
     name: String,
     table: Option<String>,
     data_type: DataType,
