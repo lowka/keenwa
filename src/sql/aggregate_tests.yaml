@@ -6,15 +6,27 @@ ok: |
 
 ---
 query: |
-  SELECT a1, count(a1) FROM a
+  SELECT a1, count(a1) FROM a GROUP BY a1
 ok: |
-  LogicalAggregate cols=[1, 5] aggr_exprs: [col:1, count(col:1)]
+  LogicalAggregate cols=[1, 5]
+    aggr_exprs: [col:1, count(col:1)]
+    group_exprs: [col:1]
     input: LogicalGet a cols=[1, 2, 3, 4]
 ---
 query: |
-  SELECT a1, count(distinct a1) FROM a
+  SELECT 1 + (2 + count(a1) + 10*(4 + sum(a1))) FROM a GROUP BY a1
 ok: |
-  LogicalAggregate cols=[1, 5] aggr_exprs: [col:1, count(distinct col:1)]
+  LogicalAggregate cols=[5]
+    aggr_exprs: [1 + 2 + count(col:1) + 10 * 4 + sum(col:1)]
+    group_exprs: [col:1]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+---
+query: |
+  SELECT a1, count(distinct a1) FROM a GROUP BY a1
+ok: |
+  LogicalAggregate cols=[1, 5]
+    aggr_exprs: [col:1, count(distinct col:1)]
+    group_exprs: [col:1]
     input: LogicalGet a cols=[1, 2, 3, 4]
 ---
 query: |
@@ -24,7 +36,6 @@ ok: |
     aggr_exprs: [count(col:1)]
     group_exprs: [col:1]
     input: LogicalGet a cols=[1, 2, 3, 4]
-
 ---
 query: |
   SELECT a1, sum(a2) FROM a GROUP BY a1
@@ -53,10 +64,14 @@ ok: |
 
 ---
 query: |
+  SELECT sum(a1) + a2 FROM a GROUP BY a1
+error: |
+  Internal error: AGGREGATE column a2 must appear in GROUP BY clause
+---
+query: |
   SELECT a1+a2, sum(a2) FROM a GROUP BY a1
 error: |
   Internal error: AGGREGATE column a2 must appear in GROUP BY clause
-
 ---
 query: |
   SELECT sum(a1) FROM a GROUP BY a1 HAVING count(a1) > 0
