@@ -89,25 +89,31 @@ error: |
 query:
   SELECT a1 FROM a ORDER BY 1
 ok: |
-  LogicalProjection cols=[1] ordering=[1] exprs: [col:1]
+  LogicalProjection cols=[1] ordering=[+1] exprs: [col:1]
     input: LogicalGet a cols=[1, 2, 3, 4]
 ---
 query: |
   SELECT a1 as x FROM a as t ORDER BY a1
 ok: |
-  LogicalProjection cols=[5] ordering=[1] exprs: [col:1 AS x]
+  LogicalProjection cols=[5] ordering=[+1] exprs: [col:1 AS x]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+---
+query: |
+  SELECT a1, a2 FROM a as t ORDER BY a1 ASC, a2 DESC
+ok: |
+  LogicalProjection cols=[1, 2] ordering=[+1, -2] exprs: [col:1, col:2]
     input: LogicalGet a cols=[1, 2, 3, 4]
 ---
 query: |
   SELECT a1 as x FROM a as t ORDER BY x
 ok: |
-  LogicalProjection cols=[5] ordering=[5] exprs: [col:1 AS x]
+  LogicalProjection cols=[5] ordering=[+5] exprs: [col:1 AS x]
     input: LogicalGet a cols=[1, 2, 3, 4]
 ---
 query: |
   SELECT a1 as x FROM a as t ORDER BY t.a1, a1, x
 ok: |
-  LogicalProjection cols=[5] ordering=[1, 1, 5] exprs: [col:1 AS x]
+  LogicalProjection cols=[5] ordering=[+1, +1, +5] exprs: [col:1 AS x]
     input: LogicalGet a cols=[1, 2, 3, 4]
 ---
 query: |
