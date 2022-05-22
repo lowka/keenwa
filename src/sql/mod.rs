@@ -231,28 +231,20 @@ fn build_select(builder: OperatorBuilder, select: Select) -> Result<OperatorBuil
         };
         #[derive(Default)]
         struct IsAggregate {
-            in_window_function: bool,
             is_aggr: bool,
         }
         impl ExprVisitor<RelNode> for IsAggregate {
             type Error = Infallible;
 
             fn pre_visit(&mut self, expr: &ScalarExpr) -> Result<bool, Self::Error> {
-                if let ScalarExpr::WindowAggregate { .. } = expr {
-                    self.in_window_function = true;
+                if matches!(expr, ScalarExpr::Aggregate { .. }) {
+                    self.is_aggr = true;
                 }
 
                 Ok(!self.is_aggr)
             }
 
-            fn post_visit(&mut self, expr: &ScalarExpr) -> Result<(), Self::Error> {
-                match expr {
-                    ScalarExpr::WindowAggregate { .. } => {
-                        self.in_window_function = false;
-                    }
-                    ScalarExpr::Aggregate { .. } if !self.in_window_function => self.is_aggr = true,
-                    _ => {}
-                }
+            fn post_visit(&mut self, _expr: &ScalarExpr) -> Result<(), Self::Error> {
                 Ok(())
             }
         }

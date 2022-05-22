@@ -415,12 +415,18 @@ pub struct TestTable {
 pub struct TestOptions {
     /// Whether decorrelate subqueries or not.
     pub decorrelate_subqueries: Option<bool>,
+    /// Whether include metadata in the expected successful output or not.
+    pub append_metadata: Option<bool>,
+    /// Whether include memo in the the expected successful output or not.
+    pub append_memo: Option<bool>,
 }
 
 impl Default for TestOptions {
     fn default() -> Self {
         TestOptions {
             decorrelate_subqueries: Some(false),
+            append_metadata: Some(false),
+            append_memo: Some(false),
         }
     }
 }
@@ -429,6 +435,8 @@ impl TestOptions {
     fn merge(&self, other: &TestOptions) -> TestOptions {
         TestOptions {
             decorrelate_subqueries: self.decorrelate_subqueries.or(other.decorrelate_subqueries),
+            append_metadata: self.append_metadata.or(other.append_metadata),
+            append_memo: self.append_memo.or(other.append_memo),
         }
     }
 }
@@ -448,6 +456,8 @@ impl TestOptionsParser for DefaultTestOptionsParser {
         let mut values_map = values.0;
         let options = TestOptions {
             decorrelate_subqueries: get_bool(&mut values_map, "decorrelate_subqueries", false)?,
+            append_metadata: get_bool(&mut values_map, "append_metadata", false)?,
+            append_memo: get_bool(&mut values_map, "append_memo", false)?,
         };
         if !values_map.is_empty() {
             Err(format!(

@@ -6,6 +6,14 @@ ok: |
       input: LogicalGet a cols=[1, 2, 3, 4]
       window_expr: Expr row_number() OVER(PARTITION BY col:1)
 ---
+query:
+  SELECT row_number() OVER (PARTITION BY a1) as row_number FROM a
+ok: |
+  LogicalProjection cols=[5] exprs: [row_number() OVER(PARTITION BY col:1) AS row_number]
+    input: LogicalWindowAggregate cols=[5]
+      input: LogicalGet a cols=[1, 2, 3, 4]
+      window_expr: Expr row_number() OVER(PARTITION BY col:1)
+---
 query: |
   SELECT a2, rank() OVER (PARTITION BY a1) FROM a
 ok: |
@@ -33,8 +41,18 @@ ok: |
         input: LogicalWindowAggregate cols=[5, 2]
           input: LogicalGet a cols=[1, 2, 3, 4]
           window_expr: Expr rank() OVER(PARTITION BY col:1, col:2)
-        window_expr: Expr row_number() OVER()
-      window_expr: Expr rank() OVER(PARTITION BY col:1)
+        window_expr: Expr rank() OVER(PARTITION BY col:1)
+      window_expr: Expr row_number() OVER()
+---
+query: |
+  SELECT rank() OVER (), row_number() OVER (PARTITION BY a1), row_number() OVER (PARTITION BY a1) FROM a
+ok: |
+  LogicalProjection cols=[5, 6, 7] exprs: [col:5, col:6, col:7]
+    input: LogicalWindowAggregate cols=[5, 6]
+      input: LogicalWindowAggregate cols=[5]
+        input: LogicalGet a cols=[1, 2, 3, 4]
+        window_expr: Expr row_number() OVER(PARTITION BY col:1)
+      window_expr: Expr rank() OVER()
 ---
 query: |
   SELECT row_number() OVER (PARTITION BY a1+1) FROM a
@@ -57,7 +75,219 @@ ok: |
       input: LogicalGet a cols=[1, 2, 3, 4]
       window_expr: Expr sum(col:2) OVER(PARTITION BY col:1)
 ---
+## Window functions + aggregate functions
+options:
+  append_metadata: true
+  append_memo: true
 query: |
-  SELECT first_value(count(a1)) OVER (PARTITION BY a1) FROM a
+  SELECT count(1), rank() OVER () FROM a
+ok: |
+  LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
+    input: LogicalWindowAggregate cols=[5, 6]
+      input: LogicalAggregate cols=[5] aggr_exprs: [count(1)]
+        input: LogicalGet a cols=[1, 2, 3, 4]
+      window_expr: Expr rank() OVER()
+  Metadata:
+    col:1 a.a1 Int32
+    col:2 a.a2 Int32
+    col:3 a.a3 Int32
+    col:4 a.a4 Int32
+    col:5 count Int32, expr: count(1)
+    col:6 rank Int32, expr: rank() OVER()
+  Memo:
+    07 LogicalProjection input=05 exprs=[03, 06] cols=[5, 6]
+    06 Expr col:6
+    05 LogicalWindowAggregate input=02 window_expr=04 cols=[5, 6]
+    04 Expr rank() OVER()
+    03 Expr col:5
+    02 LogicalAggregate input=00 aggr_exprs=[01] cols=[5]
+    01 Expr count(1)
+    00 LogicalGet a cols=[1, 2, 3, 4]
+---
+options:
+  append_metadata: true
+  append_memo: true
+query: |
+  SELECT count(1), rank() OVER (PARTITION BY a1) FROM a GROUP BY a1;
+ok: |
+  LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
+    input: LogicalWindowAggregate cols=[5, 6]
+      input: LogicalAggregate cols=[5, 1]
+        aggr_exprs: [count(1), col:1]
+        group_exprs: [col:1]
+        input: LogicalGet a cols=[1, 2, 3, 4]
+      window_expr: Expr rank() OVER(PARTITION BY col:1)
+  Metadata:
+    col:1 a.a1 Int32
+    col:2 a.a2 Int32
+    col:3 a.a3 Int32
+    col:4 a.a4 Int32
+    col:5 count Int32, expr: count(1)
+    col:6 rank Int32, expr: rank() OVER(PARTITION BY col:1)
+  Memo:
+    08 LogicalProjection input=06 exprs=[04, 07] cols=[5, 6]
+    07 Expr col:6
+    06 LogicalWindowAggregate input=03 window_expr=05 cols=[5, 6]
+    05 Expr rank() OVER(PARTITION BY col:1)
+    04 Expr col:5
+    03 LogicalAggregate input=00 aggr_exprs=[01, 02] group_exprs=[02] cols=[5, 1]
+    02 Expr col:1
+    01 Expr count(1)
+    00 LogicalGet a cols=[1, 2, 3, 4]
+---
+options:
+  append_metadata: true
+  append_memo: true
+query:
+  SELECT count(a1), rank() OVER () FROM a
+ok: |
+  LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
+    input: LogicalWindowAggregate cols=[5, 6]
+      input: LogicalAggregate cols=[5] aggr_exprs: [count(col:1)]
+        input: LogicalGet a cols=[1, 2, 3, 4]
+      window_expr: Expr rank() OVER()
+  Metadata:
+    col:1 a.a1 Int32
+    col:2 a.a2 Int32
+    col:3 a.a3 Int32
+    col:4 a.a4 Int32
+    col:5 count Int32, expr: count(col:1)
+    col:6 rank Int32, expr: rank() OVER()
+  Memo:
+    07 LogicalProjection input=05 exprs=[03, 06] cols=[5, 6]
+    06 Expr col:6
+    05 LogicalWindowAggregate input=02 window_expr=04 cols=[5, 6]
+    04 Expr rank() OVER()
+    03 Expr col:5
+    02 LogicalAggregate input=00 aggr_exprs=[01] cols=[5]
+    01 Expr count(col:1)
+    00 LogicalGet a cols=[1, 2, 3, 4]
+---
+options:
+  append_metadata: true
+  append_memo: true
+query: |
+  select count(1), rank() OVER (PARTITION BY a1) from a group by a1;
+ok: |
+  LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
+    input: LogicalWindowAggregate cols=[5, 6]
+      input: LogicalAggregate cols=[5, 1]
+        aggr_exprs: [count(1), col:1]
+        group_exprs: [col:1]
+        input: LogicalGet a cols=[1, 2, 3, 4]
+      window_expr: Expr rank() OVER(PARTITION BY col:1)
+  Metadata:
+    col:1 a.a1 Int32
+    col:2 a.a2 Int32
+    col:3 a.a3 Int32
+    col:4 a.a4 Int32
+    col:5 count Int32, expr: count(1)
+    col:6 rank Int32, expr: rank() OVER(PARTITION BY col:1)
+  Memo:
+    08 LogicalProjection input=06 exprs=[04, 07] cols=[5, 6]
+    07 Expr col:6
+    06 LogicalWindowAggregate input=03 window_expr=05 cols=[5, 6]
+    05 Expr rank() OVER(PARTITION BY col:1)
+    04 Expr col:5
+    03 LogicalAggregate input=00 aggr_exprs=[01, 02] group_exprs=[02] cols=[5, 1]
+    02 Expr col:1
+    01 Expr count(1)
+    00 LogicalGet a cols=[1, 2, 3, 4]
+---
+options:
+  append_metadata: true
+  append_memo: true
+query: |
+  SELECT first_value(count(a1)) OVER () FROM a;
+ok: |
+  LogicalProjection cols=[6] exprs: [col:6]
+    input: LogicalWindowAggregate cols=[6]
+      input: LogicalAggregate cols=[5] aggr_exprs: [count(col:1)]
+        input: LogicalGet a cols=[1, 2, 3, 4]
+      window_expr: Expr first_value(col:5) OVER()
+  Metadata:
+    col:1 a.a1 Int32
+    col:2 a.a2 Int32
+    col:3 a.a3 Int32
+    col:4 a.a4 Int32
+    col:5 count Int32, expr: count(col:1)
+    col:6 first_value Int32, expr: first_value(col:5) OVER()
+  Memo:
+    06 LogicalProjection input=04 exprs=[05] cols=[6]
+    05 Expr col:6
+    04 LogicalWindowAggregate input=02 window_expr=03 cols=[6]
+    03 Expr first_value(col:5) OVER()
+    02 LogicalAggregate input=00 aggr_exprs=[01] cols=[5]
+    01 Expr count(col:1)
+    00 LogicalGet a cols=[1, 2, 3, 4]
+---
+options:
+  append_metadata: true
+  append_memo: true
+query: |
+  SELECT first_value(count(a2)) OVER (PARTITION BY a1) FROM a GROUP BY a1;
+ok: |
+  LogicalProjection cols=[6] exprs: [col:6]
+    input: LogicalWindowAggregate cols=[6]
+      input: LogicalAggregate cols=[5, 1]
+        aggr_exprs: [count(col:2), col:1]
+        group_exprs: [col:1]
+        input: LogicalGet a cols=[1, 2, 3, 4]
+      window_expr: Expr first_value(col:5) OVER(PARTITION BY col:1)
+  Metadata:
+    col:1 a.a1 Int32
+    col:2 a.a2 Int32
+    col:3 a.a3 Int32
+    col:4 a.a4 Int32
+    col:5 count Int32, expr: count(col:2)
+    col:6 first_value Int32, expr: first_value(col:5) OVER(PARTITION BY col:1)
+  Memo:
+    07 LogicalProjection input=05 exprs=[06] cols=[6]
+    06 Expr col:6
+    05 LogicalWindowAggregate input=03 window_expr=04 cols=[6]
+    04 Expr first_value(col:5) OVER(PARTITION BY col:1)
+    03 LogicalAggregate input=00 aggr_exprs=[01, 02] group_exprs=[02] cols=[5, 1]
+    02 Expr col:1
+    01 Expr count(col:2)
+    00 LogicalGet a cols=[1, 2, 3, 4]
+---
+query: |
+  select count(1), first_value(a1) OVER () from a;
 error: |
-  Not implemented: WINDOW FUNCTION: non column arguments in function: first_value
+  Internal error: AGGREGATE column a1 must appear in GROUP BY clause
+---
+query: |
+  select count(1), first_value(1) OVER (PARTITION BY a1) from a;
+error: |
+  Internal error: AGGREGATE column a1 must appear in GROUP BY clause
+---
+query: |
+  SELECT first_value(count(1)) OVER (PARTITION BY a1) FROM a;
+error: |
+  Internal error: AGGREGATE column a1 must appear in GROUP BY clause
+---
+#query: |
+#  select count(1), first_value(1) OVER (ORDER BY a1) from a;
+#error: |
+#  Internal error: AGGREGATE column a1 must appear in GROUP BY clause
+#---
+query: |
+  SELECT a2, count(1), rank() OVER (PARTITION BY a1) FROM a GROUP BY a1;
+error: |
+  Internal error: AGGREGATE column a2 must appear in GROUP BY clause
+---
+query: |
+  SELECT count(1), rank() OVER (PARTITION BY a1) FROM a;
+error: |
+  Internal error: AGGREGATE column a1 must appear in GROUP BY clause
+---
+query: |
+  SELECT first_value(count(a2)) OVER (PARTITION BY a3) FROM a GROUP BY a1;
+error: |
+  Internal error: AGGREGATE column a3 must appear in GROUP BY clause
+---
+query: |
+  SELECT 1 + row_number() OVER () FROM a;
+error: |
+  Not implemented: WINDOW FUNCTIONS: must be a root of an expression tree: row_number() OVER()
+---

@@ -1,5 +1,5 @@
 use crate::error::OptimizerError;
-use crate::memo::{MemoExpr, MemoExprFormatter, MemoFormatterFlags, StringMemoFormatter};
+use crate::memo::{format_memo, Memo, MemoExpr, MemoExprFormatter, MemoFormatterFlags, StringMemoFormatter};
 use crate::meta::MutableMetadata;
 use crate::operators::relational::join::JoinCondition;
 use crate::operators::relational::logical::{
@@ -449,6 +449,78 @@ where
         if let Some(ordering) = required.and_then(|r| r.ordering()) {
             self.fmt.write_values("ordering", ordering.columns());
         }
+    }
+}
+
+/// [OperatorFormatter] that writes metadata.
+pub struct AppendMetadata {
+    metadata: Rc<MutableMetadata>,
+}
+
+impl AppendMetadata {
+    /// Creates a new instance of [AppendMetadata] formatter.
+    pub fn new(metadata: Rc<MutableMetadata>) -> Self {
+        AppendMetadata { metadata }
+    }
+}
+
+impl OperatorFormatter for AppendMetadata {
+    fn write_operator(&self, _operator: &Operator, buf: &mut String) {
+        buf.push_str("Metadata:\n");
+
+        for column in self.metadata.get_columns() {
+            let id = column.id();
+            let expr = column.expr();
+            let relation_id = column.relation_id();
+            let table_name = relation_id.map(|id| String::from(self.metadata.get_relation(&id).name()));
+            let column_name = column.name();
+            let column_info = match (expr, table_name) {
+                (None, None) => format!("  col:{} {} {:?}", id, column_name, column.data_type()),
+                (None, Some(table)) => {
+                    format!("  col:{} {}.{} {:?}", id, table, column_name, column.data_type())
+                }
+                (Some(expr), _) => {
+                    format!("  col:{} {} {:?}, expr: {}", id, column_name, column.data_type(), expr)
+                }
+            };
+            buf.push_str(column_info.as_str());
+            buf.push('\n');
+        }
+    }
+}
+
+/// [OperatorFormatter] that writes contents of a memo.
+pub struct AppendMemo<T> {
+    memo: Memo<Operator, T>,
+}
+
+impl<T> AppendMemo<T> {
+    /// Creates a new instance of [AppendMemo] formatter.
+    pub fn new(memo: Memo<Operator, T>) -> Self {
+        AppendMemo { memo }
+    }
+}
+
+impl<T> OperatorFormatter for AppendMemo<T> {
+    fn write_operator(&self, _operator: &Operator, buf: &mut String) {
+        buf.push_str("Memo:\n");
+        // TODO: Do not include properties.
+        let memo_as_string = format_memo(&self.memo);
+        let lines = memo_as_string
+            .split('\n')
+            .map(|l| {
+                if !l.is_empty() {
+                    let mut s = String::new();
+                    s.push_str("  ");
+                    s.push_str(l);
+                    s
+                } else {
+                    l.to_string()
+                }
+            })
+            .join("\n");
+
+        buf.push_str(lines.as_str());
     }
 }
 

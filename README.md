@@ -61,6 +61,12 @@ Cost-based query optimizer (WIP).
 - [ ] Aggregate over sorted data.
 - TODO
 
+#### Window functions
+
+- [x] Basic implementation
+- [ ] ordering within partition
+- [ ] expressions in PARTITION BY clause
+
 #### Joins
 
 - [x] Inner

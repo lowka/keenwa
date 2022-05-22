@@ -16,13 +16,14 @@ use crate::error::OptimizerError;
 use crate::memo::MemoExprState;
 use crate::meta::{ColumnId, ColumnMetadata, MetadataRef, MutableMetadata};
 use crate::not_implemented;
+use crate::operators::builder::aggregate::{add_window_aggregates, has_window_aggregates};
 use crate::operators::builder::subqueries::{
     decorrelate_subqueries, possibly_has_correlated_subqueries, BuildFilter, BuildOperators,
 };
 use crate::operators::relational::join::{JoinCondition, JoinOn, JoinType, JoinUsing};
 use crate::operators::relational::logical::{
     LogicalDistinct, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin, LogicalLimit,
-    LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, LogicalValues, LogicalWindowAggregate, SetOperator,
+    LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, LogicalValues, SetOperator,
 };
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::expr::ExprRewriter;
@@ -301,10 +302,26 @@ impl OperatorBuilder {
     }
 
     /// Adds a projection operator to an operator tree.
-    pub fn project(mut self, exprs: Vec<ScalarExpr>) -> Result<Self, OptimizerError> {
+    /// Use [aggregate_builder](Self::aggregate_builder) to add aggregate operator.
+    ///
+    /// # NOTE
+    ///
+    /// This method do not accept aggregate expressions but accepts window aggregate expressions
+    /// without aggregate in their arguments.
+    pub fn project(self, exprs: Vec<ScalarExpr>) -> Result<Self, OptimizerError> {
+        self.projection_with_window_functions(exprs, false, true, false)
+    }
+
+    pub(crate) fn projection_with_window_functions(
+        mut self,
+        exprs: Vec<ScalarExpr>,
+        allow_aggregates: bool,
+        check_window_functions: bool,
+        has_window_functions: bool,
+    ) -> Result<Self, OptimizerError> {
         let (input, scope) = self.rel_node()?;
         let input_is_projection = matches!(input.expr().logical(), &LogicalExpr::Projection(_));
-        let mut projection_builder = ProjectionListBuilder::new(&mut self, &scope, false);
+        let mut projection_builder = ProjectionListBuilder::new(&mut self, &scope, allow_aggregates);
 
         for expr in exprs {
             projection_builder.add_expr(expr)?;
@@ -316,90 +333,17 @@ impl OperatorBuilder {
             projection: new_exprs,
         } = projection_builder.build();
 
-        struct WindowExprKey {
-            expr: ScalarNode,
-            partition_keys: usize,
-        }
-
-        //
-        // Select Window Aggregate expressions sorted by the number of partition options from the less specific to more specific.
-        // So that the former are placed closer to the root node of an operator tree:
-        //
-        // SELECT rank OVER (col:1, col:2), rank OVER (), rank OVER (col:1, col:2, col:3)
-        //
-        // Translated into:
-        //
-        // WindowAggregate expr=rank() partition=[]
-        //   input: WindowAggregate expr=rank() partition=[col:1, col:2]
-        //     input: WindowAggregate expr=rank() partition=[col:1, col:2, col:3]
-        //       input: Scan A
-        //
-        let mut window_aggregates: Vec<ScalarNode> = new_exprs
-            .iter()
-            .filter(|expr| matches!(expr.expr(), ScalarExpr::WindowAggregate { .. }))
-            .cloned()
-            .map(|expr| {
-                if let ScalarExpr::WindowAggregate { partition_by, .. } = expr.expr() {
-                    WindowExprKey {
-                        partition_keys: partition_by.len(),
-                        expr,
-                    }
-                } else {
-                    unreachable!()
-                }
-            })
-            .sorted_by(|a, b| a.partition_keys.cmp(&b.partition_keys).reverse())
-            .map(|expr| expr.expr)
-            .collect();
-
-        let (input, scope) = if !window_aggregates.is_empty() {
-            let mut input = input;
-            let mut scope = scope;
-            let mut window_idx = 0;
-
-            while !window_aggregates.is_empty() {
-                let mut window_expr_output_cols = vec![];
-                let mut num_windows = 0;
-
-                for (col_id, expr) in column_ids.iter().zip(new_exprs.iter()) {
-                    match expr.expr() {
-                        ScalarExpr::WindowAggregate { .. } => {
-                            if num_windows <= window_idx {
-                                window_expr_output_cols.push(*col_id);
-                                num_windows += 1;
-                            }
-                        }
-                        _ => window_expr_output_cols.push(*col_id),
-                    }
-                }
-
-                let window_expr = window_aggregates.swap_remove(0);
-                let window_aggregate = LogicalExpr::WindowAggregate(LogicalWindowAggregate {
-                    input,
-                    window_expr,
-                    columns: window_expr_output_cols,
-                });
-                self.add_operator_and_scope(window_aggregate, scope);
-                window_idx += 1;
-
-                let (rel_node, rel_expr_scope) = self.rel_node()?;
-                input = rel_node;
-                scope = rel_expr_scope;
-            }
-
-            (input, scope)
+        let add_window_functions = if check_window_functions {
+            has_window_aggregates(new_exprs.iter().map(|expr| expr.expr()))
         } else {
-            (input, scope)
+            has_window_functions
         };
 
-        let new_exprs: Vec<ScalarNode> = new_exprs
-            .into_iter()
-            .zip(column_ids.iter())
-            .map(|(expr, id)| match expr.expr() {
-                ScalarExpr::WindowAggregate { .. } => self.add_scalar_node(ScalarExpr::Column(*id), &scope),
-                _ => expr,
-            })
-            .collect();
+        let (input, scope, new_exprs) = if add_window_functions {
+            add_window_aggregates(&mut self, input, scope, &column_ids, new_exprs)?
+        } else {
+            (input, scope, new_exprs)
+        };
 
         let expr = LogicalExpr::Projection(LogicalProjection {
             input,
@@ -666,7 +610,8 @@ impl OperatorBuilder {
         Ok(self)
     }
 
-    /// Returns a builder to construct an aggregate operator.
+    /// Returns a builder to construct an aggregate operator that consists of a list of
+    /// non-window aggregate functions, group by expressions, and a filter (HAVING clause).
     pub fn aggregate_builder(&mut self) -> AggregateBuilder {
         AggregateBuilder {
             builder: self,
@@ -1045,6 +990,7 @@ where
                 aggregate_depth: 0,
                 window_func_depth: 0,
                 alias_depth: 0,
+                expr_index: 0,
                 validator,
             },
             referenced_outer_columns: Vec::new(),
@@ -1086,7 +1032,7 @@ where
             ScalarExpr::Column(column_id) => {
                 let exists = self.scope.find_column_by_id(column_id).is_some();
                 if !exists {
-                    let col_name = format!("!{}", column_id);
+                    let col_name = format!("<{}>", column_id);
                     Err(unexpected_column(col_name.as_str(), self.scope, self.metadata.get_ref()))
                 } else {
                     Ok(expr)
@@ -1154,6 +1100,7 @@ struct ExprValidator<T> {
     aggregate_depth: usize,
     window_func_depth: usize,
     alias_depth: usize,
+    expr_index: usize,
     validator: T,
 }
 
@@ -1162,10 +1109,15 @@ where
     T: ValidateExpr,
 {
     fn before_expr(&mut self, expr: &ScalarExpr) -> Result<(), OptimizerError> {
+        self.expr_index += 1;
         match expr {
             ScalarExpr::Alias(_, _) => self.alias_depth += 1,
             ScalarExpr::Aggregate { .. } => self.aggregate_depth += 1,
-            ScalarExpr::WindowAggregate { .. } => self.window_func_depth += 1,
+            ScalarExpr::WindowAggregate { .. } => {
+                let is_root = self.expr_index - self.alias_depth == 1;
+                not_implemented!(!is_root, "WINDOW FUNCTIONS: must be a root of an expression tree: {}", expr);
+                self.window_func_depth += 1
+            }
             _ => {}
         }
         if self.aggregate_depth > 1 {
@@ -1199,8 +1151,9 @@ where
                 partition_by,
                 ..
             } => {
-                let non_column_args =
-                    args.iter().any(|expr| !matches!(expr, ScalarExpr::Column(_) | ScalarExpr::Scalar(_)));
+                let non_column_args = args.iter().any(|expr| {
+                    !matches!(expr, ScalarExpr::Column(_) | ScalarExpr::Scalar(_) | ScalarExpr::Aggregate { .. })
+                });
                 not_implemented!(non_column_args, "WINDOW FUNCTION: non column arguments in function: {}", func);
 
                 let non_column_exprs = partition_by.iter().any(|expr| !matches!(expr, ScalarExpr::Column(_)));
@@ -1469,8 +1422,7 @@ mod test {
     use crate::catalog::mutable::MutableCatalog;
     use crate::catalog::{TableBuilder, DEFAULT_SCHEMA};
     use crate::datatypes::DataType;
-    use crate::memo::format_memo;
-    use crate::operators::format::{OperatorFormatter, OperatorTreeFormatter, SubQueriesFormatter};
+    use crate::operators::format::{AppendMemo, AppendMetadata, OperatorTreeFormatter, SubQueriesFormatter};
     use crate::operators::properties::LogicalPropertiesBuilder;
     use crate::operators::scalar::aggregates::{AggregateFunction, WindowFunction};
     use crate::operators::scalar::{col, qualified_wildcard, scalar, wildcard};
@@ -2257,6 +2209,45 @@ Memo:
     }
 
     #[test]
+    fn test_window_aggregate_reuse_operator() {
+        let mut tester = OperatorBuilderTester::new();
+        tester.build_operator(|builder| {
+            let mut from_a = builder.get("A", vec!["a1", "a2"])?;
+            let first_value = ScalarExpr::WindowAggregate {
+                func: WindowFunction::FirstValue.into(),
+                args: vec![col("a2")],
+                partition_by: vec![col("a1")],
+                order_by: vec![],
+            };
+            let window = from_a.project(vec![col("a1"), first_value.clone(), first_value])?;
+
+            window.build()
+        });
+        tester.expect_expr(
+            r#"
+LogicalProjection cols=[1, 3, 4] exprs: [col:1, col:3, col:4]
+  input: LogicalWindowAggregate cols=[1, 3]
+    input: LogicalGet A cols=[1, 2]
+    window_expr: Expr first_value(col:2) OVER(PARTITION BY col:1)
+  output cols: [1, 3, 4]
+Metadata:
+  col:1 A.a1 Int32
+  col:2 A.a2 Int32
+  col:3 first_value Int32, expr: first_value(col:2) OVER(PARTITION BY col:1)
+  col:4 first_value Int32, expr: first_value(col:2) OVER(PARTITION BY col:1)
+Memo:
+  06 LogicalProjection input=03 exprs=[01, 04, 05] cols=[1, 3, 4]
+  05 Expr col:4
+  04 Expr col:3
+  03 LogicalWindowAggregate input=00 window_expr=02 cols=[1, 3]
+  02 Expr first_value(col:2) OVER(PARTITION BY col:1)
+  01 Expr col:1
+  00 LogicalGet A cols=[1, 2]
+"#,
+        );
+    }
+
+    #[test]
     fn test_multiple_window_aggregate_functions() {
         let mut tester = OperatorBuilderTester::new();
         tester.build_operator(|builder| {
@@ -2800,10 +2791,8 @@ Memo:
             buf.push('\n');
 
             let memo = self.memoization.into_memo();
-            let metadata_formatter = AppendMetadata {
-                metadata: self.metadata.clone(),
-            };
-            let memo_formatter = AppendMemo { memo };
+            let metadata_formatter = AppendMetadata::new(self.metadata.clone());
+            let memo_formatter = AppendMemo::new(memo);
             let subquery_formatter = SubQueriesFormatter::new(self.metadata.clone());
 
             let formatter = OperatorTreeFormatter::new()
@@ -2815,62 +2804,6 @@ Memo:
             buf.push_str(formatter.format(&expr).as_str());
 
             assert_eq!(buf.as_str(), expected);
-
-            struct AppendMetadata {
-                metadata: Rc<MutableMetadata>,
-            }
-
-            impl OperatorFormatter for AppendMetadata {
-                fn write_operator(&self, _operator: &Operator, buf: &mut String) {
-                    buf.push_str("Metadata:\n");
-
-                    for column in self.metadata.get_columns() {
-                        let id = column.id();
-                        let expr = column.expr();
-                        let relation_id = column.relation_id();
-                        let table_name = relation_id.map(|id| String::from(self.metadata.get_relation(&id).name()));
-                        let column_name = column.name();
-                        let column_info = match (expr, table_name) {
-                            (None, None) => format!("  col:{} {} {:?}", id, column_name, column.data_type()),
-                            (None, Some(table)) => {
-                                format!("  col:{} {}.{} {:?}", id, table, column_name, column.data_type())
-                            }
-                            (Some(expr), _) => {
-                                format!("  col:{} {} {:?}, expr: {}", id, column_name, column.data_type(), expr)
-                            }
-                        };
-                        buf.push_str(column_info.as_str());
-                        buf.push('\n');
-                    }
-                }
-            }
-
-            struct AppendMemo {
-                memo: ExprMemo,
-            }
-
-            impl OperatorFormatter for AppendMemo {
-                fn write_operator(&self, _operator: &Operator, buf: &mut String) {
-                    buf.push_str("Memo:\n");
-                    // TODO: Do not include properties.
-                    let memo_as_string = format_memo(&self.memo);
-                    let lines = memo_as_string
-                        .split('\n')
-                        .map(|l| {
-                            if !l.is_empty() {
-                                let mut s = String::new();
-                                s.push_str("  ");
-                                s.push_str(l);
-                                s
-                            } else {
-                                l.to_string()
-                            }
-                        })
-                        .join("\n");
-
-                    buf.push_str(lines.as_str());
-                }
-            }
         }
 
         fn do_build_operator(&mut self) -> Result<Operator, OptimizerError> {

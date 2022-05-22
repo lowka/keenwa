@@ -1,7 +1,7 @@
 use crate::catalog::mutable::MutableCatalog;
 use crate::catalog::{TableBuilder, DEFAULT_SCHEMA};
 use crate::operators::builder::OperatorBuilderConfig;
-use crate::operators::format::{OperatorTreeFormatter, SubQueriesFormatter};
+use crate::operators::format::{AppendMemo, AppendMetadata, OperatorTreeFormatter, SubQueriesFormatter};
 use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::RelExpr;
 use crate::operators::OperatorExpr;
@@ -84,7 +84,7 @@ where
 /// Creates instances of [RelExprTestCaseRunner].
 struct RelExprTestCaseRunnerFactory;
 struct RelExprTestCaseRunner<T> {
-    builder: OperatorFromSqlBuilder<T>,
+    inner: InnerRunner<T>,
 }
 
 impl<T> TestCaseRunner for RelExprTestCaseRunner<T>
@@ -92,15 +92,7 @@ where
     T: StatisticsBuilder + 'static,
 {
     fn run_test_case(self, query: &str) -> Result<TestCaseRunResult, TestRunnerError> {
-        match self.builder.build(query) {
-            Ok((op, _, metadata)) => {
-                let sub_queries_formatter = SubQueriesFormatter::new(metadata);
-                let formatter = OperatorTreeFormatter::new().add_formatter(Box::new(sub_queries_formatter));
-                let plan_str = formatter.format(&op);
-                Ok(TestCaseRunResult::Success(plan_str))
-            }
-            Err(error) => Ok(TestCaseRunResult::from(error)),
-        }
+        self.inner.run_and_check_root(query)
     }
 }
 
@@ -114,14 +106,16 @@ impl TestCaseRunnerFactory for RelExprTestCaseRunnerFactory {
         options: &TestOptions,
     ) -> Result<Self::Runner, TestRunnerError> {
         let builder = new_operator_builder(catalog, options);
-        Ok(RelExprTestCaseRunner { builder })
+        Ok(RelExprTestCaseRunner {
+            inner: InnerRunner::new(options, builder),
+        })
     }
 }
 
 /// Creates instances of [ScalarExprTestCaseRunner].
 struct ScalarExprTestCaseRunnerFactory;
 struct ScalarExprTestCaseRunner<T> {
-    builder: OperatorFromSqlBuilder<T>,
+    inner: InnerRunner<T>,
 }
 
 impl TestCaseRunnerFactory for ScalarExprTestCaseRunnerFactory {
@@ -134,7 +128,9 @@ impl TestCaseRunnerFactory for ScalarExprTestCaseRunnerFactory {
         options: &TestOptions,
     ) -> Result<Self::Runner, TestRunnerError> {
         let builder = new_operator_builder(catalog, options);
-        Ok(ScalarExprTestCaseRunner { builder })
+        Ok(ScalarExprTestCaseRunner {
+            inner: InnerRunner::new(options, builder),
+        })
     }
 }
 
@@ -143,22 +139,56 @@ where
     T: StatisticsBuilder + 'static,
 {
     fn run_test_case(self, query: &str) -> Result<TestCaseRunResult, TestRunnerError> {
-        // Wrap an expression into a SELECT list.
+        self.inner.run_and_check_projection(query)
+    }
+}
+
+struct InnerRunner<T> {
+    builder: OperatorFromSqlBuilder<T>,
+    append_memo: bool,
+    append_metadata: bool,
+}
+
+impl<T> InnerRunner<T>
+where
+    T: StatisticsBuilder + 'static,
+{
+    fn new(options: &TestOptions, builder: OperatorFromSqlBuilder<T>) -> Self {
+        InnerRunner {
+            builder,
+            append_memo: options.append_memo.expect("no default value for append_memo option"),
+            append_metadata: options.append_memo.expect("no default value for append_metadata option"),
+        }
+    }
+
+    fn run_and_check_root(self, query: &str) -> Result<TestCaseRunResult, TestRunnerError> {
+        match self.builder.build(query) {
+            Ok((op, memo, metadata)) => {
+                let sub_queries_formatter = SubQueriesFormatter::new(metadata.clone());
+                let mut formatter = OperatorTreeFormatter::new().add_formatter(Box::new(sub_queries_formatter));
+                if self.append_metadata {
+                    formatter = formatter.add_formatter(Box::new(AppendMetadata::new(metadata)));
+                }
+                if self.append_memo {
+                    formatter = formatter.add_formatter(Box::new(AppendMemo::new(memo)))
+                }
+                let plan_str = formatter.format(&op);
+                Ok(TestCaseRunResult::Success(plan_str))
+            }
+            Err(error) => Ok(TestCaseRunResult::from(error)),
+        }
+    }
+
+    fn run_and_check_projection(self, query: &str) -> Result<TestCaseRunResult, TestRunnerError> {
+        // Wrap an expression into a select list.
         let query = format!("SELECT {}", query);
-        //
         match self.builder.build(query.as_str()) {
             Ok((op, _, _)) => {
-                match op.expr() {
-                    OperatorExpr::Relational(rel) => match rel {
-                        RelExpr::Logical(expr) => {
-                            if let LogicalExpr::Projection(projection) = expr.as_ref() {
-                                let first_expr = projection.exprs[0].expr();
-                                return Ok(TestCaseRunResult::Success(format!("{}", first_expr)));
-                            }
-                        }
-                        _ => {}
-                    },
-                    _ => {}
+                if let OperatorExpr::Relational(RelExpr::Logical(expr)) = op.expr() {
+                    if let LogicalExpr::Projection(projection) = expr.as_ref() {
+                        let first_expr = projection.exprs[0].expr();
+                        return Ok(TestCaseRunResult::Success(format!("{}", first_expr)));
+                    }
                 }
                 let formatter = OperatorTreeFormatter::new();
                 let unexpected = formatter.format(&op);
