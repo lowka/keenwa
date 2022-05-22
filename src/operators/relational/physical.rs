@@ -598,6 +598,7 @@ impl Scan {
 pub struct IndexScan {
     pub source: String,
     pub columns: Vec<ColumnId>,
+    pub ordering: Option<OrderingChoice>,
 }
 
 impl IndexScan {
@@ -607,6 +608,7 @@ impl IndexScan {
         IndexScan {
             source: self.source.clone(),
             columns: self.columns.clone(),
+            ordering: self.ordering.clone(),
         }
     }
 

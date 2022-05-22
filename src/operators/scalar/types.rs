@@ -147,6 +147,10 @@ where
             let arg_types = arg_types?;
             func.get_return_type(&arg_types)
         }
+        Expr::Ordering { expr, .. } => {
+            let message = format!("Ordering expression {} does not support type resolution", expr);
+            Err(OptimizerError::Internal(message))
+        }
         Expr::Exists { .. } | Expr::InSubQuery { .. } => {
             // query must be a valid subquery.
             Ok(DataType::Bool)

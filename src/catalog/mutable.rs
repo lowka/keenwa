@@ -310,15 +310,18 @@ mod test {
     fn test_indexes() {
         let catalog = MutableCatalog::new();
         let table1 = TableBuilder::new("A").add_column("a1", DataType::Int32).build();
-        let index1 = IndexBuilder::new("A_idx").table("A").add_column(table1.get_column("a1").unwrap()).build();
-
         let table2 = TableBuilder::new("B").add_column("b1", DataType::Int32).build();
-        let index2 = IndexBuilder::new("B_idx").table("B").add_column(table2.get_column("b1").unwrap()).build();
 
         catalog.add_table("s", table1);
-        catalog.add_index("s", index1);
-
         catalog.add_table("s", table2);
+
+        let table1 = catalog.get_schema_by_name("s").unwrap().get_table_by_name("A").unwrap();
+        let table2 = catalog.get_schema_by_name("s").unwrap().get_table_by_name("B").unwrap();
+
+        let index1 = IndexBuilder::new(table1, "A_idx").add_column("a1").build();
+        let index2 = IndexBuilder::new(table2, "B_idx").add_column("b1").build();
+
+        catalog.add_index("s", index1);
         catalog.add_index("s", index2);
 
         let schema = catalog.get_schema_by_name("s").unwrap();

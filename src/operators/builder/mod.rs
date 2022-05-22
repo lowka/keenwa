@@ -51,7 +51,7 @@ pub struct TableAlias {
 /// Ordering options.
 #[derive(Debug, Clone)]
 pub struct OrderingOptions {
-    options: Vec<OrderingOption>,
+    pub options: Vec<OrderingOption>,
 }
 
 impl OrderingOptions {
@@ -65,36 +65,51 @@ impl OrderingOptions {
     }
 }
 
+/// Specifies how the data is sorted.
 #[derive(Debug, Clone)]
 pub struct OrderingOption {
-    expr: ScalarExpr,
-    descending: bool,
+    /// An instance of an [ScalarExpr::Ordering].
+    ///
+    /// [ScalarExpr::Ordering]: crate::operators::scalar::expr::Expr::Ordering
+    pub expr: ScalarExpr,
+    /// Whether this ordering is descending or not.
+    pub descending: bool,
+    //TODO: Add null_first
 }
 
 impl OrderingOption {
-    /// Creates a new ordering option.
+    /// Creates an instance of [OrderingOption].
+    ///
+    /// # Panics
+    ///
+    /// This method panics if the given expression is an instance of [ScalarExpr::Ordering].
+    ///
+    /// [ScalarExpr::Ordering]: crate::operators::scalar::expr::Expr::Ordering
     pub fn new(expr: ScalarExpr, descending: bool) -> Self {
+        assert!(
+            !matches!(expr, ScalarExpr::Ordering { .. }),
+            "Can not to create OrderingOption from Ordering expression"
+        );
         OrderingOption { expr, descending }
     }
 
-    /// Create new ordering option. A shorthand for `OrderingOption::new(ScalarExpr::ColumnName(<column>), <desc/asc>)`.
-    pub fn by<T>(column_desc: (T, bool)) -> Self
+    /// Creates an option to order data by `i`-th column (1-based)
+    pub fn by_position(i: usize, descending: bool) -> Self {
+        OrderingOption::new(ScalarExpr::Scalar(ScalarValue::Int32(i as i32)), descending)
+    }
+
+    /// Creates an option to order data by the given column.
+    pub fn by<T>(column: T, descending: bool) -> Self
     where
         T: Into<String>,
     {
-        let column_name: String = column_desc.0.into();
-        let descending = column_desc.1;
-        Self::new(ScalarExpr::ColumnName(column_name), descending)
+        let expr = ScalarExpr::ColumnName(column.into());
+        OrderingOption::new(expr, descending)
     }
 
-    /// Returns the expression.
+    /// Returns a reference to the expression.
     pub fn expr(&self) -> &ScalarExpr {
         &self.expr
-    }
-
-    /// Returns `true` if ordering is descending and `false` otherwise.
-    pub fn descending(&self) -> bool {
-        self.descending
     }
 }
 
@@ -475,15 +490,13 @@ impl OperatorBuilder {
                 let mut ordering_columns = Vec::with_capacity(options.len());
 
                 for option in options {
-                    let OrderingOption {
-                        expr,
-                        descending: _descending,
-                    } = option;
+                    let OrderingOption { expr, descending } = option;
 
                     let metadata = self.metadata.clone();
                     let mut rewriter = RewriteExprs::new(&scope, metadata, ValidateProjectionExpr::projection_expr());
                     let expr = expr.rewrite(&mut rewriter)?;
                     let columns = scope.columns();
+
                     let column_id = match expr {
                         ScalarExpr::Scalar(ScalarValue::Int32(pos)) => match usize::try_from(pos - 1).ok() {
                             Some(pos) if pos < columns.len() => {
@@ -504,9 +517,9 @@ impl OperatorBuilder {
                             self.metadata.add_column(column_meta)
                         }
                     };
-                    ordering_columns.push(OrderingColumn::ord(column_id, _descending));
+                    ordering_columns.push(OrderingColumn::ord(column_id, descending));
                 }
-
+                // FIXME: Add null_last_{col_name}/null_first_{column} to support NULLS FIRST/LAST option
                 let ordering = OrderingChoice::new(ordering_columns);
                 let required = RequiredProperties::new_with_ordering(ordering);
                 let physical = PhysicalProperties::with_required(required);
@@ -1547,7 +1560,7 @@ Memo:
 
         tester.build_operator(|builder| {
             let from_a = builder.get("A", vec!["a1"])?;
-            let ord = OrderingOption::by(("a1", false));
+            let ord = OrderingOption::by("a1", false);
 
             from_a.order_by(ord)?.build()
         });
@@ -1572,7 +1585,7 @@ Memo:
             let from_a = builder.get("A", vec!["a1", "a2"])?;
             let projection = from_a.project(vec![col("a1").alias("x"), col("a2")])?;
 
-            let ord = OrderingOption::by(("x", false));
+            let ord = OrderingOption::by("x", false);
             projection.order_by(ord)?.build()
         });
 
@@ -1600,7 +1613,7 @@ Memo:
 
         tester.build_operator(|builder| {
             let from_a = builder.get("A", vec!["a2", "a1", "a3"])?;
-            let ord = OrderingOption::new(scalar(2), false);
+            let ord = OrderingOption::by_position(2, false);
 
             from_a.order_by(ord)?.build()
         });

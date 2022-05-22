@@ -470,13 +470,12 @@ fn build_order_by(
         let order_options: Result<Vec<OrderingOption>, OptimizerError> = order_by_exprs
             .into_iter()
             .map(|order_by_expr| {
-                //GROUP BY position X is not in select list
-                not_supported!(order_by_expr.nulls_first.is_some(), "ORDER BY NULLS FIRST | LAST option");
+                not_supported!(order_by_expr.nulls_first.is_some(), "ORDER BY: NULLS FIRST | LAST option");
 
                 let expr = build_scalar_expr(order_by_expr.expr, builder.clone())?;
-                let asc = order_by_expr.asc.unwrap_or(true);
+                let descending = order_by_expr.asc.map(|v| !v).unwrap_or_default();
 
-                Ok(OrderingOption::new(expr, !asc))
+                Ok(OrderingOption::new(expr, descending))
             })
             .collect();
         let options = OrderingOptions::new(order_options?);

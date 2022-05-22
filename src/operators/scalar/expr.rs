@@ -105,6 +105,15 @@ where
         /// An ordering within the partition.
         order_by: Vec<Expr<T>>,
     },
+    /// The expression in ORDER BY clause with its options.
+    Ordering {
+        /// The expression.
+        expr: Box<Expr<T>>,
+        /// Whether ordering is descending or not.
+        descending: bool,
+        /// NULLS first/last.
+        nulls_first: Option<bool>,
+    },
     /// A subquery expression.
     //TODO: Implement table subquery operators such as ALL, ANY, SOME, UNIQUE.
     SubQuery(T),
@@ -233,6 +242,7 @@ where
                     order.accept(visitor)?;
                 }
             }
+            Expr::Ordering { expr, .. } => expr.accept(visitor)?,
             Expr::SubQuery(_) | Expr::Exists { .. } => {
                 // Should be handled by visitor::pre_visit because Expr is generic over
                 // the type of a nested sub query.
@@ -335,6 +345,15 @@ where
                 partition_by: rewrite_vec(partition_by, rewriter)?,
                 order_by: rewrite_vec(order_by, rewriter)?,
             },
+            Expr::Ordering {
+                expr,
+                descending,
+                nulls_first: nulls,
+            } => Expr::Ordering {
+                expr: rewrite_boxed(*expr, rewriter)?,
+                descending,
+                nulls_first: nulls,
+            },
             Expr::SubQuery(_) => rewriter.rewrite(self)?,
             Expr::Exists { .. } => rewriter.rewrite(self)?,
             Expr::InSubQuery { not, expr, query } => Expr::InSubQuery {
@@ -415,6 +434,7 @@ where
                 children.extend_from_slice(order_by);
                 children
             }
+            Expr::Ordering { expr, .. } => vec![expr.as_ref().clone()],
             Expr::SubQuery(_) => vec![],
             Expr::Exists { .. } => vec![],
             Expr::InSubQuery { .. } => vec![],
@@ -588,6 +608,18 @@ where
                     args,
                     partition_by,
                     order_by,
+                }
+            }
+            Expr::Ordering {
+                descending,
+                nulls_first,
+                ..
+            } => {
+                expect_children("Ordering", children.len(), 1);
+                Expr::Ordering {
+                    expr: Box::new(children.swap_remove(0)),
+                    descending: *descending,
+                    nulls_first: *nulls_first,
                 }
             }
             Expr::SubQuery(node) => {
@@ -934,6 +966,21 @@ where
             }
             Expr::Array(exprs) => {
                 write!(f, "[{}]", exprs.iter().join(", "))
+            }
+            Expr::Ordering {
+                expr,
+                descending,
+                nulls_first: nulls,
+            } => {
+                write!(f, "{}", &*expr)?;
+                if *descending {
+                    write!(f, " DESC")?;
+                }
+                match nulls {
+                    Some(true) => write!(f, " NULLS FIRST"),
+                    Some(false) => write!(f, " NULLS LAST"),
+                    _ => Ok(()),
+                }
             }
             Expr::SubQuery(query) => {
                 write!(f, "SubQuery ")?;
@@ -1430,23 +1477,34 @@ mod test {
 
     #[test]
     fn window_aggregate_traversal() {
+        fn ordering(col_name: &str) -> Vec<Expr> {
+            let expr = Expr::Ordering {
+                expr: Box::new(col(col_name)),
+                descending: true,
+                nulls_first: None,
+            };
+            vec![expr]
+        }
+
         let expr = Expr::WindowAggregate {
             func: WindowFunction::FirstValue.into(),
             args: vec![col("a1")],
             partition_by: vec![col("a2")],
-            order_by: vec![col("a3")],
+            order_by: ordering("a3"),
         };
         expect_traversal_order(
             &expr,
             vec![
-                "pre:first_value(col:a1) OVER(PARTITION BY col:a2 ORDER BY col:a3)",
+                "pre:first_value(col:a1) OVER(PARTITION BY col:a2 ORDER BY col:a3 DESC)",
                 "pre:col:a1",
                 "post:col:a1",
                 "pre:col:a2",
                 "post:col:a2",
+                "pre:col:a3 DESC",
                 "pre:col:a3",
                 "post:col:a3",
-                "post:first_value(col:a1) OVER(PARTITION BY col:a2 ORDER BY col:a3)",
+                "post:col:a3 DESC",
+                "post:first_value(col:a1) OVER(PARTITION BY col:a2 ORDER BY col:a3 DESC)",
             ],
         );
 
@@ -1454,17 +1512,19 @@ mod test {
             func: WindowFunction::FirstValue.into(),
             args: vec![col("a1")],
             partition_by: vec![],
-            order_by: vec![col("a3")],
+            order_by: ordering("a3"),
         };
         expect_traversal_order(
             &expr,
             vec![
-                "pre:first_value(col:a1) OVER(ORDER BY col:a3)",
+                "pre:first_value(col:a1) OVER(ORDER BY col:a3 DESC)",
                 "pre:col:a1",
                 "post:col:a1",
+                "pre:col:a3 DESC",
                 "pre:col:a3",
                 "post:col:a3",
-                "post:first_value(col:a1) OVER(ORDER BY col:a3)",
+                "post:col:a3 DESC",
+                "post:first_value(col:a1) OVER(ORDER BY col:a3 DESC)",
             ],
         );
 
@@ -1500,6 +1560,19 @@ mod test {
                 "post:col:a1",
                 "post:first_value(col:a1) OVER()",
             ],
+        );
+    }
+
+    #[test]
+    fn ordering_traversal() {
+        let expr = Expr::Ordering {
+            expr: Box::new(col("a1")),
+            descending: true,
+            nulls_first: Some(true),
+        };
+        expect_traversal_order(
+            &expr,
+            vec!["pre:col:a1 DESC NULLS FIRST", "pre:col:a1", "post:col:a1", "post:col:a1 DESC NULLS FIRST"],
         );
     }
 
