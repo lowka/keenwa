@@ -405,6 +405,7 @@ pub mod testing {
     use crate::datatypes::DataType;
     use crate::meta::{ColumnId, ColumnMetadata, ColumnMetadataRef, MetadataRef, MutableMetadata, RelationId};
     use crate::operators::scalar::ScalarExpr;
+    use itertools::Itertools;
     use std::collections::HashMap;
 
     /// TestMetadata provides methods to build columns and relations used by tests.
@@ -467,9 +468,9 @@ pub mod testing {
         /// This method panics if the given table or column does not exist.
         pub fn find_column(&self, table: &str, name: &str) -> ColumnId {
             if let Some(relation_id) = self.tables.get(table) {
-                let table = self.inner.get_relation(relation_id);
-                let col_id = table.columns().iter().find(|id| self.inner.get_column(id).name() == name).copied();
-                col_id.unwrap_or_else(|| panic!("No column {} in table {}", name, table.name))
+                let relation = self.inner.get_relation(relation_id);
+                let col_id = relation.columns().iter().find(|id| self.inner.get_column(id).name() == name).copied();
+                col_id.unwrap_or_else(|| panic!("No column {} in table {}", name, relation.name))
             } else {
                 panic!("Table {} does not exist. Existing: {:?}", table, self.tables.keys());
             }
@@ -482,6 +483,26 @@ pub mod testing {
         /// This method panics if there is no metadata for the column with the given identifier.
         pub fn get_column(&self, col_id: &ColumnId) -> ColumnMetadataRef {
             self.inner.get_column(col_id)
+        }
+
+        pub fn add_columns(&mut self, table: &str, columns: Vec<impl AsRef<str>>) -> Vec<ColumnId> {
+            columns
+                .into_iter()
+                .map(|col_name| self.column(table).named(col_name.as_ref()).build())
+                .collect()
+        }
+
+        pub fn get_columns(&self, table: &str) -> Vec<ColumnMetadataRef> {
+            if let Some(relation_id) = self.tables.get(table) {
+                self.inner
+                    .get_relation(relation_id)
+                    .columns()
+                    .iter()
+                    .map(|id| self.inner.get_column(id))
+                    .collect()
+            } else {
+                panic!("Unknown relation: {}. Existing: {}", table, self.tables.keys().join(", "))
+            }
         }
 
         /// Returns a reference to the underlying metadata. See [MetadataRef].
