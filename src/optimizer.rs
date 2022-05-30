@@ -247,6 +247,11 @@ enum Task {
     },
     EnforceProperties {
         ctx: OptimizationContext,
+        /// If present the required physical properties for the given expression
+        /// will be provided by an enforcer operator.
+        ///
+        /// Otherwise the optimizer explores alternative plans
+        /// with the enforcer operator as a root operator of the given subtree.
         expr: ExprRefOption,
     },
     OptimizeInputs {
@@ -572,9 +577,9 @@ fn enforce_properties<R>(
             required_properties: remaining_properties,
         };
         // combine with remaining_properties ???
-        let required_properties = expr.expr().relational().physical().build_required_properties();
+        let required_input_properties = expr.expr().relational().physical().build_required_properties();
         let num_children = expr.children().len();
-        let required_properties = runtime_state.properties_cache.insert_list(required_properties, num_children);
+        let required_properties = runtime_state.properties_cache.insert_list(required_input_properties, num_children);
         let inputs = InputContexts::with_required_properties(&expr, required_properties);
 
         runtime_state.tasks.schedule(Task::OptimizeInputs {
@@ -659,7 +664,7 @@ where
     R: RuleSet,
 {
     let physical_expr = expr.expr().relational().physical();
-    let required_properties = physical_expr.build_required_properties();
+    let required_input_properties = physical_expr.build_required_properties();
 
     let (provides_property, retains_property) = match ctx.required_properties.as_ref() {
         Some(required_properties) => {
@@ -674,7 +679,7 @@ where
         None => (true, false),
     };
 
-    if ctx.required_properties.is_none() && required_properties.is_none() {
+    if ctx.required_properties.is_none() && required_input_properties.is_none() {
         // Optimization context has no required properties + expression does not require any property from its inputs.
         // -> optimize each child expression using required properties of child expressions.
         // In this case every child expression is optimized using required properties of its memo group.
@@ -701,25 +706,31 @@ where
         }
     } else if retains_property {
         // Expression retains the required properties.
-        // -> optimize each child expression with required properties from the current optimization context.
         //??? combine with required properties
 
-        let inputs = InputContexts::new(expr, ctx.required_properties.clone());
+        let inputs = if let Some(required_input_properties) = required_input_properties {
+            // When an operator requires physical properties from its children
+            // We should use optimize its children under those properties.
+            let num_children = expr.children().len();
+            let required_properties = properties_cache.insert_list(Some(required_input_properties), num_children);
+            InputContexts::with_required_properties(expr, required_properties)
+        } else {
+            // Otherwise optimize its children under the same optimization context.
+            InputContexts::new(expr, ctx.required_properties.clone())
+        };
+
         Task::OptimizeInputs {
             ctx: ctx.clone(),
             expr: expr.clone(),
             inputs,
         }
     } else if provides_property {
-        // Expression can provide the required properties
+        // Expression provides the required properties
         // -> optimize child expressions with properties required by the expression.
-        // OR
-        // Expression requires properties from its inputs.
-        // -> same as the above
 
         // FIXME: MergeSort -> 'provides' conflicts with 'retains'
         let num_children = expr.children().len();
-        let required_properties = properties_cache.insert_list(required_properties, num_children);
+        let required_properties = properties_cache.insert_list(required_input_properties, num_children);
         let inputs = InputContexts::with_required_properties(expr, required_properties);
         Task::OptimizeInputs {
             ctx: ctx.clone(),

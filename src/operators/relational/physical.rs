@@ -7,7 +7,7 @@ use crate::operators::relational::RelNode;
 use crate::operators::scalar::ScalarNode;
 use crate::operators::{Operator, OperatorCopyIn};
 use crate::properties::physical::RequiredProperties;
-use crate::properties::OrderingChoice;
+use crate::properties::{derive_input_orderings, OrderingChoice};
 
 // TODO: Docs
 /// A physical expression represents an algorithm that can be used to implement a [logical expression].
@@ -421,9 +421,39 @@ pub struct MergeSortJoin {
     pub left: RelNode,
     pub right: RelNode,
     pub condition: JoinCondition,
+    pub left_ordering: OrderingChoice,
+    pub right_ordering: OrderingChoice,
 }
 
 impl MergeSortJoin {
+    pub(crate) fn derive_input_orderings(
+        required_props: Option<&RequiredProperties>,
+        left: &RelNode,
+        right: &RelNode,
+        condition: &JoinCondition,
+    ) -> Option<(OrderingChoice, OrderingChoice)> {
+        let (left, right) = match get_join_columns_pair(left, right, condition) {
+            Some((left, right)) if !left.is_empty() && !right.is_empty() => (left, right),
+            // MergeSortJoin can not be applied because the given join condition
+            // can not be converted into [(left_col1 = right_col1), .., (left_col_n, right_col_n)].
+            _ => return None,
+        };
+
+        match required_props
+            .and_then(|r| r.ordering())
+            .and_then(|r| derive_input_orderings(r, &left, &right))
+        {
+            Some(inputs) => Some(inputs),
+            None => {
+                // MergeSortJoin requires its inputs to be ordered ->
+                // Add ordering to the columns used in the join condition.
+                let left_ordering = OrderingChoice::from_columns(left);
+                let right_ordering = OrderingChoice::from_columns(right);
+                Some((left_ordering, right_ordering))
+            }
+        }
+    }
+
     fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
         visitor.visit_rel(expr_ctx, &self.left);
         visitor.visit_rel(expr_ctx, &self.right);
@@ -445,19 +475,16 @@ impl MergeSortJoin {
                 JoinCondition::Using(_) => self.condition.clone(),
                 JoinCondition::On(_) => JoinCondition::On(JoinOn::new(inputs.scalar_node())),
             },
+            left_ordering: self.left_ordering.clone(),
+            right_ordering: self.right_ordering.clone(),
         }
     }
 
     fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
-        match get_join_columns_pair(&self.left, &self.right, &self.condition) {
-            Some((left, right)) if !left.is_empty() && !right.is_empty() => {
-                let left_ordering = RequiredProperties::new_with_ordering(OrderingChoice::from_columns(left));
-                let right_ordering = RequiredProperties::new_with_ordering(OrderingChoice::from_columns(right));
+        let left_ordering = RequiredProperties::new_with_ordering(self.left_ordering.clone());
+        let right_ordering = RequiredProperties::new_with_ordering(self.right_ordering.clone());
 
-                Some(vec![Some(left_ordering), Some(right_ordering)])
-            }
-            _ => None,
-        }
+        Some(vec![Some(left_ordering), Some(right_ordering)])
     }
 
     fn num_children(&self) -> usize {
@@ -492,6 +519,8 @@ impl MergeSortJoin {
             JoinCondition::Using(using) => f.write_value("using", using),
             JoinCondition::On(on) => f.write_value("on", on),
         }
+        f.write_value("left_ord", &self.left_ordering);
+        f.write_value("right_ord", &self.right_ordering);
     }
 }
 
@@ -735,9 +764,37 @@ pub struct Unique {
     pub inputs: Vec<RelNode>,
     pub on_expr: Option<ScalarNode>,
     pub columns: Vec<ColumnId>,
+    pub ordering: Vec<OrderingChoice>,
 }
 
 impl Unique {
+    pub(crate) fn derive_input_orderings(
+        ordering: Option<&OrderingChoice>,
+        inputs: &[RelNode],
+        columns: &[ColumnId],
+    ) -> Vec<OrderingChoice> {
+        let ordering = match ordering {
+            Some(ordering) => {
+                // Unique operator is implemented by sorting its inputs.
+                derive_input_orderings(ordering, columns, columns).map(|(l, _)| l)
+            }
+            None => None,
+        };
+        inputs
+            .iter()
+            .map(|input| {
+                let output_columns = input.props().logical().output_columns();
+                match &ordering {
+                    Some(ordering) => ordering.with_mapping(columns, output_columns),
+                    None => {
+                        // Unique operator requires its inputs to be ordered.
+                        OrderingChoice::from_columns(output_columns.to_vec())
+                    }
+                }
+            })
+            .collect()
+    }
+
     fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
         for input in self.inputs.iter() {
             visitor.visit_rel(expr_ctx, input);
@@ -753,22 +810,17 @@ impl Unique {
             inputs: inputs.rel_nodes(self.inputs.len()),
             on_expr: self.on_expr.as_ref().map(|_| inputs.scalar_node()),
             columns: self.columns.clone(),
+            ordering: self.ordering.clone(),
         }
     }
 
     fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
-        let mut requirements: Vec<_> = self
-            .inputs
-            .iter()
-            .map(|input| {
-                let columns = input.props().logical().output_columns().to_vec();
-                Some(RequiredProperties::new_with_ordering(OrderingChoice::from_columns(columns)))
-            })
-            .collect();
+        let requirements = self.ordering.iter().map(|ord| Some(RequiredProperties::new_with_ordering(ord.clone())));
         if self.on_expr.is_some() {
-            requirements.push(None);
+            Some(requirements.chain(std::iter::once(None)).collect())
+        } else {
+            Some(requirements.collect())
         }
-        Some(requirements)
     }
 
     fn num_children(&self) -> usize {
@@ -800,6 +852,14 @@ impl Unique {
         }
         f.write_expr_if_present("on", self.on_expr.as_ref());
         f.write_values("cols", &self.columns);
+        match num_input {
+            1 => f.write_value("ord", &self.ordering[0]),
+            2 => {
+                f.write_value("left_ord", &self.ordering[0]);
+                f.write_value("right_ord", &self.ordering[1]);
+            }
+            _ => f.write_values("ord", &self.ordering),
+        }
     }
 }
 
@@ -1027,5 +1087,89 @@ impl Empty {
     {
         f.write_name("Empty");
         f.write_value("return_one_row", &self.return_one_row)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::meta::testing::TestMetadata;
+    use crate::meta::ColumnId;
+    use crate::operators::relational::logical::{LogicalEmpty, LogicalExpr};
+    use crate::operators::relational::physical::Unique;
+    use crate::operators::relational::{RelExpr, RelNode};
+    use crate::operators::RelationalProperties;
+    use crate::properties::testing::{ordering_from_string, ordering_to_string};
+    use crate::properties::OrderingChoice;
+
+    #[test]
+    fn unique_derive_inputs() {
+        let mut metadata = TestMetadata::with_tables(vec!["A", "B", "C", "U"]);
+        let a_cols = metadata.add_columns("A", vec!["a1", "a2"]);
+        let b_cols = metadata.add_columns("B", vec!["b1", "b2"]);
+        let c_cols = metadata.add_columns("C", vec!["c1", "c2"]);
+        let u_cols = metadata.add_columns("U", vec!["u1", "u2"]);
+
+        let ordering = ordering_from_string(&metadata, &["U:+u1", "U:-u2"]);
+        let result = unique_derive_input_orderings(Some(&ordering), vec![&a_cols, &b_cols, &c_cols], &u_cols);
+        let orderings: Vec<_> = result.into_iter().map(|o| ordering_to_string(&metadata, &o)).collect();
+
+        assert_eq!(
+            orderings,
+            vec![String::from("A:+a1, A:-a2"), String::from("B:+b1, B:-b2"), String::from("C:+c1, C:-c2")]
+        )
+    }
+
+    #[test]
+    fn unique_derive_inputs_extends_ordering() {
+        let mut metadata = TestMetadata::with_tables(vec!["A", "B", "C", "U"]);
+        let a_cols = metadata.add_columns("A", vec!["a1", "a2"]);
+        let b_cols = metadata.add_columns("B", vec!["b1", "b2"]);
+        let c_cols = metadata.add_columns("C", vec!["c1", "c2"]);
+        let u_cols = metadata.add_columns("U", vec!["u1", "u2"]);
+
+        let ordering = ordering_from_string(&metadata, &["U:+u1"]);
+        let result = unique_derive_input_orderings(Some(&ordering), vec![&a_cols, &b_cols, &c_cols], &u_cols);
+        let orderings: Vec<_> = result.into_iter().map(|o| ordering_to_string(&metadata, &o)).collect();
+
+        assert_eq!(
+            orderings,
+            vec![String::from("A:+a1, A:+a2"), String::from("B:+b1, B:+b2"), String::from("C:+c1, C:+c2")]
+        )
+    }
+
+    #[test]
+    fn unique_derive_inputs_add_ordering_when_no_ordering_is_provided() {
+        let mut metadata = TestMetadata::with_tables(vec!["A", "B", "C", "U"]);
+        let a_cols = metadata.add_columns("A", vec!["a1", "a2"]);
+        let b_cols = metadata.add_columns("B", vec!["b1", "b2"]);
+        let c_cols = metadata.add_columns("C", vec!["c1", "c2"]);
+        let u_cols = metadata.add_columns("U", vec!["u1", "u2"]);
+
+        let result = unique_derive_input_orderings(None, vec![&a_cols, &b_cols, &c_cols], &u_cols);
+        let orderings: Vec<_> = result.into_iter().map(|o| ordering_to_string(&metadata, &o)).collect();
+
+        assert_eq!(
+            orderings,
+            vec![String::from("A:+a1, A:+a2"), String::from("B:+b1, B:+b2"), String::from("C:+c1, C:+c2")]
+        )
+    }
+
+    fn unique_derive_input_orderings(
+        ordering: Option<&OrderingChoice>,
+        inputs: Vec<&[ColumnId]>,
+        output_columns: &[ColumnId],
+    ) -> Vec<OrderingChoice> {
+        let rel_nodes: Vec<_> = inputs
+            .into_iter()
+            .map(|cols| {
+                let dummy = LogicalExpr::Empty(LogicalEmpty { return_one_row: false });
+                let mut props = RelationalProperties::default();
+                props.logical.output_columns = cols.to_vec();
+
+                RelNode::new(RelExpr::Logical(Box::new(dummy)), props)
+            })
+            .collect();
+
+        Unique::derive_input_orderings(ordering, &rel_nodes, &output_columns)
     }
 }

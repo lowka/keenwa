@@ -92,7 +92,7 @@ impl Rule for MergeSortJoinRule {
         }
     }
 
-    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
+    fn apply(&self, ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
             LogicalExpr::Join(LogicalJoin {
                 join_type,
@@ -100,13 +100,22 @@ impl Rule for MergeSortJoinRule {
                 right,
                 condition,
             }) if join_type != &JoinType::Cross => {
-                let expr = PhysicalExpr::MergeSortJoin(MergeSortJoin {
-                    join_type: join_type.clone(),
-                    left: left.clone(),
-                    right: right.clone(),
-                    condition: condition.clone(),
-                });
-                Ok(Some(RuleResult::Implementation(expr)))
+                let required_props = ctx.required_properties();
+                if let Some((left_ordering, right_ordering)) =
+                    MergeSortJoin::derive_input_orderings(required_props, left, right, condition)
+                {
+                    let expr = PhysicalExpr::MergeSortJoin(MergeSortJoin {
+                        join_type: join_type.clone(),
+                        left: left.clone(),
+                        right: right.clone(),
+                        condition: condition.clone(),
+                        left_ordering,
+                        right_ordering,
+                    });
+                    Ok(Some(RuleResult::Implementation(expr)))
+                } else {
+                    Ok(None)
+                }
             }
             _ => Ok(None),
         }
@@ -469,7 +478,7 @@ HashJoin type=Inner on=:expr
         let metadata = test_metadata();
 
         let expr = r#"
-MergeSortJoin type=:type using=[(1, 3)]
+MergeSortJoin type=:type using=[(1, 3)] left_ord=[+1] right_ord=[+3]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
 "#;
@@ -484,7 +493,7 @@ MergeSortJoin type=:type using=[(1, 3)]
     fn test_merge_join_on_expr() {
         fn condition_matches(metadata: &TestMetadata, on_expr: ScalarExpr) {
             let expr = r#"
-MergeSortJoin type=Inner on=:expr
+MergeSortJoin type=Inner on=:expr left_ord=[+1] right_ord=[+3]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
 "#;

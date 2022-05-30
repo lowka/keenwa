@@ -226,7 +226,7 @@ impl Rule for DistinctRule {
         }
     }
 
-    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
+    fn apply(&self, ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         match expr {
             LogicalExpr::Distinct(LogicalDistinct {
                 input,
@@ -234,10 +234,14 @@ impl Rule for DistinctRule {
                 columns,
             }) => {
                 let expr = if let Some(on_expr) = on_expr {
+                    let required_ordering = ctx.required_properties().and_then(|r| r.ordering());
+                    let ordering = Unique::derive_input_orderings(required_ordering, &[input.clone()], columns);
+
                     PhysicalExpr::Unique(Unique {
                         inputs: vec![input.clone()],
                         on_expr: Some(on_expr.clone()),
                         columns: columns.clone(),
+                        ordering,
                     })
                 } else {
                     let group_exprs: Vec<ScalarNode> = columns
