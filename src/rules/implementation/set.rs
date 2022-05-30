@@ -23,7 +23,7 @@ impl Rule for UnionRule {
         }
     }
 
-    fn apply(&self, _ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
+    fn apply(&self, ctx: &RuleContext, expr: &LogicalExpr) -> Result<Option<RuleResult>, OptimizerError> {
         if let LogicalExpr::Union(LogicalUnion {
             left,
             right,
@@ -38,10 +38,15 @@ impl Rule for UnionRule {
                     columns: columns.clone(),
                 })
             } else {
+                let required_ordering = ctx.required_properties().and_then(|r| r.ordering());
+                let inputs = &[left.clone(), right.clone()];
+                let ordering = Unique::derive_input_orderings(required_ordering, inputs, columns);
+
                 PhysicalExpr::Unique(Unique {
                     inputs: vec![left.clone(), right.clone()],
                     on_expr: None,
                     columns: columns.clone(),
+                    ordering,
                 })
             };
             Ok(Some(RuleResult::Implementation(expr)))
@@ -136,7 +141,7 @@ mod test {
         tester.apply(
             &union,
             r#"
-Unique cols=[5, 6]
+Unique cols=[5, 6] left_ord=[+1, +2] right_ord=[+3, +4]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]    
 "#,

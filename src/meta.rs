@@ -403,7 +403,9 @@ impl Deref for ColumnMetadataRef<'_> {
 #[cfg(test)]
 pub mod testing {
     use crate::datatypes::DataType;
-    use crate::meta::{ColumnId, ColumnMetadata, ColumnMetadataRef, MetadataRef, MutableMetadata, RelationId};
+    use crate::meta::{
+        ColumnId, ColumnMetadata, ColumnMetadataRef, MetadataRef, MutableMetadata, RelationId, RelationMetadataRef,
+    };
     use crate::operators::scalar::ScalarExpr;
     use itertools::Itertools;
     use std::collections::HashMap;
@@ -485,11 +487,23 @@ pub mod testing {
             self.inner.get_column(col_id)
         }
 
+        /// Adds a collection of columns to the given table and returns a `Vec` that contains their ids.
+        /// The result of this method is equivalent to calling `column().named(..)`
+        /// for each given column name  and collecting results into a `Vec`.
         pub fn add_columns(&mut self, table: &str, columns: Vec<impl AsRef<str>>) -> Vec<ColumnId> {
             columns
                 .into_iter()
                 .map(|col_name| self.column(table).named(col_name.as_ref()).build())
                 .collect()
+        }
+
+        /// Returns metadata for the relation with the given identifier
+        ///
+        /// # Panics
+        ///
+        /// This method panics if there is no metadata for the relation with the given identifier.
+        pub fn get_relation(&self, relation_id: &RelationId) -> RelationMetadataRef {
+            self.inner.get_relation(relation_id)
         }
 
         pub fn get_columns(&self, table: &str) -> Vec<ColumnMetadataRef> {

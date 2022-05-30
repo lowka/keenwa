@@ -8,4 +8,6 @@ pub mod logical;
 mod ordering;
 pub mod physical;
 
+#[cfg(test)]
+pub use ordering::testing;
 pub use ordering::{derive::derive_input_orderings, OrderingChoice, OrderingColumn};

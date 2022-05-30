@@ -40,6 +40,26 @@ impl OrderingChoice {
         self.columns.iter().zip(other.columns.iter()).all(|(l, r)| l == r)
     }
 
+    /// Creates a new ordering that replaces all columns from the `source_columns`
+    /// with the columns in `output_columns`.
+    pub fn with_mapping(&self, source_columns: &[ColumnId], output_columns: &[ColumnId]) -> OrderingChoice {
+        let columns: Vec<_> = self
+            .columns
+            .iter()
+            .copied()
+            .map(|col| {
+                if let Some(p) = source_columns.iter().position(|s| s == &col.column()) {
+                    let output = output_columns[p];
+                    OrderingColumn::ord(output, col.descending())
+                } else {
+                    col
+                }
+            })
+            .collect();
+        OrderingChoice { columns }
+    }
+
+    /// Converts this ordering into a `Vec` of column identifiers.
     pub fn into_columns(self) -> Vec<ColumnId> {
         self.columns.into_iter().map(|c| ColumnId(c.0.abs() as usize)).collect()
     }
@@ -113,9 +133,65 @@ impl Display for OrderingColumn {
 }
 
 #[cfg(test)]
+pub mod testing {
+    use crate::meta::testing::TestMetadata;
+    use crate::properties::{OrderingChoice, OrderingColumn};
+    use itertools::Itertools;
+
+    #[test]
+    fn test_ordering_to_string() {
+        let mut metadata = TestMetadata::with_tables(vec!["A", "B"]);
+        let a_cols = metadata.add_columns("A", vec!["a1", "a2"]);
+        let b_cols = metadata.add_columns("B", vec!["b1"]);
+        let ord = OrderingChoice::new(vec![
+            OrderingColumn::desc(a_cols[0]),
+            OrderingColumn::asc(a_cols[1]),
+            OrderingColumn::desc(b_cols[0]),
+        ]);
+
+        let str = ordering_to_string(&metadata, &ord);
+        assert_eq!(str, "A:-a1, A:+a2, B:-b1", "to_string");
+
+        let cols: Vec<_> = str.split(",").map(|s| s.trim()).collect();
+        let ord_from_str = ordering_from_string(&metadata, &cols);
+        assert_eq!(ord_from_str, ord, "from string")
+    }
+
+    pub fn ordering_to_string(metadata: &TestMetadata, ord: &OrderingChoice) -> String {
+        ord.columns()
+            .iter()
+            .map(|ord| {
+                let column = metadata.get_column(&ord.column());
+                let table = metadata.get_relation(column.relation_id().as_ref().unwrap());
+                format!("{}:{}{}", table.name(), if ord.ascending() { "+" } else { "-" }, column.name())
+            })
+            .join(", ")
+    }
+
+    pub fn ordering_from_string(metadata: &TestMetadata, columns: &[&str]) -> OrderingChoice {
+        let columns = columns
+            .iter()
+            .map(|name| {
+                let (table, ord) = name.split_once(":").unwrap();
+                let direction = &ord[0..1];
+                let descending = match direction {
+                    "+" => false,
+                    "-" => true,
+                    _ => panic!("Unexpected column ordering. Expected +/- but got '{}'", direction),
+                };
+                let id = metadata.find_column(table, &ord[1..]);
+                OrderingColumn::ord(id, descending)
+            })
+            .collect();
+        OrderingChoice::new(columns)
+    }
+}
+
+#[cfg(test)]
 mod test {
     use crate::meta::testing::TestMetadata;
     use crate::meta::ColumnId;
+    use crate::properties::ordering::testing::ordering_from_string;
     use crate::properties::{OrderingChoice, OrderingColumn};
 
     fn new_column() -> ColumnId {
@@ -209,6 +285,33 @@ mod test {
         let left = build_ordering(&metadata, "A", &["a1:desc"]);
         let right = build_ordering(&metadata, "A", &["a1:asc", "a2:asc"]);
         assert!(!left.prefix_of(&right), "NOT prefix left: {} right {}", left, right);
+    }
+
+    #[test]
+    fn with_mapping() {
+        let mut metadata = TestMetadata::with_tables(vec!["A", "B"]);
+        let a_cols = metadata.add_columns("A", vec!["a1", "a2"]);
+        let b_cols = metadata.add_columns("B", vec!["b1", "b2"]);
+
+        let ord = ordering_from_string(&metadata, &["A:+a1", "A:-a2"]);
+        let result_ord = ord.with_mapping(&a_cols, &b_cols);
+
+        let expected_ord = ordering_from_string(&metadata, &["B:+b1", "B:-b2"]);
+        assert_eq!(result_ord, expected_ord);
+    }
+
+    #[test]
+    fn with_mapping_retains_other_columns() {
+        let mut metadata = TestMetadata::with_tables(vec!["A", "B", "C"]);
+        let a_cols = metadata.add_columns("A", vec!["a1", "a2"]);
+        let b_cols = metadata.add_columns("B", vec!["b1", "b2"]);
+        let c_cols = metadata.add_columns("C", vec!["c1"]);
+
+        let ord = ordering_from_string(&metadata, &["A:-a1", "C:-c1", "A:+a2"]);
+        let result_ord = ord.with_mapping(&a_cols, &b_cols);
+
+        let expected_ord = ordering_from_string(&metadata, &["B:-b1", "C:-c1", "B:+b2"]);
+        assert_eq!(result_ord, expected_ord);
     }
 
     fn expect_format(ord: &OrderingColumn, expected: &str, name: &str) {

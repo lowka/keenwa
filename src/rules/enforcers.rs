@@ -1,7 +1,7 @@
 use crate::error::OptimizerError;
-use crate::operators::relational::join::{get_join_columns_pair, JoinCondition};
+use crate::meta::ColumnId;
 use crate::operators::relational::logical::LogicalExpr;
-use crate::operators::relational::physical::{IndexScan, MergeSortJoin, PhysicalExpr, Select, Sort};
+use crate::operators::relational::physical::{IndexScan, MergeSortJoin, PhysicalExpr, Select, Sort, Unique};
 use crate::operators::relational::RelNode;
 use crate::properties::physical::RequiredProperties;
 use crate::properties::OrderingChoice;
@@ -21,6 +21,7 @@ pub trait EnforcerRules {
     /// See [RuleSet::can_explore_with_enforcer](super::RuleSet::can_explore_with_enforcer).
     fn can_explore_with_enforcer(&self, expr: &LogicalExpr, properties: &RequiredProperties) -> bool {
         if properties.ordering().is_some() {
+            // FIXME: We can only pass the ordering past the projection if that ordering does not use synthentic columns
             matches!(expr, LogicalExpr::Select { .. } | LogicalExpr::Projection { .. })
         } else {
             false
@@ -88,10 +89,12 @@ pub fn expr_retains_property(expr: &PhysicalExpr, required: &RequiredProperties)
         (PhysicalExpr::Select(Select { .. }), Some(_)) => true,
         (
             PhysicalExpr::MergeSortJoin(MergeSortJoin {
-                left, right, condition, ..
+                left_ordering,
+                right_ordering,
+                ..
             }),
             Some(ordering),
-        ) => join_provides_ordering(left, right, condition, Some(ordering)),
+        ) => join_provides_ordering(ordering, left_ordering, right_ordering),
         (
             PhysicalExpr::IndexScan(IndexScan {
                 ordering: column_ordering,
@@ -109,6 +112,15 @@ pub fn expr_retains_property(expr: &PhysicalExpr, required: &RequiredProperties)
             }),
             Some(ordering),
         ) => ordering_is_preserved(sort_ordering, Some(ordering)),
+        (
+            PhysicalExpr::Unique(Unique {
+                inputs,
+                columns: output_columns,
+                ordering: output_ordering,
+                ..
+            }),
+            Some(ordering),
+        ) => unique_provides_ordering(ordering, inputs, output_ordering, output_columns),
         // ???: projection w/o expressions always retains required physical properties
         (_, _) => false,
     };
@@ -116,14 +128,16 @@ pub fn expr_retains_property(expr: &PhysicalExpr, required: &RequiredProperties)
 }
 
 pub fn expr_provides_property(expr: &PhysicalExpr, required: &RequiredProperties) -> Result<bool, OptimizerError> {
-    let preserved = match (expr, required.ordering()) {
+    let provides = match (expr, required.ordering()) {
         (_, None) => true,
         (
             PhysicalExpr::MergeSortJoin(MergeSortJoin {
-                left, right, condition, ..
+                left_ordering,
+                right_ordering,
+                ..
             }),
             Some(ordering),
-        ) => join_provides_ordering(left, right, condition, Some(ordering)),
+        ) => join_provides_ordering(ordering, left_ordering, right_ordering),
         (
             PhysicalExpr::IndexScan(IndexScan {
                 ordering: column_ordering,
@@ -143,35 +157,52 @@ pub fn expr_provides_property(expr: &PhysicalExpr, required: &RequiredProperties
         ) => ordering_is_preserved(sort_ordering, Some(ordering)),
         (_, Some(_)) => false,
     };
-    Ok(preserved)
+    Ok(provides)
 }
 
 fn join_provides_ordering(
-    left: &RelNode,
-    right: &RelNode,
-    condition: &JoinCondition,
-    ordering: Option<&OrderingChoice>,
+    ordering: &OrderingChoice,
+    left_ordering: &OrderingChoice,
+    right_ordering: &OrderingChoice,
 ) -> bool {
-    assert!(ordering.is_some(), "ordering must be present");
+    // Convert the required ordering to the ordering where all columns from the right side
+    // of the join are replaced with columns from the left side of the join.
+    let left_columns: Vec<_> = left_ordering.clone().into_columns();
+    let right_columns: Vec<_> = right_ordering.clone().into_columns();
 
-    if let Some((left, right)) = get_join_columns_pair(left, right, condition) {
-        let left_side_ordered = if !left.is_empty() {
-            let left_ordering = OrderingChoice::from_columns(left);
-            ordering_is_preserved(&left_ordering, ordering)
-        } else {
-            false
-        };
-        let right_side_ordered = if !right.is_empty() {
-            let right_ordering = OrderingChoice::from_columns(right);
-            ordering_is_preserved(&right_ordering, ordering)
-        } else {
-            false
-        };
+    let normalized = ordering.with_mapping(&right_columns, &left_columns);
+    // the resulting ordering must be a prefix of the left ordering.
+    normalized.prefix_of(left_ordering)
+}
 
-        left_side_ordered || right_side_ordered
-    } else {
-        false
-    }
+fn unique_provides_ordering(
+    ordering: &OrderingChoice,
+    inputs: &[RelNode],
+    output_ordering: &[OrderingChoice],
+    output_columns: &[ColumnId],
+) -> bool {
+    // All inputs of a unique operator are ordered in the same way
+    // and the required ordering uses columns from its output. E.g.:
+    //
+    // Inputs:
+    //  - a1 asc, a2 asc, a3 desc
+    //  - b2 asc, b2 asc, b3 desc
+    // Output:
+    //    o1 asc, o2 asc, o3 desc
+    //
+    // Ordering:
+    //    o1 asc, o2 asc
+    //
+    // Replace output columns from the required ordering with
+    // columns of the first input and check whether the required
+    // ordering if the prefix of the resulting one.
+    //
+    let input = &inputs[0];
+    let input_columns = input.props().logical().output_columns();
+    let input_ordering = &output_ordering[0];
+    let ord = input_ordering.with_mapping(input_columns, output_columns);
+
+    ordering.prefix_of(&ord)
 }
 
 fn ordering_is_preserved(ord: &OrderingChoice, required: Option<&OrderingChoice>) -> bool {

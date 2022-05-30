@@ -309,7 +309,7 @@ fn test_merge_join_requires_sorted_inputs() {
 
     tester.optimize(
         r#"
-02 MergeSortJoin [ord:[+1]=00 ord:[+4]=01] type=Inner using=[(1, 4)]
+02 MergeSortJoin [ord:[+1]=00 ord:[+4]=01] type=Inner using=[(1, 4)] left_ord=[+1] right_ord=[+4]
 01 Sort [01] ord=[+4]
 01 Scan B cols=[3, 4]
 00 Sort [00] ord=[+1]
@@ -339,7 +339,7 @@ fn test_merge_join_satisfies_ordering_requirements() {
 
     tester.optimize(
         r#"
-02 MergeSortJoin [ord:[+1]=00 ord:[+4]=01] type=Inner using=[(1, 4)]
+02 MergeSortJoin [ord:[+1]=00 ord:[+4]=01] type=Inner using=[(1, 4)] left_ord=[+1] right_ord=[+4]
 01 Sort [01] ord=[+4]
 01 Scan B cols=[3, 4]
 00 Sort [00] ord=[+1]
@@ -349,7 +349,39 @@ fn test_merge_join_satisfies_ordering_requirements() {
 }
 
 #[test]
-fn test_merge_join_does_no_satisfy_ordering_requirements() {
+fn test_merge_join_satisfies_multi_column_ordering_requirements() {
+    let mut tester = OptimizerTester::new();
+
+    tester.set_operator(|builder| {
+        let left = builder.clone().get("A", vec!["a1", "a2"])?;
+        let right = builder.get("B", vec!["b1", "b2"])?;
+
+        let join = left.join_using(right, JoinType::Inner, vec![("a1", "b2"), ("a2", "b1")])?;
+        let a1_asc = OrderingOption::by("a1", false);
+        let b2_desc = OrderingOption::by("b1", true);
+        let ordered = join.order_by(OrderingOptions::new(vec![a1_asc, b2_desc]))?;
+
+        ordered.build()
+    });
+
+    tester.add_rules(|_| vec![Box::new(MergeSortJoinRule)]);
+
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("B", 100);
+
+    tester.optimize(
+        r#"
+02 MergeSortJoin [ord:[+1, -2]=00 ord:[+4, -3]=01] type=Inner using=[(1, 4), (2, 3)] left_ord=[+1, -2] right_ord=[+4, -3]
+01 Sort [01] ord=[+4, -3]
+01 Scan B cols=[3, 4]
+00 Sort [00] ord=[+1, -2]
+00 Scan A cols=[1, 2]
+"#,
+    );
+}
+
+#[test]
+fn test_merge_join_does_not_satisfy_ordering_requirements() {
     let mut tester = OptimizerTester::new();
 
     tester.set_operator(|builder| {
@@ -370,7 +402,7 @@ fn test_merge_join_does_no_satisfy_ordering_requirements() {
     tester.optimize(
         r#"
 02 Sort [02] ord=[+3]
-02 MergeSortJoin [ord:[+1]=00 ord:[+4]=01] type=Inner using=[(1, 4)]
+02 MergeSortJoin [ord:[+1]=00 ord:[+4]=01] type=Inner using=[(1, 4)] left_ord=[+1] right_ord=[+4]
 01 Sort [01] ord=[+4]
 01 Scan B cols=[3, 4]
 00 Sort [00] ord=[+1]
@@ -411,7 +443,7 @@ fn test_self_joins() {
 
     tester.optimize(
         r#"
-01 MergeSortJoin [ord:[+1]=00 ord:[+1]=00] type=Inner using=[(1, 1)]
+01 MergeSortJoin [ord:[+1]=00 ord:[+1]=00] type=Inner using=[(1, 1)] left_ord=[+1] right_ord=[+1]
 00 Sort [00] ord=[+1]
 00 Scan A cols=[1, 2]
 00 Sort [00] ord=[+1]
@@ -447,10 +479,10 @@ fn test_self_joins_inner_sort_should_be_ignored() {
 
     tester.optimize(
         r#"
-02 MergeSortJoin [ord:[+1]=01 ord:[+1]=00] type=Inner using=[(1, 1)]
+02 MergeSortJoin [ord:[+1]=01 ord:[+1]=00] type=Inner using=[(1, 1)] left_ord=[+1] right_ord=[+1]
 00 Sort [00] ord=[+1]
 00 Scan A cols=[1, 2]
-01 MergeSortJoin [ord:[+1]=00 ord:[+1]=00] type=Inner using=[(1, 1)]
+01 MergeSortJoin [ord:[+1]=00 ord:[+1]=00] type=Inner using=[(1, 1)] left_ord=[+1] right_ord=[+1]
 00 Sort [00] ord=[+1]
 00 Scan A cols=[1, 2]
 00 Sort [00] ord=[+1]
@@ -532,7 +564,7 @@ fn test_inner_sort_satisfied_by_ordering_providing_operator() {
         r#"
 03 Select [ord:[+1]=01 02]
 02 Expr col:1 > 10
-01 MergeSortJoin [ord:[+1]=00 ord:[+1]=00] type=Inner using=[(1, 1)]
+01 MergeSortJoin [ord:[+1]=00 ord:[+1]=00] type=Inner using=[(1, 1)] left_ord=[+1] right_ord=[+1]
 00 Sort [00] ord=[+1]
 00 Scan A cols=[1, 2]
 00 Sort [00] ord=[+1]
@@ -684,7 +716,7 @@ fn test_union() {
 
     tester.optimize(
         r#"query: union all=false -> unique
-02 Unique [ord:[+1, +2]=00 ord:[+3, +4]=01] cols=[5, 6]
+02 Unique [ord:[+1, +2]=00 ord:[+3, +4]=01] cols=[5, 6] left_ord=[+1, +2] right_ord=[+3, +4]
 01 Sort [01] ord=[+3, +4]
 01 Scan B cols=[3, 4]
 00 Sort [00] ord=[+1, +2]
@@ -706,6 +738,38 @@ fn test_union() {
 00 Scan A cols=[1, 2]
 "#,
     )
+}
+
+#[test]
+fn test_unique_satisfies_ordering_requirements() {
+    let mut tester = OptimizerTester::new();
+
+    tester.set_operator(|builder| {
+        let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
+        let from_b = builder.get("B", vec!["b1", "b2"])?;
+        let union = from_a.union(from_b)?;
+        let a1_asc = OrderingOption::by("a1", false);
+        let a2_desc = OrderingOption::by("a2", true);
+        let ordering = OrderingOptions::new(vec![a1_asc, a2_desc]);
+        let ordered = union.order_by(ordering)?;
+
+        ordered.build()
+    });
+
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("B", 100);
+
+    tester.add_rules(|_| vec![Box::new(UnionRule)]);
+
+    tester.optimize(
+        r#"
+02 Unique [ord:[+1, -2]=00 ord:[+3, -4]=01] cols=[5, 6] left_ord=[+1, -2] right_ord=[+3, -4]
+01 Sort [01] ord=[+3, -4]
+01 Scan B cols=[3, 4]
+00 Sort [00] ord=[+1, -2]
+00 Scan A cols=[1, 2]
+"#,
+    );
 }
 
 #[test]
@@ -780,7 +844,7 @@ fn test_distinct_on_expr_as_unique() {
 
     tester.optimize(
         r#"
-02 Unique [ord:[+1, +2]=00 01] cols=[1, 2]
+02 Unique [ord:[+1, +2]=00 01] cols=[1, 2] ord=[+1, +2]
 01 Expr col:1
 00 Sort [00] ord=[+1, +2]
 00 Scan A cols=[1, 2]
