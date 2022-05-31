@@ -135,6 +135,8 @@ pub trait RuleSet {
     ) -> Result<EvaluationResponse, OptimizerError>;
 
     /// Creates an enforcer operator for the specified physical properties.
+    /// The result contains an enforcer operator and the remaining physical properties
+    /// that should be satisfied by another operator.
     /// If enforcer can not be created this method must return an error.
     fn create_enforcer(
         &self,

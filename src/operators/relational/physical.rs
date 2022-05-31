@@ -119,24 +119,36 @@ impl PhysicalExpr {
         }
     }
 
-    pub fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
+    pub fn get_provided_properties(&self) -> Option<RequiredProperties> {
+        if let PhysicalExpr::IndexScan(IndexScan {
+            ordering: Some(ordering),
+            ..
+        }) = self
+        {
+            Some(RequiredProperties::new_with_ordering(ordering.clone()))
+        } else {
+            None
+        }
+    }
+
+    pub fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         match self {
-            PhysicalExpr::Projection(expr) => expr.build_required_properties(),
-            PhysicalExpr::Select(expr) => expr.build_required_properties(),
-            PhysicalExpr::HashAggregate(expr) => expr.build_required_properties(),
-            PhysicalExpr::HashJoin(expr) => expr.build_required_properties(),
-            PhysicalExpr::MergeSortJoin(expr) => expr.build_required_properties(),
-            PhysicalExpr::NestedLoopJoin(expr) => expr.build_required_properties(),
-            PhysicalExpr::Scan(expr) => expr.build_required_properties(),
-            PhysicalExpr::IndexScan(expr) => expr.build_required_properties(),
-            PhysicalExpr::Sort(expr) => expr.build_required_properties(),
-            PhysicalExpr::Unique(expr) => expr.build_required_properties(),
-            PhysicalExpr::Append(expr) => expr.build_required_properties(),
-            PhysicalExpr::HashedSetOp(expr) => expr.build_required_properties(),
-            PhysicalExpr::Limit(expr) => expr.build_required_properties(),
-            PhysicalExpr::Offset(expr) => expr.build_required_properties(),
-            PhysicalExpr::Values(expr) => expr.build_required_properties(),
-            PhysicalExpr::Empty(expr) => expr.build_required_properties(),
+            PhysicalExpr::Projection(expr) => expr.get_required_input_properties(),
+            PhysicalExpr::Select(expr) => expr.get_required_input_properties(),
+            PhysicalExpr::HashAggregate(expr) => expr.get_required_input_properties(),
+            PhysicalExpr::HashJoin(expr) => expr.get_required_input_properties(),
+            PhysicalExpr::MergeSortJoin(expr) => expr.get_required_input_properties(),
+            PhysicalExpr::NestedLoopJoin(expr) => expr.get_required_input_properties(),
+            PhysicalExpr::Scan(expr) => expr.get_required_input_properties(),
+            PhysicalExpr::IndexScan(expr) => expr.get_required_input_properties(),
+            PhysicalExpr::Sort(expr) => expr.get_required_input_properties(),
+            PhysicalExpr::Unique(expr) => expr.get_required_input_properties(),
+            PhysicalExpr::Append(expr) => expr.get_required_input_properties(),
+            PhysicalExpr::HashedSetOp(expr) => expr.get_required_input_properties(),
+            PhysicalExpr::Limit(expr) => expr.get_required_input_properties(),
+            PhysicalExpr::Offset(expr) => expr.get_required_input_properties(),
+            PhysicalExpr::Values(expr) => expr.get_required_input_properties(),
+            PhysicalExpr::Empty(expr) => expr.get_required_input_properties(),
         }
     }
 
@@ -189,7 +201,7 @@ impl Projection {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
+    fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -242,7 +254,7 @@ impl Select {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
+    fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -304,7 +316,7 @@ impl HashAggregate {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
+    fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -376,7 +388,7 @@ impl HashJoin {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
+    fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -480,7 +492,7 @@ impl MergeSortJoin {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
+    fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         let left_ordering = RequiredProperties::new_with_ordering(self.left_ordering.clone());
         let right_ordering = RequiredProperties::new_with_ordering(self.right_ordering.clone());
 
@@ -551,7 +563,7 @@ impl NestedLoopJoin {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
+    fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -601,7 +613,7 @@ impl Scan {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
+    fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -641,7 +653,7 @@ impl IndexScan {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
+    fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -683,7 +695,7 @@ impl Sort {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
+    fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -732,7 +744,7 @@ impl Append {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
+    fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -814,7 +826,7 @@ impl Unique {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
+    fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         let requirements = self.ordering.iter().map(|ord| Some(RequiredProperties::new_with_ordering(ord.clone())));
         if self.on_expr.is_some() {
             Some(requirements.chain(std::iter::once(None)).collect())
@@ -893,7 +905,7 @@ impl HashedSetOp {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
+    fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -942,7 +954,7 @@ impl Limit {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
+    fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -987,7 +999,7 @@ impl Offset {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
+    fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -1034,7 +1046,7 @@ impl Values {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
+    fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
@@ -1069,7 +1081,7 @@ impl Empty {
         }
     }
 
-    fn build_required_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
+    fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
         None
     }
 
