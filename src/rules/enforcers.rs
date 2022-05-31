@@ -1,8 +1,11 @@
 use crate::error::OptimizerError;
 use crate::meta::ColumnId;
 use crate::operators::relational::logical::LogicalExpr;
-use crate::operators::relational::physical::{IndexScan, MergeSortJoin, PhysicalExpr, Select, Sort, Unique};
+use crate::operators::relational::physical::{
+    IndexScan, MergeSortJoin, PhysicalExpr, Projection, Select, Sort, Unique,
+};
 use crate::operators::relational::RelNode;
+use crate::operators::scalar::ScalarExpr;
 use crate::properties::physical::RequiredProperties;
 use crate::properties::OrderingChoice;
 use crate::rules::EvaluationResponse;
@@ -21,8 +24,9 @@ pub trait EnforcerRules {
     /// See [RuleSet::can_explore_with_enforcer](super::RuleSet::can_explore_with_enforcer).
     fn can_explore_with_enforcer(&self, expr: &LogicalExpr, properties: &RequiredProperties) -> bool {
         if properties.ordering().is_some() {
-            // FIXME: We can only pass the ordering past the projection if that ordering does not use synthentic columns
-            matches!(expr, LogicalExpr::Select { .. } | LogicalExpr::Projection { .. })
+            // FIXME: We can only pass the ordering past the projection if that ordering
+            //  does not use synthetic columns
+            matches!(expr, LogicalExpr::Select { .. })
         } else {
             false
         }
@@ -97,21 +101,18 @@ pub fn expr_retains_property(expr: &PhysicalExpr, required: &RequiredProperties)
         ) => join_provides_ordering(ordering, left_ordering, right_ordering),
         (
             PhysicalExpr::IndexScan(IndexScan {
-                ordering: column_ordering,
+                ordering: Some(column_ordering),
                 ..
             }),
             Some(ordering),
-        ) => column_ordering
-            .as_ref()
-            .map(|ord| ordering_is_preserved(ord, Some(ordering)))
-            .unwrap_or_default(),
+        ) => ordering.prefix_of(column_ordering),
         (
             PhysicalExpr::Sort(Sort {
                 ordering: sort_ordering,
                 ..
             }),
             Some(ordering),
-        ) => ordering_is_preserved(sort_ordering, Some(ordering)),
+        ) => ordering.prefix_of(sort_ordering),
         (
             PhysicalExpr::Unique(Unique {
                 inputs,
@@ -121,7 +122,10 @@ pub fn expr_retains_property(expr: &PhysicalExpr, required: &RequiredProperties)
             }),
             Some(ordering),
         ) => unique_provides_ordering(ordering, inputs, output_ordering, output_columns),
-        // ???: projection w/o expressions always retains required physical properties
+        // projection w/o expressions always retains required physical properties
+        (PhysicalExpr::Projection(Projection { exprs, .. }), Some(_)) => exprs
+            .iter()
+            .all(|expr| matches!(expr.expr(), ScalarExpr::Scalar(_) | ScalarExpr::Column(_))),
         (_, _) => false,
     };
     Ok(retains)
@@ -140,21 +144,18 @@ pub fn expr_provides_property(expr: &PhysicalExpr, required: &RequiredProperties
         ) => join_provides_ordering(ordering, left_ordering, right_ordering),
         (
             PhysicalExpr::IndexScan(IndexScan {
-                ordering: column_ordering,
+                ordering: Some(column_ordering),
                 ..
             }),
             Some(ordering),
-        ) => column_ordering
-            .as_ref()
-            .map(|ord| ordering_is_preserved(ord, Some(ordering)))
-            .unwrap_or_default(),
+        ) => ordering.prefix_of(column_ordering),
         (
             PhysicalExpr::Sort(Sort {
                 ordering: sort_ordering,
                 ..
             }),
             Some(ordering),
-        ) => ordering_is_preserved(sort_ordering, Some(ordering)),
+        ) => ordering.prefix_of(sort_ordering),
         (_, Some(_)) => false,
     };
     Ok(provides)
@@ -203,11 +204,4 @@ fn unique_provides_ordering(
     let ord = input_ordering.with_mapping(input_columns, output_columns);
 
     ordering.prefix_of(&ord)
-}
-
-fn ordering_is_preserved(ord: &OrderingChoice, required: Option<&OrderingChoice>) -> bool {
-    match required {
-        Some(required) => required.prefix_of(ord),
-        None => false,
-    }
 }

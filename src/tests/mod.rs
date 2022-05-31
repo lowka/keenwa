@@ -1,4 +1,5 @@
 use crate::catalog::{Catalog, IndexBuilder, OrderingBuilder, DEFAULT_SCHEMA};
+use crate::memo::Props;
 use crate::operators::builder::{OrderingOption, OrderingOptions};
 use crate::operators::relational::join::JoinType;
 use crate::operators::relational::RelNode;
@@ -115,6 +116,72 @@ fn test_select_with_a_nested_query() {
 }
 
 #[test]
+fn test_select_with_ordering_and_nested_query() {
+    let mut tester = OptimizerTester::new();
+
+    tester.set_operator(|builder| {
+        let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
+        let sub_query = builder.new_query_builder().get("B", vec!["b2"])?.build()?;
+        let sub_query = ScalarExpr::SubQuery(RelNode::from(sub_query));
+        let filter = sub_query.gt(scalar(1));
+        let select = from_a.select(Some(filter))?;
+        let ordered = select.order_by(OrderingOption::by("a1", false))?;
+
+        ordered.build()
+    });
+
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("B", 100);
+
+    tester.optimize(
+        r#"
+03 Select [ord:[+1]=01 02]
+02 Expr SubQuery 00 > 1
+00 Scan B cols=[3]
+01 Sort [01] ord=[+1]
+01 Scan A cols=[1, 2]
+"#,
+    );
+}
+
+#[test]
+fn test_select_with_ordering_in_nested_query() {
+    let mut tester = OptimizerTester::new();
+
+    tester.set_operator(|builder| {
+        let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
+
+        let ordered_sub_query = builder
+            .new_query_builder()
+            .get("B", vec!["b2"])?
+            .order_by(OrderingOption::by("b2", true))?
+            .build()?;
+        println!(">>>>{:?}", ordered_sub_query.props().relational().physical());
+        let sub_query = ScalarExpr::SubQuery(RelNode::from(ordered_sub_query));
+
+        let filter = sub_query.gt(scalar(1));
+        let select = from_a.select(Some(filter))?;
+        // let ordered = select.order_by(OrderingOption::by("a1", false))?;
+
+        // ordered.build()
+        select.build()
+    });
+
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("B", 100);
+
+    tester.optimize(
+        r#"
+03 Select [01 02]
+02 Expr SubQuery 00 > 1
+00 Sort [00] ord=[-3]
+00 Scan B cols=[3]
+01 Scan A cols=[1, 2]
+"#,
+    );
+}
+
+#[test]
 fn test_get_ordered_top_level_enforcer() {
     let mut tester = OptimizerTester::new();
 
@@ -159,10 +226,54 @@ fn test_get_ordered_no_top_level_enforcer() {
     tester.explore_with_enforcer(false);
     tester.optimize(
         r#"
-02 Select [ord:[+2]=00 ord:[+2]=01]
+02 Select [ord:[+2]=00 01]
 01 Expr col:1 > 10
 00 Sort [00] ord=[+2]
 00 Scan A cols=[1, 2]
+"#,
+    );
+}
+
+#[test]
+fn test_pass_ordering_through_ordering_preserving_operators() {
+    let mut tester = OptimizerTester::new();
+
+    tester.set_operator(|builder| {
+        let from_a = builder.get("A", vec!["a1", "a2"])?;
+        let projection = from_a.project(vec![col("a1"), col("a2")])?;
+        let filter = col("a1").gt(scalar(10));
+        let select = projection.select(Some(filter))?;
+        let select = select.order_by(OrderingOption::by("a1", false))?;
+
+        select.build()
+    });
+
+    tester.add_rules(|catalog| vec![Box::new(IndexOnlyScanRule::new(catalog))]);
+    tester.update_catalog(|catalog| {
+        let table = catalog.get_table("A").expect("Table does not exist");
+        let index_ordering = OrderingBuilder::new(table.clone()).add_asc("a1").add_asc("a2").build();
+
+        let index = IndexBuilder::new(table, "my_index")
+            .add_column("a1")
+            .add_column("a2")
+            .ordering(index_ordering)
+            .build();
+
+        catalog.add_index(DEFAULT_SCHEMA, index);
+    });
+
+    tester.update_statistics(|p| p.set_selectivity("col:a1 > 10", 0.1));
+    tester.set_table_row_count("A", 100);
+
+    tester.explore_with_enforcer(false);
+    tester.optimize(
+        r#"
+05 Select [ord:[+1]=03 04]
+04 Expr col:1 > 10
+03 Projection [ord:[+1]=00 01 02] cols=[1, 2]
+02 Expr col:2
+01 Expr col:1
+00 IndexScan A cols=[1, 2]
 "#,
     );
 }
@@ -281,7 +392,7 @@ fn test_prefer_already_sorted_data() {
     });
 
     tester.set_table_row_count("A", 100);
-    tester.set_table_row_count("Index:A", 20);
+    // tester.set_table_row_count("Index:A", 20);
 
     tester.optimize(
         r#"

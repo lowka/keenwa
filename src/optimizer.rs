@@ -1,4 +1,4 @@
-//! Cost-based optimizer.
+//! Cost-based optimizer based on the Cascades Optimizer Framework paper.
 //!
 //! Basic algorithm:
 //!
@@ -35,7 +35,6 @@
 //! ```
 //!
 
-use std::cell::RefCell;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::{Debug, Display, Formatter};
@@ -89,8 +88,8 @@ where
         let root_group_id = root_expr.state().memo_group_id();
 
         let ctx = OptimizationContext {
-            group: root_group_id,
-            required_properties: runtime_state.properties_cache.insert(required_property),
+            group_id: root_group_id,
+            required_properties: Rc::new(required_property),
         };
 
         log::debug!("Initial ctx: {}, initial memo:\n{}", ctx, format_memo(memo));
@@ -135,8 +134,8 @@ where
                 } => {
                     apply_rule(runtime_state, memo, ctx, expr, binding, explore, self.rule_set.as_ref());
                 }
-                Task::EnforceProperties { ctx, expr } => {
-                    enforce_properties(runtime_state, memo, ctx, expr, self.rule_set.as_ref());
+                Task::EnforceProperties { ctx, enforcer_task } => {
+                    enforce_properties(runtime_state, memo, ctx, enforcer_task, self.rule_set.as_ref());
                 }
                 Task::OptimizeInputs { ctx, expr, inputs } => {
                     optimize_inputs(runtime_state, ctx, expr, inputs, self.cost_estimator.as_ref());
@@ -247,17 +246,12 @@ enum Task {
     },
     EnforceProperties {
         ctx: OptimizationContext,
-        /// If present the required physical properties for the given expression
-        /// will be provided by an enforcer operator.
-        ///
-        /// Otherwise the optimizer explores alternative plans
-        /// with the enforcer operator as a root operator of the given subtree.
-        expr: ExprRefOption,
+        enforcer_task: EnforcerTask,
     },
     OptimizeInputs {
         ctx: OptimizationContext,
         expr: ExprRef,
-        inputs: InputContexts,
+        inputs: OptimizeInputsState,
     },
     ExprOptimized {
         ctx: OptimizationContext,
@@ -287,13 +281,39 @@ impl Display for Task {
             Task::OptimizeInputs { ctx, expr, inputs } => {
                 write!(f, "OptimizeInputs: {} expr: {}, inputs: {}", ctx, expr, inputs)
             }
-            Task::EnforceProperties { ctx, expr } => {
+            Task::EnforceProperties {
+                ctx,
+                enforcer_task: EnforcerTask::ProvideProperties(expr),
+            } => {
                 write!(f, "EnforceProperties: {} expr: {}", ctx, expr)
+            }
+            Task::EnforceProperties {
+                ctx,
+                enforcer_task: EnforcerTask::ExploreAlternatives,
+            } => {
+                write!(f, "EnforceProperties: {} explore alternative plans", ctx)
             }
             Task::ExprOptimized { ctx, expr } => {
                 write!(f, "ExprOptimized: {} expr: {}", ctx, expr)
             }
             Task::ExploreGroup { ctx } => write!(f, "ExploreGroup: {}", ctx),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum EnforcerTask {
+    /// Enforcer operator is used to provide physical properties required by an optimization context.
+    ProvideProperties(ExprRef),
+    /// Explore alternative plan using an enforcer operator as a root of a plan subtree.
+    ExploreAlternatives,
+}
+
+impl Display for EnforcerTask {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EnforcerTask::ProvideProperties(expr) => write!(f, "enforce properties: {}", expr),
+            EnforcerTask::ExploreAlternatives => write!(f, "explore alternative plans"),
         }
     }
 }
@@ -339,7 +359,7 @@ where
     // Because the runtime_state and the group_state are borrowed mutably it is not possible
     // to split the code bellow into two different functions.
     // error[E0499]: cannot borrow `*runtime_state` as mutable more than once at a time
-    let group = memo.get_group(&ctx.group);
+    let group = memo.get_group(&ctx.group_id);
     if group.expr().is_scalar() {
         let expr = group.mexpr();
 
@@ -366,7 +386,7 @@ where
                     })
                 }
                 RelExpr::Physical(_) => {
-                    let task = get_optimize_rel_inputs_task(&ctx, &expr, &runtime_state.properties_cache, rule_set);
+                    let task = get_optimize_rel_inputs_task(&ctx, &expr, rule_set);
                     runtime_state.tasks.schedule(task);
                 }
             }
@@ -378,7 +398,7 @@ fn group_optimized(runtime_state: &mut RuntimeState, memo: &ExprMemo, ctx: Optim
     let state = runtime_state.state.init_or_get_state(&ctx);
 
     if state.best_expr.is_none() {
-        let group = memo.get_group(&ctx.group_id());
+        let group = memo.get_group(&ctx.group_id);
         panic!("No best expr for ctx: {}. first expression: {:?}", ctx, group.mexpr());
     }
     state.optimized = true;
@@ -407,7 +427,7 @@ fn optimize_expr<R>(
 
     let rule_ctx = RuleContext::new(ctx.required_properties.clone(), metadata);
     for (rule_id, rule) in rule_set.get_rules() {
-        let group_id = ctx.group_id();
+        let group_id = ctx.group_id;
         if runtime_state.applied_rules.is_applied(rule_id, &expr_id, &group_id) {
             continue;
         }
@@ -421,7 +441,7 @@ fn optimize_expr<R>(
                 expr: expr.clone(),
                 group: match rule_match {
                     RuleMatch::Expr => None,
-                    RuleMatch::Group => Some(ctx.group),
+                    RuleMatch::Group => Some(ctx.group_id),
                 },
                 #[cfg(test)]
                 rule_name: rule.name(),
@@ -472,7 +492,7 @@ fn apply_rule<R>(
     runtime_state.stats.tasks.apply_rule += 1;
     let expr_id = expr.id();
     let rule_id = binding.rule_id;
-    let group_id = ctx.group_id();
+    let group_id = ctx.group_id;
 
     if runtime_state.applied_rules.is_applied(&rule_id, &expr_id, &group_id) {
         return;
@@ -495,7 +515,7 @@ fn apply_rule<R>(
             RuleResult::Substitute(expr) => {
                 let new_operator = OperatorExpr::from(expr);
                 let new_operator = Operator::from(new_operator);
-                let memo_group = memo.get_group(&ctx.group);
+                let memo_group = memo.get_group(&ctx.group_id);
                 let scope = OuterScope::from_properties(memo_group.props());
                 let group_token = memo_group.to_group_token();
                 let new_expr = memo.insert_group_member(group_token, new_operator, &scope);
@@ -512,7 +532,7 @@ fn apply_rule<R>(
             RuleResult::Implementation(expr) => {
                 let new_operator = OperatorExpr::from(expr);
                 let new_operator = Operator::from(new_operator);
-                let memo_group = memo.get_group(&ctx.group);
+                let memo_group = memo.get_group(&ctx.group_id);
                 let scope = OuterScope::from_properties(memo_group.props());
                 let group_token = memo_group.to_group_token();
                 let new_expr = memo.insert_group_member(group_token, new_operator, &scope);
@@ -520,7 +540,7 @@ fn apply_rule<R>(
 
                 log::debug!(" + Physical expression: {}", new_expr);
 
-                let task = get_optimize_rel_inputs_task(&ctx, &new_expr, &runtime_state.properties_cache, rule_set);
+                let task = get_optimize_rel_inputs_task(&ctx, &new_expr, rule_set);
                 runtime_state.tasks.schedule(task);
             }
         }
@@ -531,25 +551,25 @@ fn enforce_properties<R>(
     runtime_state: &mut RuntimeState,
     memo: &mut ExprMemo,
     ctx: OptimizationContext,
-    expr: ExprRefOption,
+    enforcer_task: EnforcerTask,
     rule_set: &R,
 ) where
     R: RuleSet,
 {
     runtime_state.stats.tasks.enforce_properties += 1;
 
-    let required_properties =
-        ctx.required_properties.as_ref().as_ref().unwrap_or_else(|| {
-            panic!("Can not apply an enforcer - no required properties. ctx: {}, expr: {}", ctx, expr)
-        });
+    let required_properties = ctx.required_properties.as_ref().as_ref().unwrap_or_else(|| {
+        panic!("Can not apply an enforcer - no required properties. ctx: {}, task: {}", ctx, enforcer_task)
+    });
 
     let (enforcer_expr, remaining_properties) = {
-        let group = memo.get_group(&ctx.group_id());
+        let group = memo.get_group(&ctx.group_id);
         let scope = OuterScope::from_properties(group.props());
         let input = RelNode::from_group(group);
 
-        let (enforcer_expr, remaining_properties) =
-            rule_set.create_enforcer(required_properties, input).expect("Failed to apply an enforcer");
+        let (enforcer_expr, remaining_properties) = rule_set
+            .create_enforcer(required_properties, input)
+            .expect("Failed to create an enforcer");
         let enforcer_expr = OperatorExpr::from(enforcer_expr);
         // ENFORCERS: Currently enforcers can not be retrieved from group.exprs()
         // because adding an enforcer to a group won't allow the optimizer to complete the optimization process:
@@ -559,42 +579,45 @@ fn enforce_properties<R>(
         // is used as its input results an infinite loop during the traversal.
         let enforcer_expr = memo.insert_group(Operator::from(enforcer_expr), &scope);
         let enforcer_expr = enforcer_expr.state().memo_expr();
-        let remaining_properties = runtime_state.properties_cache.insert(remaining_properties);
 
-        (enforcer_expr, remaining_properties)
+        (enforcer_expr, Rc::new(remaining_properties))
     };
 
-    let ExprRefOption { expr } = expr;
-    if let Some(expr) = expr {
-        runtime_state.tasks.schedule(Task::OptimizeInputs {
-            ctx: ctx.clone(),
-            expr: enforcer_expr,
-            inputs: InputContexts::completed(ctx.group, remaining_properties.clone()),
-        });
+    match enforcer_task {
+        EnforcerTask::ProvideProperties(expr) => {
+            // Inputs of an enforcer operator are optimized w/o properties provided by that enforcer.
+            // When this task is executed, all inputs of the enforcer operator are optimized.
+            let task = OptimizeInputsTaskBuilder::new(ctx.clone(), enforcer_expr)
+                .require_properties(remaining_properties.clone())
+                .build_completed();
 
-        let input_ctx = OptimizationContext {
-            group: ctx.group,
-            required_properties: remaining_properties,
-        };
-        // combine with remaining_properties ???
-        let required_input_properties = expr.expr().relational().physical().build_required_properties();
-        let num_children = expr.children().len();
-        let required_properties = runtime_state.properties_cache.insert_list(required_input_properties, num_children);
-        let inputs = InputContexts::with_required_properties(&expr, required_properties);
+            runtime_state.tasks.schedule(task);
 
-        runtime_state.tasks.schedule(Task::OptimizeInputs {
-            ctx: input_ctx,
-            expr,
-            inputs,
-        })
-    } else {
-        let inputs = InputContexts::new(&enforcer_expr, remaining_properties);
+            // We optimize an operator w/o properties provided by the enforcer.
+            let input_ctx = OptimizationContext {
+                group_id: ctx.group_id,
+                required_properties: remaining_properties,
+            };
 
-        runtime_state.tasks.schedule(Task::OptimizeInputs {
-            ctx,
-            expr: enforcer_expr,
-            inputs,
-        })
+            let physical_expr = expr.expr().relational().physical();
+            let required_input_properties = physical_expr.get_required_input_properties();
+            // We must optimize child expression using the properties required by an operator.
+            //??? combine with required properties
+            let task = OptimizeInputsTaskBuilder::new(input_ctx, expr)
+                .use_required_properties(required_input_properties)
+                .build();
+
+            runtime_state.tasks.schedule(task);
+        }
+        EnforcerTask::ExploreAlternatives => {
+            // The enforcer operator is used to explore alternative plans.
+            // We should optimize its inputs w/o properties provided by that enforcer.
+            let optimize_inputs = OptimizeInputsTaskBuilder::new(ctx.clone(), enforcer_expr)
+                .require_properties(remaining_properties)
+                .build();
+
+            runtime_state.tasks.schedule(optimize_inputs)
+        }
     }
 }
 
@@ -602,7 +625,7 @@ fn optimize_inputs<T>(
     runtime_state: &mut RuntimeState,
     ctx: OptimizationContext,
     expr: ExprRef,
-    mut inputs: InputContexts,
+    mut inputs: OptimizeInputsState,
     cost_estimator: &T,
 ) where
     T: CostEstimator,
@@ -646,25 +669,20 @@ fn optimize_inputs<T>(
 }
 
 fn get_optimize_scalar_inputs_task(ctx: &OptimizationContext, expr: &ExprRef) -> Task {
-    let inputs = InputContexts::new(expr, ctx.required_properties.clone());
-    Task::OptimizeInputs {
-        ctx: ctx.clone(),
-        expr: expr.clone(),
-        inputs,
-    }
+    // Optimize nested subqueries with their required properties.
+    let required_props = expr.children().map(|expr| expr.props().relational().physical.required.clone()).collect();
+
+    OptimizeInputsTaskBuilder::new(ctx.clone(), expr.clone())
+        .use_required_properties(Some(required_props))
+        .build()
 }
 
-fn get_optimize_rel_inputs_task<R>(
-    ctx: &OptimizationContext,
-    expr: &ExprRef,
-    properties_cache: &PhysicalPropertiesCache,
-    rule_set: &R,
-) -> Task
+fn get_optimize_rel_inputs_task<R>(ctx: &OptimizationContext, expr: &ExprRef, rule_set: &R) -> Task
 where
     R: RuleSet,
 {
     let physical_expr = expr.expr().relational().physical();
-    let required_input_properties = physical_expr.build_required_properties();
+    let required_input_properties = physical_expr.get_required_input_properties();
 
     let (provides_property, retains_property) = match ctx.required_properties.as_ref() {
         Some(required_properties) => {
@@ -683,66 +701,37 @@ where
         // Optimization context has no required properties + expression does not require any property from its inputs.
         // -> optimize each child expression using required properties of child expressions.
         // In this case every child expression is optimized using required properties of its memo group.
-        let inputs = expr
-            .children()
-            .map(|child_expr| {
-                let required_properties = match child_expr.expr() {
-                    OperatorExpr::Relational(_) => {
-                        properties_cache.insert(child_expr.props().relational().physical.required.clone())
-                    }
-                    OperatorExpr::Scalar(_) => properties_cache.none(),
-                };
-                OptimizationContext {
-                    group: child_expr.group_id(),
-                    required_properties,
-                }
-            })
-            .collect();
-        let inputs = InputContexts::from_inputs(inputs);
-        Task::OptimizeInputs {
-            ctx: ctx.clone(),
-            expr: expr.clone(),
-            inputs,
-        }
+        OptimizeInputsTaskBuilder::new(ctx.clone(), expr.clone()).use_child_properties().build()
     } else if retains_property {
         // Expression retains the required properties.
         //??? combine with required properties
 
-        let inputs = if let Some(required_input_properties) = required_input_properties {
-            // When an operator requires physical properties from its children
-            // We should use optimize its children under those properties.
-            let num_children = expr.children().len();
-            let required_properties = properties_cache.insert_list(Some(required_input_properties), num_children);
-            InputContexts::with_required_properties(expr, required_properties)
+        if let Some(required_properties) = required_input_properties {
+            // When an operator requires physical properties from its child expressions
+            // we should optimize these expressions under these properties.
+            OptimizeInputsTaskBuilder::new(ctx.clone(), expr.clone())
+                .use_required_properties(Some(required_properties))
+                .build()
         } else {
             // Otherwise optimize its children under the same optimization context.
-            InputContexts::new(expr, ctx.required_properties.clone())
-        };
-
-        Task::OptimizeInputs {
-            ctx: ctx.clone(),
-            expr: expr.clone(),
-            inputs,
+            OptimizeInputsTaskBuilder::new(ctx.clone(), expr.clone())
+                .require_properties(ctx.required_properties.clone())
+                .build()
         }
     } else if provides_property {
         // Expression provides the required properties
         // -> optimize child expressions with properties required by the expression.
 
         // FIXME: MergeSort -> 'provides' conflicts with 'retains'
-        let num_children = expr.children().len();
-        let required_properties = properties_cache.insert_list(required_input_properties, num_children);
-        let inputs = InputContexts::with_required_properties(expr, required_properties);
-        Task::OptimizeInputs {
-            ctx: ctx.clone(),
-            expr: expr.clone(),
-            inputs,
-        }
+        OptimizeInputsTaskBuilder::new(ctx.clone(), expr.clone())
+            .use_required_properties(required_input_properties)
+            .build()
     } else {
         // Expression can not provide the required properties itself
         // -> add an enforcer operator.
         Task::EnforceProperties {
             ctx: ctx.clone(),
-            expr: ExprRefOption::some(expr.clone()),
+            enforcer_task: EnforcerTask::ProvideProperties(expr.clone()),
         }
     }
 }
@@ -762,12 +751,12 @@ where
         return;
     }
 
-    let group = memo.get_group(&ctx.group);
+    let group = memo.get_group(&ctx.group_id);
     if let Some(required_properties) = ctx.required_properties.as_ref() {
         if rule_set.can_explore_with_enforcer(group.expr().relational().logical(), required_properties) {
             runtime_state.tasks.schedule(Task::EnforceProperties {
                 ctx: ctx.clone(),
-                expr: ExprRefOption::none(),
+                enforcer_task: EnforcerTask::ExploreAlternatives,
             })
         }
     }
@@ -786,19 +775,13 @@ where
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 struct OptimizationContext {
-    group: GroupId,
+    group_id: GroupId,
     required_properties: Rc<Option<RequiredProperties>>,
-}
-
-impl OptimizationContext {
-    fn group_id(&self) -> GroupId {
-        self.group
-    }
 }
 
 impl Display for OptimizationContext {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{{ group: {}", self.group)?;
+        write!(f, "{{ group: {}", self.group_id)?;
         if let Some(required_properties) = self.required_properties.as_ref() {
             write!(f, " {}", required_properties)?;
         }
@@ -809,7 +792,6 @@ impl Display for OptimizationContext {
 struct RuntimeState {
     tasks: TaskQueue,
     state: State,
-    properties_cache: PhysicalPropertiesCache,
     applied_rules: AppliedRules,
     stats: Stats,
     // TODO:
@@ -821,7 +803,6 @@ impl RuntimeState {
         RuntimeState {
             tasks: TaskQueue::default(),
             state: State::default(),
-            properties_cache: PhysicalPropertiesCache::default(),
             stats: Stats::default(),
             applied_rules: AppliedRules::default(),
             enable_explore_groups: true,
@@ -970,57 +951,14 @@ impl AppliedRules {
 }
 
 #[derive(Debug)]
-struct InputContexts {
+struct OptimizeInputsState {
     inputs: Vec<OptimizationContext>,
     current_index: usize,
 }
 
-impl InputContexts {
-    fn with_required_properties(expr: &ExprRef, required_properties: Vec<Rc<Option<RequiredProperties>>>) -> Self {
-        let inputs = expr
-            .children()
-            .zip(required_properties.into_iter())
-            .map(|(child_expr, required)| OptimizationContext {
-                group: child_expr.group_id(),
-                required_properties: required,
-            })
-            .collect();
-        InputContexts {
-            inputs,
-            current_index: 0,
-        }
-    }
-
-    fn new(expr: &ExprRef, required_properties: Rc<Option<RequiredProperties>>) -> Self {
-        InputContexts {
-            inputs: expr
-                .children()
-                .map(|child_expr| OptimizationContext {
-                    group: child_expr.group_id(),
-                    required_properties: required_properties.clone(),
-                })
-                .collect(),
-            current_index: 0,
-        }
-    }
-
-    fn completed(group: GroupId, required_properties: Rc<Option<RequiredProperties>>) -> Self {
-        let mut ctx = InputContexts {
-            inputs: vec![OptimizationContext {
-                group,
-                required_properties,
-            }],
-            current_index: 0,
-        };
-        ctx.next_input();
-        ctx
-    }
-
-    fn from_inputs(inputs: Vec<OptimizationContext>) -> Self {
-        InputContexts {
-            inputs,
-            current_index: 0,
-        }
+impl OptimizeInputsState {
+    fn set_optimized(&mut self) {
+        self.current_index = self.inputs.len()
     }
 
     fn next_input(&mut self) -> Option<OptimizationContext> {
@@ -1034,7 +972,118 @@ impl InputContexts {
     }
 }
 
-impl Display for InputContexts {
+/// A builder to create instances of [Task::OptimizeInputs].
+struct OptimizeInputsTaskBuilder {
+    ctx: OptimizationContext,
+    expr: ExprRef,
+    input_properties: Vec<Rc<Option<RequiredProperties>>>,
+}
+
+impl OptimizeInputsTaskBuilder {
+    /// Creates an instance of [OptimizeInputsTaskBuilder] for the given expression
+    /// under the specified optimization context.
+    fn new(ctx: OptimizationContext, expr: ExprRef) -> Self {
+        OptimizeInputsTaskBuilder {
+            ctx,
+            expr,
+            input_properties: Vec::new(),
+        }
+    }
+
+    /// Specifies the required physical properties for each child expression.
+    /// * If properties are present then each `i-th` child expression is optimized using `i-th` properties from the given `Vec`.
+    /// * If properties are `None` then each child expression is optimized with no required properties.
+    fn use_required_properties(
+        mut self,
+        properties: Option<Vec<Option<RequiredProperties>>>,
+    ) -> OptimizeInputsTaskBuilder {
+        match properties {
+            Some(properties) => self.input_properties = properties.into_iter().map(Rc::new).collect(),
+            None => {
+                let num_children = self.expr.children().len();
+                self.input_properties = std::iter::repeat(Rc::new(None)).take(num_children).collect()
+            }
+        }
+        self
+    }
+
+    /// Every child expression should be optimized under the properties required by the properties of it group.
+    fn use_child_properties(mut self) -> OptimizeInputsTaskBuilder {
+        self.input_properties = self
+            .expr
+            .children()
+            .map(|expr| match expr.expr() {
+                OperatorExpr::Relational(_) => Rc::new(expr.props().relational().physical().required.clone()),
+                // Nested subqueries are optimized using their properties.
+                // See get_optimize_scalar_inputs_task.
+                OperatorExpr::Scalar(_) => Rc::new(None),
+            })
+            .collect();
+        self
+    }
+
+    /// Every child expression of this expression must be optimized under the given required physical properties.
+    fn require_properties(mut self, properties: Rc<Option<RequiredProperties>>) -> OptimizeInputsTaskBuilder {
+        self.input_properties = std::iter::repeat(properties)
+            .take(self.expr.children().len())
+            .zip(self.expr.children())
+            .map(|(r, expr)| match expr.expr() {
+                OperatorExpr::Relational(_) => r,
+                // Nested subqueries are optimized using their properties.
+                // See get_optimize_scalar_inputs_task.
+                OperatorExpr::Scalar(_) => Rc::new(None),
+            })
+            .collect();
+        self
+    }
+
+    /// Builds an OptimizeInputs task.
+    pub fn build(self) -> Task {
+        self.do_build_task(false)
+    }
+
+    /// Build an OptimizeInputs task that won't schedule optimization of child expressions.
+    pub fn build_completed(self) -> Task {
+        self.do_build_task(true)
+    }
+
+    fn do_build_task(self, completed: bool) -> Task {
+        let input_properties = self.input_properties;
+        let child_iter = self.expr.children();
+
+        assert_eq!(
+            input_properties.len(),
+            child_iter.len(),
+            "Number of input properties is not equal not to the number of child expressions"
+        );
+
+        let inputs = input_properties
+            .into_iter()
+            .zip(child_iter)
+            .map(|(required, expr)| OptimizationContext {
+                group_id: expr.group_id(),
+                required_properties: required,
+            })
+            .collect();
+
+        let mut inputs = OptimizeInputsState {
+            inputs,
+            current_index: 0,
+        };
+
+        if completed {
+            inputs.set_optimized();
+        }
+
+        Task::OptimizeInputs {
+            ctx: self.ctx,
+            expr: self.expr.clone(),
+            inputs,
+        }
+    }
+}
+
+impl Display for OptimizeInputsState {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "[ inputs=[{}]", self.inputs.iter().join(", "))?;
         write!(f, " current_index={}", self.current_index)?;
@@ -1042,7 +1091,7 @@ impl Display for InputContexts {
     }
 }
 
-fn new_cost_estimation_ctx(inputs: &InputContexts, state: &State) -> (CostEstimationContext, Cost) {
+fn new_cost_estimation_ctx(inputs: &OptimizeInputsState, state: &State) -> (CostEstimationContext, Cost) {
     let capacity = inputs.inputs.len();
     let mut best_exprs = Vec::with_capacity(capacity);
     let mut input_cost = 0;
@@ -1059,72 +1108,6 @@ fn new_cost_estimation_ctx(inputs: &InputContexts, state: &State) -> (CostEstima
     }
 
     (CostEstimationContext { inputs: best_exprs }, input_cost)
-}
-
-#[derive(Debug)]
-struct PhysicalPropertiesCache {
-    properties: RefCell<HashMap<Option<RequiredProperties>, Rc<Option<RequiredProperties>>>>,
-}
-
-impl Default for PhysicalPropertiesCache {
-    fn default() -> Self {
-        let cache = PhysicalPropertiesCache {
-            properties: RefCell::new(HashMap::new()),
-        };
-        cache.insert(None);
-        cache
-    }
-}
-
-impl PhysicalPropertiesCache {
-    fn insert(&self, properties: Option<RequiredProperties>) -> Rc<Option<RequiredProperties>> {
-        let mut inner = self.properties.borrow_mut();
-        let existing = inner.get(&properties);
-
-        if let Some(props) = existing {
-            props.clone()
-        } else {
-            match inner.entry(properties.clone()) {
-                Entry::Occupied(o) => o.get().clone(),
-                Entry::Vacant(v) => {
-                    let rc = Rc::new(properties);
-                    v.insert(rc.clone());
-                    rc
-                }
-            }
-        }
-    }
-
-    fn insert_list(
-        &self,
-        vec: Option<Vec<Option<RequiredProperties>>>,
-        size: usize,
-    ) -> Vec<Rc<Option<RequiredProperties>>> {
-        match vec {
-            None => self.none_list(size),
-            Some(props) => {
-                assert_eq!(props.len(), size,
-                           "Number of required properties must be equal to the number of child expressions. Expected: {} but got {}", size, props.len());
-                props.into_iter().map(|p| self.insert(p)).collect()
-            }
-        }
-    }
-
-    fn none(&self) -> Rc<Option<RequiredProperties>> {
-        let inner = self.properties.borrow_mut();
-        let none = None;
-        let rc = inner.get(&none).expect("Empty physical properties are always present");
-        rc.clone()
-    }
-
-    fn none_list(&self, size: usize) -> Vec<Rc<Option<RequiredProperties>>> {
-        let mut props = Vec::with_capacity(size);
-        for _ in 0..size {
-            let none = self.none();
-            props.push(none);
-        }
-        props
-    }
 }
 
 /// A [`ResultCallback`](ResultCallback) that does nothing.
@@ -1157,7 +1140,7 @@ impl<'o> BestExprContext for OptimizerResultCallbackContext<'o> {
     }
 
     fn group_id(&self) -> GroupId {
-        self.ctx.group_id()
+        self.ctx.group_id
     }
 
     fn num_children(&self) -> usize {
@@ -1165,7 +1148,7 @@ impl<'o> BestExprContext for OptimizerResultCallbackContext<'o> {
     }
 
     fn child_group_id(&self, i: usize) -> GroupId {
-        self.inputs[i].group_id()
+        self.inputs[i].group_id
     }
 
     fn child_required(&self, i: usize) -> Option<&RequiredProperties> {
@@ -1205,7 +1188,7 @@ where
                 new_inputs.push_back(out);
             }
 
-            let group = memo.get_group(&ctx.group);
+            let group = memo.get_group(&ctx.group_id);
             let properties = group.props();
             let best_expr_ctx = OptimizerResultCallbackContext {
                 ctx,
