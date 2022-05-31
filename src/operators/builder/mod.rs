@@ -23,9 +23,9 @@ use crate::operators::builder::subqueries::{
 use crate::operators::relational::join::{JoinCondition, JoinOn, JoinType, JoinUsing};
 use crate::operators::relational::logical::{
     LogicalDistinct, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin, LogicalLimit,
-    LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, LogicalValues, SetOperator,
+    LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, LogicalValues,
 };
-use crate::operators::relational::RelNode;
+use crate::operators::relational::{RelNode, SetOperator};
 use crate::operators::scalar::expr::ExprRewriter;
 use crate::operators::scalar::types::resolve_expr_type;
 use crate::operators::scalar::value::ScalarValue;
@@ -143,6 +143,8 @@ pub struct OperatorBuilder {
 /// Additional configuration options for a [OperatorBuilder].
 #[derive(Debug, Clone, Default)]
 pub struct OperatorBuilderConfig {
+    // Make not public.
+    // Use builder-lite pattern.
     pub decorrelate_subqueries: bool,
 }
 
