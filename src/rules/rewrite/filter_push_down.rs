@@ -6,9 +6,9 @@ use crate::meta::ColumnId;
 use crate::operators::relational::join::{JoinCondition, JoinUsing};
 use crate::operators::relational::logical::{
     LogicalAggregate, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin, LogicalProjection,
-    LogicalSelect, LogicalUnion, SetOperator,
+    LogicalSelect, LogicalUnion,
 };
-use crate::operators::relational::RelNode;
+use crate::operators::relational::{RelNode, SetOperator};
 use crate::operators::scalar::expr::{BinaryOp, ExprRewriter};
 use crate::operators::scalar::{exprs, ScalarExpr, ScalarNode};
 use crate::rules::rewrite::{rewrite_rel_inputs, with_new_rel_inputs};

@@ -10,13 +10,21 @@ use crate::operators::scalar::{exprs, ScalarExpr, ScalarNode};
 /// Type of a join.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum JoinType {
+    /// Inner join.
     Inner,
+    /// Left outer join.
     Left,
+    /// Right outer join.
     Right,
+    /// Full join.
     Full,
+    /// Cross join.
     Cross,
+    /// Left semi-join.
     LeftSemi,
+    /// Right semi-join.
     RightSemi,
+    /// Anti-join.
     Anti,
 }
 

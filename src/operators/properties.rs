@@ -7,10 +7,10 @@ use crate::operators::relational::join::{JoinCondition, JoinType};
 use crate::operators::relational::logical::{
     LogicalAggregate, LogicalDistinct, LogicalEmpty, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect,
     LogicalJoin, LogicalLimit, LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, LogicalValues,
-    LogicalWindowAggregate, SetOperator,
+    LogicalWindowAggregate,
 };
 use crate::operators::relational::physical::{PhysicalExpr, Sort};
-use crate::operators::relational::{RelExpr, RelNode};
+use crate::operators::relational::{RelExpr, RelNode, SetOperator};
 use crate::operators::scalar::{exprs, ScalarNode};
 use crate::operators::{OperatorExpr, OuterScope, Properties, RelationalProperties};
 use crate::properties::logical::LogicalProperties;

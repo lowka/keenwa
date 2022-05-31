@@ -13,9 +13,8 @@ use crate::operators::relational::join::{JoinCondition, JoinType};
 use crate::operators::relational::logical::{
     LogicalAggregate, LogicalDistinct, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalJoin,
     LogicalLimit, LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, LogicalValues, LogicalWindowAggregate,
-    SetOperator,
 };
-use crate::operators::relational::RelNode;
+use crate::operators::relational::{RelNode, SetOperator};
 use crate::operators::scalar::expr::ExprRewriter;
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
 use crate::properties::logical::LogicalProperties;

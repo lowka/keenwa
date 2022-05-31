@@ -1,6 +1,6 @@
 //! Relational expressions supported by the optimizer.
 
-use std::fmt::Formatter;
+use std::fmt::{Display, Formatter};
 
 use crate::memo::MemoExprState;
 use crate::meta::ColumnId;
@@ -73,6 +73,27 @@ impl NestedExpr for RelNode {
                 write!(f, "*ptr")
             }
             MemoExprState::Memo(state) => write!(f, "{}", state.group_id()),
+        }
+    }
+}
+
+/// The type of a set operator.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum SetOperator {
+    /// Union.
+    Union,
+    /// Intersect.
+    Intersect,
+    /// Except.
+    Except,
+}
+
+impl Display for SetOperator {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SetOperator::Union => write!(f, "Union"),
+            SetOperator::Intersect => write!(f, "Intersect"),
+            SetOperator::Except => write!(f, "Except"),
         }
     }
 }
