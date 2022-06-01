@@ -8,22 +8,70 @@ use crate::operators::relational::RelNode;
 use crate::operators::scalar::ScalarExpr;
 use crate::properties::physical::RequiredProperties;
 use crate::properties::OrderingChoice;
-use crate::rules::EvaluationResponse;
+use crate::rules::{EvaluationResponse, PhysicalPropertiesProvider};
 
-/// Enforcer-related methods of the [RuleSet](super::RuleSet) trait.
-pub trait EnforcerRules {
-    /// See [RuleSet::evaluate_properties](super::RuleSet::evaluate_properties).
+/// Default implementation of [PhysicalPropertiesProvider].
+/// Provides an enforcer of a sorted physical property.
+#[derive(Debug)]
+pub struct BuiltinPhysicalPropertiesProvider {
+    // TODO: Move this flag to the optimizer?
+    explore_with_enforcer: bool,
+}
+
+impl BuiltinPhysicalPropertiesProvider {
+    /// Creates an instance of [BuiltinPhysicalPropertiesProvider].
+    pub fn new() -> Self {
+        BuiltinPhysicalPropertiesProvider {
+            explore_with_enforcer: true,
+        }
+    }
+
+    /// See [PhysicalPropertiesProvider::can_explore_with_enforcer].
+    pub(crate) fn explore_alternatives(value: bool) -> Self {
+        BuiltinPhysicalPropertiesProvider {
+            explore_with_enforcer: value,
+        }
+    }
+}
+
+impl PhysicalPropertiesProvider for BuiltinPhysicalPropertiesProvider {
     fn evaluate_properties(
         &self,
         expr: &PhysicalExpr,
-        properties: &RequiredProperties,
+        required_properties: &RequiredProperties,
     ) -> Result<EvaluationResponse, OptimizerError> {
-        evaluate_properties(expr, properties)
+        let provides_property = expr_provides_property(expr, required_properties)?;
+        let retains_property = if !provides_property {
+            expr_retains_property(expr, required_properties)?
+        } else {
+            false
+        };
+        Ok(EvaluationResponse {
+            provides_property,
+            retains_property,
+        })
     }
 
-    /// See [RuleSet::can_explore_with_enforcer](super::RuleSet::can_explore_with_enforcer).
-    fn can_explore_with_enforcer(&self, expr: &LogicalExpr, properties: &RequiredProperties) -> bool {
-        if properties.ordering().is_some() {
+    fn create_enforcer(
+        &self,
+        required_properties: &RequiredProperties,
+        input: RelNode,
+    ) -> Result<(PhysicalExpr, Option<RequiredProperties>), OptimizerError> {
+        if let Some(ordering) = required_properties.ordering() {
+            let sort_enforcer = PhysicalExpr::Sort(Sort {
+                input,
+                ordering: ordering.clone(),
+            });
+            Ok((sort_enforcer, None))
+        } else {
+            let message =
+                format!("Unexpected physical property. Only ordering is supported: {:?}", required_properties);
+            Err(OptimizerError::NotImplemented(message))
+        }
+    }
+
+    fn can_explore_with_enforcer(&self, expr: &LogicalExpr, required_properties: &RequiredProperties) -> bool {
+        if self.explore_with_enforcer && required_properties.ordering().is_some() {
             // FIXME: We can only pass the ordering past the projection if that ordering
             //  does not use synthetic columns
             matches!(expr, LogicalExpr::Select { .. })
@@ -31,60 +79,6 @@ pub trait EnforcerRules {
             false
         }
     }
-
-    /// See [RuleSet::create_enforcer](super::RuleSet::create_enforcer).
-    fn create_enforcer(
-        &self,
-        properties: &RequiredProperties,
-        input: RelNode,
-    ) -> Result<(PhysicalExpr, Option<RequiredProperties>), OptimizerError>;
-}
-
-/// Default implementation of [EnforcerRules].
-/// Provides an enforcer of a sorted physical property.
-#[derive(Debug)]
-pub struct DefaultEnforcers;
-
-impl EnforcerRules for DefaultEnforcers {
-    fn create_enforcer(
-        &self,
-        properties: &RequiredProperties,
-        input: RelNode,
-    ) -> Result<(PhysicalExpr, Option<RequiredProperties>), OptimizerError> {
-        create_enforcer(properties, input)
-    }
-}
-
-fn create_enforcer(
-    properties: &RequiredProperties,
-    input: RelNode,
-) -> Result<(PhysicalExpr, Option<RequiredProperties>), OptimizerError> {
-    if let Some(ordering) = properties.ordering() {
-        let sort_enforcer = PhysicalExpr::Sort(Sort {
-            input,
-            ordering: ordering.clone(),
-        });
-        Ok((sort_enforcer, None))
-    } else {
-        let message = format!("Unexpected physical property. Only ordering is supported: {:?}", properties);
-        Err(OptimizerError::NotImplemented(message))
-    }
-}
-
-fn evaluate_properties(
-    expr: &PhysicalExpr,
-    required_properties: &RequiredProperties,
-) -> Result<EvaluationResponse, OptimizerError> {
-    let provides_property = expr_provides_property(expr, required_properties)?;
-    let retains_property = if !provides_property {
-        expr_retains_property(expr, required_properties)?
-    } else {
-        false
-    };
-    Ok(EvaluationResponse {
-        provides_property,
-        retains_property,
-    })
 }
 
 pub fn expr_retains_property(expr: &PhysicalExpr, required: &RequiredProperties) -> Result<bool, OptimizerError> {

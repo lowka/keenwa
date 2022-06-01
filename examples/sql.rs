@@ -7,7 +7,7 @@ use keenwa::operators::format::format_operator_tree;
 use keenwa::operators::Operator;
 use keenwa::optimizer::{NoOpResultCallback, Optimizer};
 use keenwa::rules::implementation::{EmptyRule, GetToScanRule, HashJoinRule, ProjectionRule, SelectRule};
-use keenwa::rules::{Rule, StaticRuleSet};
+use keenwa::rules::{Rule, StaticRuleSet, StaticRuleSetBuilder};
 use keenwa::sql::OperatorFromSqlBuilder;
 use keenwa::statistics::simple::{DefaultSelectivityStatistics, SimpleCatalogStatisticsBuilder};
 use std::rc::Rc;
@@ -76,7 +76,7 @@ fn create_optimizer(catalog: CatalogRef) -> Optimizer<StaticRuleSet, SimpleCostE
         Box::new(HashJoinRule),
     ];
 
-    let rule_set = StaticRuleSet::new(rules);
+    let rule_set = StaticRuleSetBuilder::new().add_rules(rules).build();
     let cost_estimator = SimpleCostEstimator::new();
 
     Optimizer::new(Rc::new(rule_set), Rc::new(cost_estimator), Rc::new(NoOpResultCallback))

@@ -52,7 +52,9 @@ use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::{expr_with_new_inputs, ScalarExpr};
 use crate::operators::{ExprMemo, ExprRef, Operator, OperatorExpr, OuterScope, Properties};
 use crate::properties::physical::RequiredProperties;
-use crate::rules::{EvaluationResponse, RuleContext, RuleId, RuleMatch, RuleResult, RuleSet, RuleType};
+use crate::rules::{
+    EvaluationResponse, PhysicalPropertiesProvider, RuleContext, RuleId, RuleMatch, RuleResult, RuleSet, RuleType,
+};
 
 /// Cost-based optimizer. See [module docs](self) for an overview of the algorithm.
 pub struct Optimizer<R, T, C> {
@@ -567,7 +569,8 @@ fn enforce_properties<R>(
         let scope = OuterScope::from_properties(group.props());
         let input = RelNode::from_group(group);
 
-        let (enforcer_expr, remaining_properties) = rule_set
+        let properties_provider = rule_set.get_physical_properties_provider();
+        let (enforcer_expr, remaining_properties) = properties_provider
             .create_enforcer(required_properties, input)
             .expect("Failed to create an enforcer");
         let enforcer_expr = OperatorExpr::from(enforcer_expr);
@@ -683,13 +686,14 @@ where
 {
     let physical_expr = expr.expr().relational().physical();
     let required_input_properties = physical_expr.get_required_input_properties();
+    let properties_provider = rule_set.get_physical_properties_provider();
 
     let (provides_property, retains_property) = match ctx.required_properties.as_ref() {
         Some(required_properties) => {
             let EvaluationResponse {
                 provides_property,
                 retains_property,
-            } = rule_set
+            } = properties_provider
                 .evaluate_properties(physical_expr, required_properties)
                 .expect("Invalid expr or required physical properties");
             (provides_property, retains_property)
@@ -753,7 +757,8 @@ where
 
     let group = memo.get_group(&ctx.group_id);
     if let Some(required_properties) = ctx.required_properties.as_ref() {
-        if rule_set.can_explore_with_enforcer(group.expr().relational().logical(), required_properties) {
+        let properties_provider = rule_set.get_physical_properties_provider();
+        if properties_provider.can_explore_with_enforcer(group.expr().relational().logical(), required_properties) {
             runtime_state.tasks.schedule(Task::EnforceProperties {
                 ctx: ctx.clone(),
                 enforcer_task: EnforcerTask::ExploreAlternatives,

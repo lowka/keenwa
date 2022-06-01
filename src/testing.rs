@@ -17,8 +17,8 @@ use crate::operators::{Operator, OperatorMemoBuilder};
 use crate::optimizer::{BestExprContext, BestExprRef, Optimizer, ResultCallback};
 use crate::rules::implementation::{EmptyRule, GetToScanRule, LimitOffsetRule, ProjectionRule, SelectRule, ValuesRule};
 use crate::rules::testing::TestRuleSet;
-use crate::rules::Rule;
-use crate::rules::StaticRuleSet;
+use crate::rules::RuleSet;
+use crate::rules::{Rule, StaticRuleSetBuilder};
 use crate::statistics::simple::{PrecomputedSelectivityStatistics, SimpleCatalogStatisticsBuilder};
 
 static INIT_LOG: Once = Once::new();
@@ -170,10 +170,15 @@ impl OptimizerTester {
         ];
         default_rules.extend((self.rules)(self.catalog.clone()));
 
-        let rules: Vec<Box<dyn Rule>> = default_rules.into_iter().filter(|r| (self.rules_filter)(r)).collect();
-        assert!(!rules.is_empty(), "No rules have been specified");
+        let rules = default_rules.into_iter().filter(|r| (self.rules_filter)(r));
+        let rule_set = StaticRuleSetBuilder::new()
+            .add_rules(rules)
+            .explore_with_enforcer(self.explore_with_enforcer)
+            .build();
 
-        let rules = TestRuleSet::new(StaticRuleSet::new(rules), self.shuffle_rules, self.explore_with_enforcer);
+        assert!(!rule_set.get_rules().count() > 0, "No rules have been specified");
+
+        let rules = TestRuleSet::new(rule_set, self.shuffle_rules);
         let cost_estimator = SimpleCostEstimator::new();
         let test_result = Rc::new(RefCell::new(VecDeque::new()));
         let result_callback = TestResultBuilder::new(test_result.clone());
