@@ -122,7 +122,7 @@ fn create_optimizer(catalog: CatalogRef) -> Optimizer<StaticRuleSet, SimpleCostE
         Box::new(JoinCommutativityRule),
     ];
 
-    let rules = StaticRuleSet::new(rules);
+    let rules = StaticRuleSetBuilder::new().add_rules(rules).build();
     let cost_estimator = SimpleCostEstimator::new();
     Optimizer::new(Rc::new(rules), Rc::new(cost_estimator), Rc::new(NoOpResultCallback))
 }

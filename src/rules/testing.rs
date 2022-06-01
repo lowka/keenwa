@@ -8,14 +8,12 @@ use crate::memo::{MemoBuilder, MemoGroupCallback};
 use crate::meta::{ColumnId, MutableMetadata};
 use crate::operators::format::format_operator_tree;
 use crate::operators::relational::logical::{LogicalExpr, LogicalGet};
-use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::{
     ExprMemo, Operator, OperatorExpr, OperatorMetadata, OuterScope, Properties, RelationalProperties,
 };
 use crate::properties::logical::LogicalProperties;
-use crate::properties::physical::RequiredProperties;
-use crate::rules::{EvaluationResponse, Rule, RuleContext, RuleId, RuleIterator, RuleResult, RuleSet};
+use crate::rules::{Rule, RuleContext, RuleId, RuleIterator, RuleResult, RuleSet};
 
 /// Expects that given expression does not match the given rule.
 ///
@@ -145,15 +143,16 @@ impl RuleTester {
 pub struct TestRuleSet<S> {
     rule_set: S,
     shuffle_rules: bool,
-    explore_with_enforcer: bool,
 }
 
-impl<S> TestRuleSet<S> {
-    pub fn new(rule_set: S, shuffle_rules: bool, explore_with_enforcer: bool) -> Self {
+impl<S> TestRuleSet<S>
+where
+    S: RuleSet,
+{
+    pub fn new(rule_set: S, shuffle_rules: bool) -> Self {
         TestRuleSet {
             rule_set,
             shuffle_rules,
-            explore_with_enforcer,
         }
     }
 }
@@ -162,6 +161,8 @@ impl<S> RuleSet for TestRuleSet<S>
 where
     S: RuleSet,
 {
+    type PhysicalPropsProvider = S::PhysicalPropsProvider;
+
     fn get_rules(&self) -> RuleIterator {
         if self.shuffle_rules {
             let mut rules: Vec<(&RuleId, &dyn Rule)> = self.rule_set.get_rules().collect();
@@ -183,28 +184,8 @@ where
         self.rule_set.apply_rule(rule_id, ctx, expr)
     }
 
-    fn evaluate_properties(
-        &self,
-        expr: &PhysicalExpr,
-        required_properties: &RequiredProperties,
-    ) -> Result<EvaluationResponse, OptimizerError> {
-        self.rule_set.evaluate_properties(expr, required_properties)
-    }
-
-    fn create_enforcer(
-        &self,
-        required_properties: &RequiredProperties,
-        input: RelNode,
-    ) -> Result<(PhysicalExpr, Option<RequiredProperties>), OptimizerError> {
-        self.rule_set.create_enforcer(required_properties, input)
-    }
-
-    fn can_explore_with_enforcer(&self, expr: &LogicalExpr, required_properties: &RequiredProperties) -> bool {
-        if self.explore_with_enforcer {
-            self.rule_set.can_explore_with_enforcer(expr, required_properties)
-        } else {
-            false
-        }
+    fn get_physical_properties_provider(&self) -> &Self::PhysicalPropsProvider {
+        self.rule_set.get_physical_properties_provider()
     }
 }
 

@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
-use std::iter::FromIterator;
 use std::rc::Rc;
 
 use crate::error::OptimizerError;
@@ -11,7 +10,7 @@ use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::physical::PhysicalExpr;
 use crate::operators::relational::RelNode;
 use crate::properties::physical::RequiredProperties;
-use crate::rules::enforcers::{DefaultEnforcers, EnforcerRules};
+use crate::rules::enforcers::BuiltinPhysicalPropertiesProvider;
 
 mod enforcers;
 pub mod implementation;
@@ -114,8 +113,10 @@ impl<'m> RuleContext<'m> {
 pub type RuleId = usize;
 
 /// Provides access to optimization rules used by the optimizer.
-//TODO: Rules with rules for all standard operators.
 pub trait RuleSet {
+    /// The type of [PhysicalPropertiesProvider].
+    type PhysicalPropsProvider: PhysicalPropertiesProvider;
+
     /// Returns an iterator over available optimization rules.
     fn get_rules(&self) -> RuleIterator;
 
@@ -127,6 +128,14 @@ pub trait RuleSet {
         expr: &LogicalExpr,
     ) -> Result<Option<RuleResult>, OptimizerError>;
 
+    /// Returns a reference to [PhysicalPropertiesProvider].
+    fn get_physical_properties_provider(&self) -> &Self::PhysicalPropsProvider;
+}
+
+/// PhysicalPropertiesProvider is a component of the optimizer that provides hints how
+/// to optimize expressions when physical properties are present.
+//FIXME: Remove in favour of traits for PhysicalExprs?
+pub trait PhysicalPropertiesProvider {
     /// Checks whether the given physical expression satisfies the required physical properties.
     fn evaluate_properties(
         &self,
@@ -175,6 +184,7 @@ pub struct RuleIterator<'r> {
 }
 
 impl<'r> RuleIterator<'r> {
+    /// Create an iterator over the given rules.
     pub fn new(rules: Vec<(&'r RuleId, &'r dyn Rule)>) -> Self {
         RuleIterator {
             rules: rules.into_iter(),
@@ -209,7 +219,7 @@ impl<'a> Debug for RuleIterator<'a> {
     }
 }
 
-/// Result of a call to [RuleSet::evaluate_properties].
+/// Result of a call to [PhysicalPropertiesProvider::evaluate_properties].
 #[derive(Debug)]
 //TODO: Find a better name.
 pub struct EvaluationResponse {
@@ -231,21 +241,12 @@ fn rule_debug_format(rule: &dyn Rule, f: &mut Formatter<'_>) -> std::fmt::Result
 #[derive(Debug)]
 pub struct StaticRuleSet {
     rules: HashMap<RuleId, Box<dyn Rule>>,
-    enforcers: DefaultEnforcers,
-}
-
-impl StaticRuleSet {
-    /// Creates a new [RuleSet] from the given collection of rules.
-    pub fn new(rules: Vec<Box<dyn Rule>>) -> Self {
-        let rules = HashMap::from_iter(rules.into_iter().enumerate());
-        StaticRuleSet {
-            rules,
-            enforcers: DefaultEnforcers,
-        }
-    }
+    properties_provider: BuiltinPhysicalPropertiesProvider,
 }
 
 impl RuleSet for StaticRuleSet {
+    type PhysicalPropsProvider = BuiltinPhysicalPropertiesProvider;
+
     fn get_rules(&self) -> RuleIterator {
         let rules: Vec<(&RuleId, &dyn Rule)> = self.rules.iter().map(|(id, rule)| (id, rule.as_ref())).collect();
         RuleIterator::new(rules)
@@ -263,23 +264,50 @@ impl RuleSet for StaticRuleSet {
         }
     }
 
-    fn evaluate_properties(
-        &self,
-        expr: &PhysicalExpr,
-        required_properties: &RequiredProperties,
-    ) -> Result<EvaluationResponse, OptimizerError> {
-        self.enforcers.evaluate_properties(expr, required_properties)
+    fn get_physical_properties_provider(&self) -> &Self::PhysicalPropsProvider {
+        &self.properties_provider
+    }
+}
+
+/// Builder for a [StaticRuleSet].
+pub struct StaticRuleSetBuilder {
+    rules: HashMap<RuleId, Box<dyn Rule>>,
+    explore_with_enforcer: bool,
+}
+
+impl StaticRuleSetBuilder {
+    /// Creates an instance of a [StaticRuleSetBuilder].
+    pub fn new() -> Self {
+        StaticRuleSetBuilder {
+            rules: Default::default(),
+            explore_with_enforcer: true,
+        }
     }
 
-    fn create_enforcer(
-        &self,
-        required_properties: &RequiredProperties,
-        input: RelNode,
-    ) -> Result<(PhysicalExpr, Option<RequiredProperties>), OptimizerError> {
-        self.enforcers.create_enforcer(required_properties, input)
+    /// Adds the given rules.
+    pub fn add_rules<T>(mut self, rules: T) -> Self
+    where
+        T: IntoIterator<Item = Box<dyn Rule>>,
+    {
+        let iter = rules.into_iter();
+        iter.enumerate().for_each(|(i, rule)| {
+            self.rules.insert(i, rule);
+        });
+        self
     }
 
-    fn can_explore_with_enforcer(&self, expr: &LogicalExpr, required_properties: &RequiredProperties) -> bool {
-        self.enforcers.can_explore_with_enforcer(expr, required_properties)
+    /// See [PhysicalPropertiesProvider::can_explore_with_enforcer].
+    pub fn explore_with_enforcer(mut self, value: bool) -> Self {
+        self.explore_with_enforcer = value;
+        self
+    }
+
+    /// Builds an instance of a [StaticRuleSet].
+    pub fn build(self) -> StaticRuleSet {
+        let properties_provider = BuiltinPhysicalPropertiesProvider::explore_alternatives(self.explore_with_enforcer);
+        StaticRuleSet {
+            rules: self.rules,
+            properties_provider,
+        }
     }
 }
