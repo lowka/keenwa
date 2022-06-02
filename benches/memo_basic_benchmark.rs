@@ -1,6 +1,7 @@
 use std::fmt::{Display, Formatter};
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use keenwa::error::OptimizerError;
 
 use keenwa::memo::{CopyInExprs, Expr, MemoBuilder, MemoExpr, MemoExprFormatter, MemoExprState, NewChildExprs, Props};
 
@@ -110,19 +111,19 @@ impl MemoExpr for TestOperator {
         &self.state
     }
 
-    fn copy_in<T>(&self, ctx: &mut CopyInExprs<Self, T>) {
+    fn copy_in<T>(&self, ctx: &mut CopyInExprs<Self, T>) -> Result<(), OptimizerError> {
         let mut expr_ctx = ctx.enter_expr(self);
         match self.expr() {
             TestExpr::Scan { .. } => {}
             TestExpr::Filter { input, .. } => {
-                ctx.visit_expr_node(&mut expr_ctx, input);
+                ctx.visit_expr_node(&mut expr_ctx, input)?;
             }
             TestExpr::Join { left, right, .. } => {
-                ctx.visit_expr_node(&mut expr_ctx, left);
-                ctx.visit_expr_node(&mut expr_ctx, right);
+                ctx.visit_expr_node(&mut expr_ctx, left)?;
+                ctx.visit_expr_node(&mut expr_ctx, right)?;
             }
         }
-        ctx.copy_in(self, expr_ctx);
+        ctx.copy_in(self, expr_ctx)
     }
 
     fn expr_with_new_children(expr: &Self::Expr, mut inputs: NewChildExprs<Self>) -> Self::Expr {

@@ -77,7 +77,7 @@ fn memo_bench(c: &mut Criterion) {
 
                     let mut memo = memoization.into_memo();
                     // benchmark should not include the time spend in memoization.
-                    let query = memo.insert_group(query, &scope);
+                    let query = memo.insert_group(query, &scope).expect("Failed to insert an operator");
 
                     let optimizer = create_optimizer(catalog.clone());
                     let start = Instant::now();

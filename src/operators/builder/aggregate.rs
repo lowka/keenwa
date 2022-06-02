@@ -1,5 +1,6 @@
 use crate::error::OptimizerError;
 use crate::meta::ColumnId;
+use crate::not_implemented;
 use crate::operators::builder::projection::{ProjectionList, ProjectionListBuilder};
 use crate::operators::builder::scope::OperatorScope;
 use crate::operators::builder::{OperatorBuilder, RewriteExprs, ValidateFilterExpr, ValidateProjectionExpr};
@@ -37,7 +38,7 @@ impl AggregateBuilder<'_> {
     /// Adds aggregate function `func` with the given column as an argument.
     pub fn add_func(mut self, func: &str, column_name: &str) -> Result<Self, OptimizerError> {
         let func = AggregateFunction::try_from(func)
-            .map_err(|_| OptimizerError::Argument(format!("Unknown aggregate function {}", func)))?;
+            .map_err(|_| OptimizerError::argument(format!("Unknown aggregate function {}", func)))?;
         let aggr_expr = AggrExpr::Function {
             func,
             distinct: false,
@@ -243,16 +244,12 @@ fn disallow_nested_subqueries(expr: &ScalarExpr, clause: &str, location: &str) -
                 ScalarExpr::Case { .. } => {}
                 ScalarExpr::Aggregate { .. } => {}
                 ScalarExpr::Wildcard(_) => {
-                    return Err(OptimizerError::Internal(format!(
-                        "{}: Wildcard expressions are not allowed",
-                        self.clause
-                    )))
+                    let message = format!("{}: Wildcard expressions are not allowed", self.clause);
+                    return Err(OptimizerError::argument(message));
                 }
                 _ if get_subquery(expr).is_some() => {
-                    return Err(OptimizerError::NotImplemented(format!(
-                        "{}: Subqueries in {} are not implemented",
-                        self.clause, self.location
-                    )));
+                    let message = format!("{}: Subqueries in {} are not implemented", self.clause, self.location);
+                    not_implemented!(message)
                 }
                 _ => {}
             }
@@ -332,7 +329,7 @@ fn build_group_by_exprs(
                 aggr_exprs[pos as usize].expr().clone()
             } else {
                 // query error
-                return Err(OptimizerError::Internal(format!("GROUP BY: position {} is not in select list", pos)));
+                return Err(OptimizerError::argument(format!("GROUP BY: position {} is not in select list", pos)));
             }
         } else {
             expr
@@ -345,7 +342,7 @@ fn build_group_by_exprs(
                 let mut rewriter =
                     RewriteExprs::new(scope, metadata.clone(), ValidateProjectionExpr::projection_expr());
                 let expr = expr.rewrite(&mut rewriter)?;
-                let expr = builder.add_scalar_node(expr, scope);
+                let expr = builder.add_scalar_node(expr, scope)?;
                 if let ScalarExpr::Column(id) = expr.expr() {
                     group_by_columns.insert(*id);
                 } else {
@@ -357,15 +354,16 @@ fn build_group_by_exprs(
             ScalarExpr::Scalar(ScalarValue::Int32(_)) => unreachable!("GROUP BY: positional argument"),
             ScalarExpr::Scalar(_) => {
                 // query error
-                return Err(OptimizerError::Internal("GROUP BY: not integer constant argument".to_string()));
+                return Err(OptimizerError::argument("GROUP BY: not integer constant argument"));
             }
             ScalarExpr::Aggregate { .. } => {
                 // query error
-                return Err(OptimizerError::Internal("GROUP BY: Aggregate functions are not allowed".to_string()));
+                return Err(OptimizerError::argument("GROUP BY: Aggregate functions are not allowed"));
             }
             _ => {
                 // query error
-                return Err(OptimizerError::Internal(format!("GROUP BY: unsupported expression: {}", expr)));
+                let message = format!("GROUP BY: unsupported expression: {}", expr);
+                return Err(OptimizerError::argument(message));
             }
         };
         group_exprs.push(expr);
@@ -375,7 +373,7 @@ fn build_group_by_exprs(
         if !group_by_columns.contains(col_id) {
             // query error. Add table/table alias
             let column = metadata.get_column(col_id);
-            return Err(OptimizerError::Internal(format!(
+            return Err(OptimizerError::argument(format!(
                 "AGGREGATE column {} must appear in GROUP BY clause",
                 column.name()
             )));
@@ -420,7 +418,7 @@ fn build_having(
                         if self.non_aggregate_columns.contains(id) || self.group_by_columns.contains(id) {
                             Ok(false)
                         } else {
-                            Err(OptimizerError::Internal(format!(
+                            Err(OptimizerError::argument(format!(
                                 "AGGREGATE: Column {} must appear in GROUP BY clause or an aggregate function",
                                 id
                             )))
@@ -435,7 +433,7 @@ fn build_having(
             }
         }
 
-        Ok(Some(builder.add_scalar_node(expr, scope)))
+        Ok(Some(builder.add_scalar_node(expr, scope)?))
     } else {
         Ok(None)
     }
@@ -556,7 +554,7 @@ pub(super) fn add_window_aggregates(
 
         let window_aggregate = LogicalExpr::WindowAggregate(LogicalWindowAggregate {
             input,
-            window_expr: builder.add_scalar_node(window_expr, &scope),
+            window_expr: builder.add_scalar_node(window_expr, &scope)?,
             columns: window_expr_output_cols,
         });
         builder.add_operator_and_scope(window_aggregate, scope);
@@ -567,16 +565,16 @@ pub(super) fn add_window_aggregates(
         scope = rel_expr_scope;
     }
 
-    let new_exprs: Vec<ScalarNode> = new_exprs
+    let new_exprs: Result<Vec<_>, _> = new_exprs
         .into_iter()
         .zip(column_ids.iter())
         .map(|(expr, id)| match expr.expr() {
             ScalarExpr::WindowAggregate { .. } => builder.add_scalar_node(ScalarExpr::Column(*id), &scope),
-            _ => expr,
+            _ => Ok(expr),
         })
         .collect();
 
-    Ok((input, scope, new_exprs))
+    Ok((input, scope, new_exprs?))
 }
 
 pub(super) fn collect_window_aggregates(exprs: &[ScalarNode]) -> Vec<ScalarExpr> {

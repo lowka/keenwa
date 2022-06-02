@@ -260,7 +260,7 @@ impl RuleSet for StaticRuleSet {
     ) -> Result<Option<RuleResult>, OptimizerError> {
         match self.rules.get(rule_id) {
             Some(rule) => rule.apply(ctx, expr),
-            None => Err(OptimizerError::Internal(format!("Rule#{} does not exist", rule_id))),
+            None => Err(OptimizerError::internal(format!("Rule#{} does not exist", rule_id))),
         }
     }
 

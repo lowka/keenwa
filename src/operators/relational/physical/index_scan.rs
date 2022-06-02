@@ -1,3 +1,4 @@
+use crate::error::OptimizerError;
 use crate::memo::{ExprContext, MemoExprFormatter, NewChildExprs};
 use crate::meta::ColumnId;
 use crate::operators::{Operator, OperatorCopyIn};
@@ -16,7 +17,13 @@ pub struct IndexScan {
 }
 
 impl IndexScan {
-    pub(super) fn copy_in<T>(&self, _visitor: &mut OperatorCopyIn<T>, _expr_ctx: &mut ExprContext<Operator>) {}
+    pub(super) fn copy_in<T>(
+        &self,
+        _visitor: &mut OperatorCopyIn<T>,
+        _expr_ctx: &mut ExprContext<Operator>,
+    ) -> Result<(), OptimizerError> {
+        Ok(())
+    }
 
     pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
         inputs.expect_len(self.num_children(), "IndexScan");

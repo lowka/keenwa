@@ -10,6 +10,7 @@ itertools = "0.10.1"
 triomphe = "0.1.5"
 sqlparser = "0.16.0"
 chrono = "0.4.19"
+backtrace = "0.3"
 
 [dev-dependencies]
 criterion = {version = "0.3.3"}

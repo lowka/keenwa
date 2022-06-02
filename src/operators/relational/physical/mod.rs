@@ -4,6 +4,7 @@ use crate::memo::{ExprContext, MemoExprFormatter, NewChildExprs};
 use crate::operators::{Operator, OperatorCopyIn};
 use crate::properties::physical::RequiredProperties;
 
+use crate::error::OptimizerError;
 pub use append::Append;
 pub use empty::Empty;
 pub use hash_aggregate::HashAggregate;
@@ -79,7 +80,11 @@ pub enum PhysicalExpr {
 }
 
 impl PhysicalExpr {
-    pub(crate) fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+    pub(crate) fn copy_in<T>(
+        &self,
+        visitor: &mut OperatorCopyIn<T>,
+        expr_ctx: &mut ExprContext<Operator>,
+    ) -> Result<(), OptimizerError> {
         match self {
             PhysicalExpr::Projection(expr) => expr.copy_in(visitor, expr_ctx),
             PhysicalExpr::Select(expr) => expr.copy_in(visitor, expr_ctx),

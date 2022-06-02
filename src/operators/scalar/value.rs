@@ -184,7 +184,7 @@ impl Display for ScalarValue {
 pub fn parse_date(input: &str) -> Result<ScalarValue, OptimizerError> {
     match input.parse::<chrono::NaiveDate>() {
         Ok(val) => Ok(ScalarValue::Date(val.num_days_from_ce())),
-        Err(err) => Err(OptimizerError::Argument(format!("Invalid date: {}", err))),
+        Err(err) => Err(OptimizerError::argument(format!("Invalid date: {}", err))),
     }
 }
 
@@ -196,7 +196,7 @@ pub fn parse_time(input: &str) -> Result<ScalarValue, OptimizerError> {
             let nanos = val.nanosecond();
             Ok(ScalarValue::Time(secs, nanos))
         }
-        Err(err) => Err(OptimizerError::Argument(format!("Invalid time: {}", err))),
+        Err(err) => Err(OptimizerError::argument(format!("Invalid time: {}", err))),
     }
 }
 
@@ -213,12 +213,12 @@ pub fn parse_timestamp(input: &str) -> Result<ScalarValue, OptimizerError> {
                 val.with_timezone(&Utc).timestamp_millis(),
                 Some(val.timezone().local_minus_utc()),
             )),
-            Err(err) => Err(OptimizerError::Argument(format!("Invalid timestamp: {}", err))),
+            Err(err) => Err(OptimizerError::argument(format!("Invalid timestamp: {}", err))),
         }
     } else {
         match NaiveDateTime::parse_from_str(input, "%Y-%m-%dT%H:%M:%S%.3f") {
             Ok(val) => Ok(ScalarValue::Timestamp(val.timestamp_millis(), None)),
-            Err(err) => Err(OptimizerError::Argument(format!("Invalid timestamp: {}", err))),
+            Err(err) => Err(OptimizerError::argument(format!("Invalid timestamp: {}", err))),
         }
     }
 }

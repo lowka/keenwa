@@ -179,7 +179,7 @@ where
             FunctionReturnType::Expr(expr) => (expr)(arg_types),
         }
     } else {
-        Err(OptimizerError::Internal(format!("No function {}({})", func, arg_types.iter().join(", "))))
+        Err(OptimizerError::internal(format!("No function {}({})", func, arg_types.iter().join(", "))))
     }
 }
 

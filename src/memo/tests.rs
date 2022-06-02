@@ -19,7 +19,7 @@ where
     S: MemoExprScopeProvider<Expr = E>,
 {
     let scope = S::build_scope(&expr);
-    let expr = memo.insert_group(expr, &scope);
+    let expr = memo.insert_group(expr, &scope).expect("Failed to add an expression");
     let group_id = expr.state().memo_group_id();
     let expr_ref = expr.state().memo_expr();
 
@@ -34,7 +34,7 @@ where
     let group = memo.get_group(&group_id);
     let token = group.to_group_token();
     let scope = S::build_scope(&expr);
-    let expr = memo.insert_group_member(token, expr, &scope);
+    let expr = memo.insert_group_member(token, expr, &scope).expect("Failed to add an expression");
 
     let expr_ref = expr.state().memo_expr();
 
@@ -183,16 +183,14 @@ mod test {
             }
         }
 
-        fn copy_in_nested<D>(&self, collector: &mut CopyInNestedExprs<TestOperator, D>) {
+        fn copy_in_nested<D>(&self, collector: &mut CopyInNestedExprs<TestOperator, D>) -> Result<(), OptimizerError> {
             match self {
-                TestScalarExpr::Value(_) => {}
+                TestScalarExpr::Value(_) => Ok(()),
                 TestScalarExpr::Gt { lhs, rhs } => {
-                    lhs.copy_in_nested(collector);
-                    rhs.copy_in_nested(collector);
+                    lhs.copy_in_nested(collector)?;
+                    rhs.copy_in_nested(collector)
                 }
-                TestScalarExpr::SubQuery(expr) => {
-                    collector.visit_expr(expr);
-                }
+                TestScalarExpr::SubQuery(expr) => collector.visit_expr(expr),
             }
         }
     }
@@ -226,23 +224,30 @@ mod test {
             self.ctx.enter_expr(expr)
         }
 
-        fn visit_rel(&mut self, expr_ctx: &mut ExprContext<TestOperator>, rel: &RelNode) {
-            self.ctx.visit_expr_node(expr_ctx, rel);
+        fn visit_rel(&mut self, expr_ctx: &mut ExprContext<TestOperator>, rel: &RelNode) -> Result<(), OptimizerError> {
+            self.ctx.visit_expr_node(expr_ctx, rel)
         }
 
-        fn visit_scalar(&mut self, expr_ctx: &mut ExprContext<TestOperator>, scalar: &ScalarNode) {
-            self.ctx.visit_expr_node(expr_ctx, scalar);
+        fn visit_scalar(
+            &mut self,
+            expr_ctx: &mut ExprContext<TestOperator>,
+            scalar: &ScalarNode,
+        ) -> Result<(), OptimizerError> {
+            self.ctx.visit_expr_node(expr_ctx, scalar)
         }
 
-        fn copy_in_nested(&mut self, expr_ctx: &mut ExprContext<TestOperator>, expr: &TestOperator) {
+        fn copy_in_nested(
+            &mut self,
+            expr_ctx: &mut ExprContext<TestOperator>,
+            expr: &TestOperator,
+        ) -> Result<(), OptimizerError> {
             let nested_ctx = CopyInNestedExprs::new(self.ctx, expr_ctx);
             let scalar = expr.expr().scalar();
-            nested_ctx.execute(scalar, |expr, collect: &mut CopyInNestedExprs<TestOperator, D>| {
-                expr.copy_in_nested(collect);
-            })
+            nested_ctx
+                .execute(scalar, |expr, collect: &mut CopyInNestedExprs<TestOperator, D>| expr.copy_in_nested(collect))
         }
 
-        fn copy_in(self, expr: &TestOperator, expr_ctx: ExprContext<TestOperator>) {
+        fn copy_in(self, expr: &TestOperator, expr_ctx: ExprContext<TestOperator>) -> Result<(), OptimizerError> {
             self.ctx.copy_in(expr, expr_ctx)
         }
     }
@@ -350,27 +355,27 @@ mod test {
             &self.state
         }
 
-        fn copy_in<T>(&self, ctx: &mut CopyInExprs<Self, T>) {
+        fn copy_in<T>(&self, ctx: &mut CopyInExprs<Self, T>) -> Result<(), OptimizerError> {
             let mut ctx = TraversalWrapper { ctx };
             let mut expr_ctx = ctx.enter_expr(self);
             match self.expr() {
                 TestExpr::Relational(expr) => match expr {
                     TestRelExpr::Leaf(_) => {}
                     TestRelExpr::Node { input } => {
-                        ctx.visit_rel(&mut expr_ctx, input);
+                        ctx.visit_rel(&mut expr_ctx, input)?;
                     }
                     TestRelExpr::Nodes { inputs } => {
                         for input in inputs {
-                            ctx.visit_rel(&mut expr_ctx, input);
+                            ctx.visit_rel(&mut expr_ctx, input)?;
                         }
                     }
                     TestRelExpr::Filter { input, filter } => {
-                        ctx.visit_rel(&mut expr_ctx, input);
-                        ctx.visit_scalar(&mut expr_ctx, filter);
+                        ctx.visit_rel(&mut expr_ctx, input)?;
+                        ctx.visit_scalar(&mut expr_ctx, filter)?;
                     }
                 },
                 TestExpr::Scalar(_expr) => {
-                    ctx.copy_in_nested(&mut expr_ctx, self);
+                    ctx.copy_in_nested(&mut expr_ctx, self)?;
                 }
             }
             ctx.copy_in(self, expr_ctx)
@@ -1029,17 +1034,17 @@ mod test {
         let mut memo = new_memo();
 
         let node_a = TestOperator::from(TestRelExpr::Leaf("a"));
-        let node_a = memo.insert_group(node_a, &TestScope);
+        let node_a = memo.insert_group(node_a, &TestScope).unwrap();
 
         let node = TestOperator::from(TestRelExpr::Node {
             input: TestOperator::from(TestRelExpr::Leaf("b")).into(),
         });
-        let node = memo.insert_group(node, &TestScope);
+        let node = memo.insert_group(node, &TestScope).unwrap();
 
         let nodes = TestOperator::from(TestRelExpr::Nodes {
             inputs: vec![node_a.clone().into(), node.clone().into()],
         });
-        let nodes = memo.insert_group(nodes, &TestScope);
+        let nodes = memo.insert_group(nodes, &TestScope).unwrap();
 
         fn format_expr(expr: &TestOperator, expected: &str) {
             let mut buf = String::new();

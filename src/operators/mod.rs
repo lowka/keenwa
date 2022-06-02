@@ -1,6 +1,5 @@
 //! Operators.
 
-use std::convert::Infallible;
 use std::fmt::Debug;
 use std::rc::Rc;
 
@@ -274,19 +273,17 @@ impl MemoExpr for Operator {
         &self.state
     }
 
-    fn copy_in<T>(&self, visitor: &mut CopyInExprs<Self, T>) {
+    fn copy_in<T>(&self, visitor: &mut CopyInExprs<Self, T>) -> Result<(), OptimizerError> {
         let mut visitor = OperatorCopyIn { visitor };
         let mut expr_ctx = visitor.enter_expr(self);
         match self.expr() {
             OperatorExpr::Relational(expr) => match expr {
-                RelExpr::Logical(expr) => expr.copy_in(&mut visitor, &mut expr_ctx),
-                RelExpr::Physical(expr) => expr.copy_in(&mut visitor, &mut expr_ctx),
+                RelExpr::Logical(expr) => expr.copy_in(&mut visitor, &mut expr_ctx)?,
+                RelExpr::Physical(expr) => expr.copy_in(&mut visitor, &mut expr_ctx)?,
             },
-            OperatorExpr::Scalar(expr) => {
-                visitor.copy_in_nested(&mut expr_ctx, expr);
-            }
+            OperatorExpr::Scalar(expr) => visitor.copy_in_nested(&mut expr_ctx, expr)?,
         }
-        visitor.copy_in(self, expr_ctx);
+        visitor.copy_in(self, expr_ctx)
     }
 
     fn expr_with_new_children(expr: &Self::Expr, mut inputs: NewChildExprs<Self>) -> Self::Expr {
@@ -309,10 +306,10 @@ impl MemoExpr for Operator {
                 has_correlated_sub_queries: scalar.has_correlated_sub_queries,
             })
         } else {
-            Properties::Scalar(ScalarProperties {
-                nested_sub_queries: sub_queries.collect(),
-                has_correlated_sub_queries: false,
-            })
+            unreachable!(
+                "new_properties_with_nested_sub_queries has been called with relational properties: {:?}",
+                props
+            )
         }
     }
 
@@ -372,8 +369,8 @@ impl<T> OperatorCopyIn<'_, '_, T> {
 
     /// Visits the given relational expression and copies it into a memo.
     /// See [`memo`][crate::memo::CopyInExprs::visit_expr_node] for details.
-    pub fn visit_rel(&mut self, expr_ctx: &mut ExprContext<Operator>, expr: &RelNode) {
-        self.visitor.visit_expr_node(expr_ctx, expr);
+    pub fn visit_rel(&mut self, expr_ctx: &mut ExprContext<Operator>, expr: &RelNode) -> Result<(), OptimizerError> {
+        self.visitor.visit_expr_node(expr_ctx, expr)
     }
 
     /// Visits the given optional relational expression if it is present and copies it into a memo. This method is equivalent to:
@@ -383,56 +380,78 @@ impl<T> OperatorCopyIn<'_, '_, T> {
     ///   }
     /// ```
     /// See [`memo::CopyInExprs`][crate::memo::CopyInExprs::visit_opt_expr_node] for details.
-    pub fn visit_opt_rel(&mut self, expr_ctx: &mut ExprContext<Operator>, expr: Option<&RelNode>) {
-        self.visitor.visit_opt_expr_node(expr_ctx, expr);
+    pub fn visit_opt_rel(
+        &mut self,
+        expr_ctx: &mut ExprContext<Operator>,
+        expr: Option<&RelNode>,
+    ) -> Result<(), OptimizerError> {
+        self.visitor.visit_opt_expr_node(expr_ctx, expr)
     }
 
     /// Visits the given scalar expression and copies it into a memo.
     /// See [`memo`][crate::memo::CopyInExprs::visit_expr_node] for details.
-    pub fn visit_scalar(&mut self, expr_ctx: &mut ExprContext<Operator>, expr: &ScalarNode) {
-        self.visitor.visit_expr_node(expr_ctx, expr);
+    pub fn visit_scalar(
+        &mut self,
+        expr_ctx: &mut ExprContext<Operator>,
+        expr: &ScalarNode,
+    ) -> Result<(), OptimizerError> {
+        self.visitor.visit_expr_node(expr_ctx, expr)
     }
 
     /// Visits the given optional scalar expression if it is present and copies it into a memo.
     /// See [`memo::CopyInExprs`][crate::memo::CopyInExprs::visit_opt_expr_node] for details.
-    pub fn visit_opt_scalar(&mut self, expr_ctx: &mut ExprContext<Operator>, expr: Option<&ScalarNode>) {
-        self.visitor.visit_opt_expr_node(expr_ctx, expr);
+    pub fn visit_opt_scalar(
+        &mut self,
+        expr_ctx: &mut ExprContext<Operator>,
+        expr: Option<&ScalarNode>,
+    ) -> Result<(), OptimizerError> {
+        self.visitor.visit_opt_expr_node(expr_ctx, expr)
     }
 
     /// Visits expressions in the given join condition and copies them into a memo.
-    pub fn visit_join_condition(&mut self, expr_ctx: &mut ExprContext<Operator>, condition: &JoinCondition) {
+    pub fn visit_join_condition(
+        &mut self,
+        expr_ctx: &mut ExprContext<Operator>,
+        condition: &JoinCondition,
+    ) -> Result<(), OptimizerError> {
         if let JoinCondition::On(on) = condition {
             self.visitor.visit_expr_node(expr_ctx, on.expr())
-        };
+        } else {
+            Ok(())
+        }
     }
 
     /// Traverses the given scalar expression and all of its nested relational expressions into a memo.
     /// See [`memo`][crate::memo::CopyInExprs::visit_expr_node] for details.
-    pub fn copy_in_nested(&mut self, expr_ctx: &mut ExprContext<Operator>, expr: &ScalarExpr) {
+    pub fn copy_in_nested(
+        &mut self,
+        expr_ctx: &mut ExprContext<Operator>,
+        expr: &ScalarExpr,
+    ) -> Result<(), OptimizerError> {
         struct CopyNestedRelExprs<'b, 'a, 'c, T> {
             collector: &'b mut CopyInNestedExprs<'a, 'c, Operator, T>,
         }
         impl<T> ExprVisitor<RelNode> for CopyNestedRelExprs<'_, '_, '_, T> {
-            type Error = Infallible;
+            type Error = OptimizerError;
 
             fn post_visit(&mut self, expr: &ScalarExpr) -> Result<(), Self::Error> {
                 if let Some(subquery) = get_subquery(expr) {
                     self.collector.visit_expr(subquery)
+                } else {
+                    Ok(())
                 }
-                Ok(())
             }
         }
 
         let nested_ctx = CopyInNestedExprs::new(self.visitor, expr_ctx);
         nested_ctx.execute(expr, |expr, collector: &mut CopyInNestedExprs<Operator, T>| {
             let mut visitor = CopyNestedRelExprs { collector };
-            // Never returns an error
-            expr.accept(&mut visitor).unwrap()
-        });
+            expr.accept(&mut visitor)
+        })
     }
 
     /// Copies the given expression `expr` into a memo.
-    pub fn copy_in(self, expr: &Operator, expr_ctx: ExprContext<Operator>) {
+    pub fn copy_in(self, expr: &Operator, expr_ctx: ExprContext<Operator>) -> Result<(), OptimizerError> {
         self.visitor.copy_in(expr, expr_ctx)
     }
 }

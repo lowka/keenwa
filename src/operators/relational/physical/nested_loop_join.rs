@@ -1,3 +1,4 @@
+use crate::error::OptimizerError;
 use crate::memo::{ExprContext, MemoExprFormatter, NewChildExprs};
 use crate::operators::relational::join::JoinType;
 use crate::operators::relational::RelNode;
@@ -20,10 +21,14 @@ pub struct NestedLoopJoin {
 }
 
 impl NestedLoopJoin {
-    pub(super) fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
-        visitor.visit_rel(expr_ctx, &self.left);
-        visitor.visit_rel(expr_ctx, &self.right);
-        visitor.visit_opt_scalar(expr_ctx, self.condition.as_ref());
+    pub(super) fn copy_in<T>(
+        &self,
+        visitor: &mut OperatorCopyIn<T>,
+        expr_ctx: &mut ExprContext<Operator>,
+    ) -> Result<(), OptimizerError> {
+        visitor.visit_rel(expr_ctx, &self.left)?;
+        visitor.visit_rel(expr_ctx, &self.right)?;
+        visitor.visit_opt_scalar(expr_ctx, self.condition.as_ref())
     }
 
     pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {

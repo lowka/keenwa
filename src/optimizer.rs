@@ -86,7 +86,7 @@ where
 
         let required_property = expr.props().relational().physical().required.clone();
         let scope = OuterScope::from_properties(expr.props());
-        let root_expr = memo.insert_group(expr, &scope);
+        let root_expr = memo.insert_group(expr, &scope)?;
         let root_group_id = root_expr.state().memo_group_id();
 
         let ctx = OptimizationContext {
@@ -520,7 +520,7 @@ fn apply_rule<R>(
                 let memo_group = memo.get_group(&ctx.group_id);
                 let scope = OuterScope::from_properties(memo_group.props());
                 let group_token = memo_group.to_group_token();
-                let new_expr = memo.insert_group_member(group_token, new_operator, &scope);
+                let new_expr = memo.insert_group_member(group_token, new_operator, &scope).unwrap();
                 let new_expr = new_expr.state().memo_expr();
 
                 log::debug!(" + Logical expression: {}", new_expr);
@@ -537,7 +537,7 @@ fn apply_rule<R>(
                 let memo_group = memo.get_group(&ctx.group_id);
                 let scope = OuterScope::from_properties(memo_group.props());
                 let group_token = memo_group.to_group_token();
-                let new_expr = memo.insert_group_member(group_token, new_operator, &scope);
+                let new_expr = memo.insert_group_member(group_token, new_operator, &scope).unwrap();
                 let new_expr = new_expr.state().memo_expr();
 
                 log::debug!(" + Physical expression: {}", new_expr);
@@ -580,7 +580,7 @@ fn enforce_properties<R>(
         // optimize_inputs on the enforcer which then calls optimize group on the same group and we have an infinite loop.
         // 2) copy_out_best_expr traverses its child expressions recursively so adding an enforcer to a group which
         // is used as its input results an infinite loop during the traversal.
-        let enforcer_expr = memo.insert_group(Operator::from(enforcer_expr), &scope);
+        let enforcer_expr = memo.insert_group(Operator::from(enforcer_expr), &scope).unwrap();
         let enforcer_expr = enforcer_expr.state().memo_expr();
 
         (enforcer_expr, Rc::new(remaining_properties))
@@ -1178,7 +1178,7 @@ where
                     RelExpr::Logical(expr) => {
                         let message =
                             format!("Invalid best expression. Expected a physical operator but got: {:?}", expr);
-                        Err(OptimizerError::Internal(message))
+                        Err(OptimizerError::internal(message))
                     }
                     RelExpr::Physical(expr) => Ok(BestExprRef::Relational(expr)),
                 },
@@ -1213,7 +1213,7 @@ where
         }
         None => {
             let message = format!("No best expression for ctx: {}", ctx);
-            Err(OptimizerError::Internal(message))
+            Err(OptimizerError::internal(message))
         }
     }
 }

@@ -82,7 +82,7 @@ impl RuleTester {
     pub fn apply(&mut self, expr: &LogicalExpr, expected: &str) {
         let operator = Operator::from(OperatorExpr::from(expr.clone()));
         let scope = OuterScope::root();
-        let memo_expr = self.memo.insert_group(operator, &scope);
+        let memo_expr = self.memo.insert_group(operator, &scope).expect("Failed to insert an operator");
 
         let ctx = RuleContext::new(Rc::new(None), self.metadata.get_ref());
         let rule_match = self.rule.matches(&ctx, expr);
@@ -97,7 +97,7 @@ impl RuleTester {
             Err(e) => panic!("Failed to apply a rule. Rule: {:?}. Error: {}", self.rule, e),
         };
         let scope = OuterScope::root();
-        let new_expr = self.memo.insert_group(expr, &scope);
+        let new_expr = self.memo.insert_group(expr, &scope).expect("Failed to insert an operator");
         let actual_expr = format_operator_tree(&new_expr);
 
         assert_eq!(actual_expr.trim_end(), expected.trim());
@@ -109,7 +109,7 @@ impl RuleTester {
     pub fn no_match(&mut self, expr: &LogicalExpr, can_apply: bool) {
         let operator = Operator::from(OperatorExpr::from(expr.clone()));
         let scope = OuterScope::root();
-        let memo_expr = self.memo.insert_group(operator, &scope);
+        let memo_expr = self.memo.insert_group(operator, &scope).expect("Failed to insert an operator");
         let expr_str = format_operator_tree(&memo_expr);
 
         let ctx = RuleContext::new(Rc::new(None), self.metadata.get_ref());

@@ -254,37 +254,37 @@ ok: |
 query: |
   select count(1), first_value(a1) OVER () from a;
 error: |
-  Internal error: AGGREGATE column a1 must appear in GROUP BY clause
+  Argument error: AGGREGATE column a1 must appear in GROUP BY clause
 ---
 query: |
   select count(1), first_value(1) OVER (PARTITION BY a1) from a;
 error: |
-  Internal error: AGGREGATE column a1 must appear in GROUP BY clause
+  Argument error: AGGREGATE column a1 must appear in GROUP BY clause
 ---
 query: |
   SELECT first_value(count(1)) OVER (PARTITION BY a1) FROM a;
 error: |
-  Internal error: AGGREGATE column a1 must appear in GROUP BY clause
+  Argument error: AGGREGATE column a1 must appear in GROUP BY clause
 ---
 #query: |
 #  select count(1), first_value(1) OVER (ORDER BY a1) from a;
 #error: |
-#  Internal error: AGGREGATE column a1 must appear in GROUP BY clause
+#  Argument error: AGGREGATE column a1 must appear in GROUP BY clause
 #---
 query: |
   SELECT a2, count(1), rank() OVER (PARTITION BY a1) FROM a GROUP BY a1;
 error: |
-  Internal error: AGGREGATE column a2 must appear in GROUP BY clause
+  Argument error: AGGREGATE column a2 must appear in GROUP BY clause
 ---
 query: |
   SELECT count(1), rank() OVER (PARTITION BY a1) FROM a;
 error: |
-  Internal error: AGGREGATE column a1 must appear in GROUP BY clause
+  Argument error: AGGREGATE column a1 must appear in GROUP BY clause
 ---
 query: |
   SELECT first_value(count(a2)) OVER (PARTITION BY a3) FROM a GROUP BY a1;
 error: |
-  Internal error: AGGREGATE column a3 must appear in GROUP BY clause
+  Argument error: AGGREGATE column a3 must appear in GROUP BY clause
 ---
 query: |
   SELECT 1 + row_number() OVER () FROM a;

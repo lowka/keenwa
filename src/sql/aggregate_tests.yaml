@@ -66,12 +66,12 @@ ok: |
 query: |
   SELECT sum(a1) + a2 FROM a GROUP BY a1
 error: |
-  Internal error: AGGREGATE column a2 must appear in GROUP BY clause
+  Argument error: AGGREGATE column a2 must appear in GROUP BY clause
 ---
 query: |
   SELECT a1+a2, sum(a2) FROM a GROUP BY a1
 error: |
-  Internal error: AGGREGATE column a2 must appear in GROUP BY clause
+  Argument error: AGGREGATE column a2 must appear in GROUP BY clause
 ---
 query: |
   SELECT sum(a1) FROM a GROUP BY a1 HAVING count(a1) > 0
@@ -110,4 +110,4 @@ error: |
 query: |
   SELECT a1 FROM a HAVING a1 > 100
 error: |
-  Internal error: HAVING clause is not allowed in non-aggregate queries
+  Argument error: HAVING clause is not allowed in non-aggregate queries

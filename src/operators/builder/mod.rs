@@ -122,10 +122,18 @@ impl From<OrderingOption> for OrderingOptions {
 /// Callback invoked when a new operator is added to an operator tree by a [operator builder](self::OperatorBuilder).
 pub trait OperatorCallback {
     /// Called when a new relational expression is added to an operator tree.
-    fn new_rel_expr(&self, expr: Operator, scope: &OperatorScope) -> RelNode;
+    ///
+    /// # Panics
+    ///
+    /// This method can panic the given expression is not an instance of a relational operator.
+    fn new_rel_expr(&self, expr: Operator, scope: &OperatorScope) -> Result<RelNode, OptimizerError>;
 
     /// Called when a new scalar expression is added to an operator tree.
-    fn new_scalar_expr(&self, expr: Operator, scope: &OperatorScope) -> ScalarNode;
+    ///
+    /// # Panics
+    ///
+    /// This method can panic the given expression is not an instance of a scalar operator.
+    fn new_scalar_expr(&self, expr: Operator, scope: &OperatorScope) -> Result<ScalarNode, OptimizerError>;
 }
 
 /// Provides API to build a tree of [operator tree](super::Operator).
@@ -205,7 +213,7 @@ impl OperatorBuilder {
         let table = self
             .catalog
             .get_table(source)
-            .ok_or_else(|| OptimizerError::Argument(format!("Table does not exist. Table: {}", source)))?;
+            .ok_or_else(|| OptimizerError::argument(format!("Table does not exist. Table: {}", source)))?;
         let columns = table.columns().iter().map(|c| c.name().to_string()).collect();
         self.add_scan_operator(source, columns)
     }
@@ -218,7 +226,7 @@ impl OperatorBuilder {
     /// Adds an operator that returns the given list of rows.
     pub fn values(mut self, values: Vec<Vec<ScalarExpr>>) -> Result<Self, OptimizerError> {
         if values.is_empty() {
-            return Err(OptimizerError::Argument("VALUES list is empty".to_string()));
+            return Err(OptimizerError::argument("VALUES list is empty"));
         }
 
         let value_list_length = values[0].len();
@@ -235,12 +243,12 @@ impl OperatorBuilder {
             let value_list_expr = if let Some(scope) = self.scope.as_ref() {
                 let mut rewriter = RewriteExprs::new(scope, metadata, validator);
                 let tuple = tuple.rewrite(&mut rewriter)?;
-                self.add_scalar_node(tuple, scope)
+                self.add_scalar_node(tuple, scope)?
             } else {
                 let scope = OperatorScope::from_columns(vec![], vec![]);
                 let mut rewriter = RewriteExprs::new(&scope, metadata, validator);
                 let tuple = tuple.rewrite(&mut rewriter)?;
-                self.add_scalar_node(tuple, &scope)
+                self.add_scalar_node(tuple, &scope)?
             };
 
             if i == 0 {
@@ -266,7 +274,7 @@ impl OperatorBuilder {
             result_list.push(value_list_expr);
 
             if list_length != value_list_length {
-                return Err(OptimizerError::Argument("VALUE lists must all have the same length".to_string()));
+                return Err(OptimizerError::argument("VALUE lists must all have the same length"));
             }
         }
 
@@ -290,7 +298,7 @@ impl OperatorBuilder {
             let filter = filter.rewrite(&mut rewriter)?;
             let correlated = possibly_has_correlated_subqueries(&filter);
 
-            let expr = self.add_scalar_node(filter, &scope);
+            let expr = self.add_scalar_node(filter, &scope)?;
             Some((expr, correlated))
         } else {
             None
@@ -383,7 +391,7 @@ impl OperatorBuilder {
         let (right, right_scope) = right.rel_node()?;
 
         if join_type == JoinType::Cross {
-            return Err(OptimizerError::Argument("CROSS JOIN: USING (columns) condition is not supported".to_string()));
+            return Err(OptimizerError::argument("CROSS JOIN: USING (columns) condition is not supported"));
         }
 
         let mut columns_ids = Vec::new();
@@ -397,13 +405,13 @@ impl OperatorBuilder {
                 .iter()
                 .find(|(name, _)| name == &l)
                 .map(|(_, id)| *id)
-                .ok_or_else(|| OptimizerError::Argument("Join left side".into()))?;
+                .ok_or_else(|| OptimizerError::argument("Join left side"))?;
             let right_id = right_scope
                 .columns()
                 .iter()
                 .find(|(name, _)| name == &r)
                 .map(|(_, id)| *id)
-                .ok_or_else(|| OptimizerError::Argument("Join right side".into()))?;
+                .ok_or_else(|| OptimizerError::argument("Join right side"))?;
             columns_ids.push((left_id, right_id));
         }
 
@@ -427,7 +435,7 @@ impl OperatorBuilder {
             match expr {
                 ScalarExpr::Scalar(ScalarValue::Bool(true)) => {}
                 _ => {
-                    return Err(OptimizerError::Argument(format!(
+                    return Err(OptimizerError::argument(format!(
                         "CROSS JOIN: Invalid expression in ON <expr> condition: {}",
                         expr
                     )))
@@ -454,7 +462,7 @@ impl OperatorBuilder {
             _ => None,
         };
         if let Some(error) = error {
-            return Err(OptimizerError::Argument(format!("{}: Natural join condition is not allowed", error)));
+            return Err(OptimizerError::argument(format!("{}: Natural join condition is not allowed", error)));
         }
 
         let left_name_id: HashMap<String, ColumnId, RandomState> = HashMap::from_iter(left_scope.columns().to_vec());
@@ -469,7 +477,7 @@ impl OperatorBuilder {
         let condition = if !column_ids.is_empty() {
             JoinCondition::Using(JoinUsing::new(column_ids))
         } else {
-            let expr = self.add_scalar_node(ScalarExpr::Scalar(ScalarValue::Bool(true)), &scope);
+            let expr = self.add_scalar_node(ScalarExpr::Scalar(ScalarValue::Bool(true)), &scope)?;
             JoinCondition::On(JoinOn::new(expr))
         };
 
@@ -506,7 +514,7 @@ impl OperatorBuilder {
                                 id
                             }
                             Some(_) | None => {
-                                return Err(OptimizerError::Argument(format!(
+                                return Err(OptimizerError::argument(format!(
                                     "ORDER BY position {} is not in select list",
                                     pos
                                 )))
@@ -529,7 +537,7 @@ impl OperatorBuilder {
                 self.scope = Some(scope);
                 Ok(self)
             }
-            _ => Err(OptimizerError::Internal("No input operator".to_string())),
+            _ => Err(OptimizerError::internal("No input operator")),
         }
     }
 
@@ -571,7 +579,7 @@ impl OperatorBuilder {
     /// (the first operator build created by an operator builder).
     pub fn empty(mut self, return_one_row: bool) -> Result<Self, OptimizerError> {
         if self.operator.is_some() {
-            return Result::Err(OptimizerError::Internal(
+            return Err(OptimizerError::argument(
                 "Empty relation can not be added on top of another operator".to_string(),
             ));
         };
@@ -593,7 +601,7 @@ impl OperatorBuilder {
                 },
             );
             let on_expr = on_expr.rewrite(&mut rewriter)?;
-            let expr = self.add_scalar_node(on_expr, &input_scope);
+            let expr = self.add_scalar_node(on_expr, &input_scope)?;
             Some(expr)
         } else {
             None
@@ -685,11 +693,11 @@ impl OperatorBuilder {
         match (self.operator, self.scope) {
             (Some(operator), Some(scope)) => {
                 validate_rel_node(&operator, &self.metadata)?;
-                let rel_node = self.callback.new_rel_expr(operator, &scope);
+                let rel_node = self.callback.new_rel_expr(operator, &scope)?;
                 Ok(rel_node.into_inner())
             }
-            (None, _) => Err(OptimizerError::Internal("Build: No operator".to_string())),
-            (_, _) => Err(OptimizerError::Internal("Build: No scope".to_string())),
+            (None, _) => Err(OptimizerError::internal("Build: No operator")),
+            (_, _) => Err(OptimizerError::internal("Build: No scope")),
         }
     }
 
@@ -707,13 +715,13 @@ impl OperatorBuilder {
             scope.set_alias(alias, &self.metadata)?;
             Ok(self)
         } else {
-            Err(OptimizerError::Argument("ALIAS: no operator".to_string()))
+            Err(OptimizerError::argument("ALIAS: no operator"))
         }
     }
 
     fn add_scan_operator(mut self, source: &str, columns: Vec<impl Into<String>>) -> Result<Self, OptimizerError> {
         if self.operator.is_some() {
-            return Result::Err(OptimizerError::Internal(
+            return Err(OptimizerError::internal(
                 "Adding a scan operator on top of another operator is not allowed".to_string(),
             ));
         }
@@ -721,7 +729,7 @@ impl OperatorBuilder {
         let table = self
             .catalog
             .get_table(source)
-            .ok_or_else(|| OptimizerError::Argument(format!("Table does not exist. Table: {}", source)))?;
+            .ok_or_else(|| OptimizerError::argument(format!("Table does not exist. Table: {}", source)))?;
 
         let relation_name = String::from(source);
         let relation_id = self.metadata.add_table(relation_name.as_str());
@@ -730,7 +738,7 @@ impl OperatorBuilder {
             .iter()
             .map(|name| {
                 table.get_column(name).ok_or_else(|| {
-                    OptimizerError::Argument(format!("Column does not exist. Column: {}. Table: {}", name, source))
+                    OptimizerError::argument(format!("Column does not exist. Column: {}. Table: {}", name, source))
                 })
             })
             .map_ok(|column| {
@@ -768,7 +776,7 @@ impl OperatorBuilder {
         let (right, right_scope) = right.rel_node()?;
 
         if left_scope.columns().len() != right_scope.columns().len() {
-            return Err(OptimizerError::Argument(format!("{}: Number of columns does not match", set_op)));
+            return Err(OptimizerError::argument(format!("{}: Number of columns does not match", set_op)));
         }
 
         let outer_columns = left_scope.outer_columns().to_vec();
@@ -789,7 +797,7 @@ impl OperatorBuilder {
                         "{}: Data type of {}-th column does not match. Left: {}, right: {}",
                         set_op, i, left_col_type, right_col_type
                     );
-                    return Err(OptimizerError::Argument(message));
+                    return Err(OptimizerError::argument(message));
                 }
                 left_col_type.clone()
             };
@@ -880,7 +888,7 @@ impl OperatorBuilder {
                 BuildJoinCondition::On(expr) => {
                     let mut rewriter = RewriteExprs::new(expr_scope, metadata, ValidateFilterExpr::join_clause());
                     let expr = expr.rewrite(&mut rewriter)?;
-                    let expr = builder.add_scalar_node(expr, expr_scope);
+                    let expr = builder.add_scalar_node(expr, expr_scope)?;
                     JoinCondition::On(JoinOn::new(expr))
                 }
             };
@@ -940,19 +948,16 @@ impl OperatorBuilder {
     }
 
     fn rel_node(&mut self) -> Result<(RelNode, OperatorScope), OptimizerError> {
-        let operator = self
-            .operator
-            .take()
-            .ok_or_else(|| OptimizerError::Internal("No input operator".to_string()))?;
+        let operator = self.operator.take().ok_or_else(|| OptimizerError::internal("No input operator"))?;
 
         validate_rel_node(&operator, &self.metadata)?;
 
-        let scope = self.scope.take().ok_or_else(|| OptimizerError::Internal("No scope".to_string()))?;
-        let rel_node = self.callback.new_rel_expr(operator, &scope);
+        let scope = self.scope.take().ok_or_else(|| OptimizerError::internal("No scope"))?;
+        let rel_node = self.callback.new_rel_expr(operator, &scope)?;
         Ok((rel_node, scope))
     }
 
-    fn add_scalar_node(&self, expr: ScalarExpr, scope: &OperatorScope) -> ScalarNode {
+    fn add_scalar_node(&self, expr: ScalarExpr, scope: &OperatorScope) -> Result<ScalarNode, OptimizerError> {
         let operator = Operator::new(OperatorExpr::from(expr), Properties::Scalar(ScalarProperties::default()));
         self.callback.new_scalar_expr(operator, scope)
     }
@@ -967,7 +972,7 @@ fn validate_rel_node(operator: &Operator, metadata: &OperatorMetadata) -> Result
             let relation_id = column.relation_id().expect("VALUES column without relation_id");
             let relation = metadata.get_relation(&relation_id);
             if relation.name().is_empty() {
-                return Err(OptimizerError::Internal("VALUES in FROM must have an alias".to_string()));
+                return Err(OptimizerError::argument("VALUES in FROM must have an alias".to_string()));
             }
         }
     }
@@ -1035,7 +1040,7 @@ where
                 })
                 .collect();
 
-            OptimizerError::Internal(format!(
+            OptimizerError::internal(format!(
                 "Unexpected column: {}. Input columns: {}, Outer columns: {}",
                 col_name,
                 DisplayColumns(scope.columns()),
@@ -1065,15 +1070,14 @@ where
                 if let Some(query) = get_subquery(&expr) {
                     let output_columns = query.props().logical().output_columns();
                     if output_columns.len() != 1 {
-                        let message = "Subquery must return exactly one column";
-                        return Err(OptimizerError::Internal(message.into()));
+                        return Err(OptimizerError::argument("Subquery must return exactly one column"));
                     }
 
                     match query.state() {
                         MemoExprState::Owned(_) => {
                             //FIXME: Add method to handle nested relational expressions to OperatorCallback?
-                            Err(OptimizerError::Internal(
-                                "Use OperatorBuilder::sub_query_builder to build a nested sub query".to_string(),
+                            Err(OptimizerError::internal(
+                                "Use OperatorBuilder::sub_query_builder to build a nested sub query",
                             ))
                         }
                         MemoExprState::Memo(_) => Ok(expr),
@@ -1137,15 +1141,15 @@ where
         }
         if self.aggregate_depth > 1 {
             // query error
-            return Err(OptimizerError::Internal("Nested aggregate functions are not allowed".to_string()));
+            return Err(OptimizerError::argument("Nested aggregate functions are not allowed".to_string()));
         }
         if self.alias_depth > 1 {
             // query error
-            return Err(OptimizerError::Internal("Nested alias expressions are not allowed".to_string()));
+            return Err(OptimizerError::argument("Nested alias expressions are not allowed".to_string()));
         }
         if self.window_func_depth > 1 {
             // query error
-            return Err(OptimizerError::Internal("Nested window functions are not allowed".to_string()));
+            return Err(OptimizerError::argument("Nested window functions are not allowed".to_string()));
         }
         self.validator.pre_validate(expr)?;
         Ok(())
@@ -1217,12 +1221,12 @@ impl ValidateExpr for ValidateFilterExpr {
         match expr {
             ScalarExpr::Alias(_, _) => {
                 // query error
-                Err(OptimizerError::Internal("aliases are not allowed in filter expressions".to_string()))
+                Err(OptimizerError::argument("aliases are not allowed in filter expressions".to_string()))
             }
             ScalarExpr::Aggregate { .. } if !self.allow_aggregates => {
                 // query error
                 //TODO: Include clause (WHERE, JOIN etc)
-                Err(OptimizerError::Internal("aggregates are not allowed".to_string()))
+                Err(OptimizerError::argument("aggregates are not allowed".to_string()))
             }
             _ => Ok(()),
         }
@@ -1248,14 +1252,14 @@ impl ValidateExpr for ValidateProjectionExpr {
 pub struct NoOpOperatorCallback;
 
 impl OperatorCallback for NoOpOperatorCallback {
-    fn new_rel_expr(&self, expr: Operator, _scope: &OperatorScope) -> RelNode {
+    fn new_rel_expr(&self, expr: Operator, _scope: &OperatorScope) -> Result<RelNode, OptimizerError> {
         assert!(expr.expr().is_relational(), "Not a relational expression");
-        RelNode::from(expr)
+        Ok(RelNode::from(expr))
     }
 
-    fn new_scalar_expr(&self, expr: Operator, _scope: &OperatorScope) -> ScalarNode {
+    fn new_scalar_expr(&self, expr: Operator, _scope: &OperatorScope) -> Result<ScalarNode, OptimizerError> {
         assert!(expr.expr().is_scalar(), "Not a scalar expression");
-        ScalarNode::from_mexpr(expr)
+        Ok(ScalarNode::from_mexpr(expr))
     }
 }
 
@@ -1332,24 +1336,24 @@ impl MemoizeOperators {
 }
 
 impl OperatorCallback for OperatorCallbackImpl {
-    fn new_rel_expr(&self, expr: Operator, scope: &OperatorScope) -> RelNode {
+    fn new_rel_expr(&self, expr: Operator, scope: &OperatorScope) -> Result<RelNode, OptimizerError> {
         assert!(expr.expr().is_relational(), "Expected a relational expression but got {:?}", expr);
         let mut memo = self.memo.borrow_mut();
         let scope = OuterScope {
             outer_columns: scope.outer_columns().to_vec(),
         };
-        let expr = memo.insert_group(expr, &scope);
-        RelNode::from_mexpr(expr)
+        let expr = memo.insert_group(expr, &scope)?;
+        Ok(RelNode::from_mexpr(expr))
     }
 
-    fn new_scalar_expr(&self, expr: Operator, scope: &OperatorScope) -> ScalarNode {
+    fn new_scalar_expr(&self, expr: Operator, scope: &OperatorScope) -> Result<ScalarNode, OptimizerError> {
         assert!(expr.expr().is_scalar(), "Expected a scalar expression but got {:?}", expr);
         let mut memo = self.memo.borrow_mut();
         let scope = OuterScope {
             outer_columns: scope.outer_columns().to_vec(),
         };
-        let expr = memo.insert_group(expr, &scope);
-        ScalarNode::from_mexpr(expr)
+        let expr = memo.insert_group(expr, &scope)?;
+        Ok(ScalarNode::from_mexpr(expr))
     }
 }
 
@@ -1363,9 +1367,9 @@ impl BuildLogicalExprs<'_> {
         match expr {
             BuildFilter::New(expr) => {
                 if let Some(scope) = scope {
-                    Ok(self.builder.add_scalar_node(expr, scope))
+                    self.builder.add_scalar_node(expr, scope)
                 } else {
-                    Err(OptimizerError::Internal("No scope".to_string()))
+                    Err(OptimizerError::internal("No scope"))
                 }
             }
             BuildFilter::Constructed(expr) => Ok(expr),

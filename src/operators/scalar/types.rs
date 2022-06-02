@@ -1,6 +1,7 @@
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
 use crate::meta::ColumnId;
+use crate::not_supported;
 use crate::operators::scalar::expr::{BinaryOp, Expr, NestedExpr};
 
 /// A helper trait that provides the type of the given column.
@@ -24,7 +25,7 @@ where
         Expr::Column(column_id) => Ok(column_registry.get_column_type(column_id)),
         Expr::ColumnName(_) => {
             let message = format!("Expr {} should have been replaced with Column(id)", expr);
-            Err(OptimizerError::Internal(message))
+            Err(OptimizerError::internal(message))
         }
         Expr::Scalar(value) => Ok(value.data_type()),
         Expr::BinaryExpr { lhs, op, rhs } => {
@@ -82,7 +83,7 @@ where
 
                 match &mut expr_result_type {
                     Some(tpe) if tpe != &result_type => {
-                        return Err(OptimizerError::Internal(format!(
+                        return Err(OptimizerError::internal(format!(
                             "Unexpected result type in a THEN clause of a CASE expression. Expected {} but got {}",
                             tpe, result_type
                         )));
@@ -95,16 +96,20 @@ where
                 let result_type = resolve_expr_type(else_expr, column_registry)?;
                 match &mut expr_result_type {
                     Some(tpe) if tpe != &result_type => {
-                        return Err(OptimizerError::Internal(format!(
+                        let message = format!(
                             "Unexpected result type in an ELSE clause of a CASE expression. Expected {} but got {}",
                             tpe, result_type
-                        )));
+                        );
+                        return Err(type_error(message));
                     }
                     _ => expr_result_type = Some(result_type),
                 }
             }
 
-            Ok(expr_result_type.expect("Invalid case expression"))
+            match expr_result_type {
+                Some(result_type) => Ok(result_type),
+                None => Err(OptimizerError::argument("Invalid case expression")),
+            }
         }
         Expr::Tuple(exprs) => {
             let expr_types: Result<Vec<DataType>, _> =
@@ -120,10 +125,10 @@ where
                 if same_type {
                     Ok(expr_type.clone())
                 } else {
-                    Err(OptimizerError::Internal("Array with elements of different type".to_string()))
+                    Err(type_error("Array with elements of different type"))
                 }
             } else {
-                Err(OptimizerError::Unsupported("Empty array expression".to_string()))
+                not_supported!("Empty array expression")
             }
         }
         Expr::ScalarFunction { func, args } => {
@@ -149,7 +154,7 @@ where
         }
         Expr::Ordering { expr, .. } => {
             let message = format!("Ordering expression {} does not support type resolution", expr);
-            Err(OptimizerError::Internal(message))
+            Err(OptimizerError::argument(message))
         }
         Expr::Exists { .. } | Expr::InSubQuery { .. } => {
             // query must be a valid subquery.
@@ -163,7 +168,7 @@ where
         }
         Expr::Wildcard(_) => {
             let message = format!("Expr {} should have been replaced with Column(id)", expr);
-            Err(OptimizerError::Internal(message))
+            Err(OptimizerError::argument(message))
         }
     }
 }
@@ -185,8 +190,8 @@ where
         }
         BinaryOp::Eq | BinaryOp::NotEq => {
             if lhs != rhs && lhs != DataType::Null && rhs != DataType::Null {
-                let msg = format!("Expr: {} Types does not match. lhs: {}. rhs: {}", expr, lhs, rhs);
-                Err(OptimizerError::Internal(msg))
+                let message = format!("Expr: {} Types does not match. lhs: {}. rhs: {}", expr, lhs, rhs);
+                Err(type_error(message))
             } else {
                 Ok(DataType::Bool)
             }
@@ -207,7 +212,7 @@ where
                 Ok(rhs)
             } else {
                 let message = format!("Expr: {} No operator for NULL {} NULL", expr, op);
-                Err(OptimizerError::Internal(message))
+                Err(type_error(message))
             }
         }
         // String operators
@@ -224,11 +229,18 @@ where
     T: NestedExpr,
 {
     if tpe != &DataType::Null && tpe != expected {
-        let msg = format!("Expr: {}. Expected type {} but got {}", expr, expected, tpe);
-        Err(OptimizerError::Internal(msg))
+        let message = format!("Expr: {}. Expected type {} but got {}", expr, expected, tpe);
+        Err(type_error(message))
     } else {
         Ok(())
     }
+}
+
+fn type_error<T>(message: T) -> OptimizerError
+where
+    T: Into<String>,
+{
+    OptimizerError::internal(format!("Type error: {}", message.into()))
 }
 
 #[cfg(test)]

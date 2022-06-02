@@ -67,7 +67,11 @@ pub enum LogicalExpr {
 }
 
 impl LogicalExpr {
-    pub(crate) fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+    pub(crate) fn copy_in<T>(
+        &self,
+        visitor: &mut OperatorCopyIn<T>,
+        expr_ctx: &mut ExprContext<Operator>,
+    ) -> Result<(), OptimizerError> {
         match self {
             LogicalExpr::Projection(expr) => expr.copy_in(visitor, expr_ctx),
             LogicalExpr::Select(expr) => expr.copy_in(visitor, expr_ctx),
