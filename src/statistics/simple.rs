@@ -44,11 +44,11 @@ where
     fn build_get(&self, source: &str) -> Result<Option<Statistics>, OptimizerError> {
         let table_ref = match self.catalog.get_table(source) {
             Some(table_ref) => table_ref,
-            None => return Err(OptimizerError::Internal(format!("Table '{}' does not exists", source))),
+            None => return Err(OptimizerError::argument(format!("Table '{}' does not exists", source))),
         };
         let row_count = match table_ref.statistics().and_then(|s| s.row_count()) {
             Some(row_count) => row_count,
-            None => return Err(OptimizerError::Internal(format!("No row count for table '{}'", source))),
+            None => return Err(OptimizerError::internal(format!("No row count for table '{}'", source))),
         };
         Ok(Some(Statistics::from_row_count(row_count as f64)))
     }

@@ -213,7 +213,7 @@ ok: |
 query: |
   SELECT * FROM (VALUES(1, 2, 3))
 error: |
-  Internal error: VALUES in FROM must have an alias
+  Argument error: VALUES in FROM must have an alias
 ---
 query: |
   SELECT (SELECT t.column1 FROM (VALUES (a.a1, 2, 3)) t) FROM a;

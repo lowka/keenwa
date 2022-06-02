@@ -163,12 +163,12 @@ fn build_limit_offset_argument(operator: &str, expr: Expr, builder: OperatorBuil
     let expr = build_scalar_expr(expr, builder)?;
     if let ScalarExpr::Scalar(ScalarValue::Int32(value)) = &expr {
         if *value < 0 {
-            Err(OptimizerError::Argument(format!("{}: number of rows must be non negative: {}", operator, value)))
+            Err(OptimizerError::argument(format!("{}: number of rows must be non negative: {}", operator, value)))
         } else {
             Ok(*value as usize)
         }
     } else {
-        return Err(OptimizerError::Argument(format!("{}: invalid value expression: {}", operator, expr)));
+        return Err(OptimizerError::argument(format!("{}: invalid value expression: {}", operator, expr)));
     }
 }
 
@@ -312,7 +312,7 @@ fn build_select(builder: OperatorBuilder, select: Select) -> Result<OperatorBuil
         aggregate_builder.build()?
     } else {
         if select.having.is_some() {
-            return Err(OptimizerError::Internal("HAVING clause is not allowed in non-aggregate queries".to_string()));
+            return Err(OptimizerError::argument("HAVING clause is not allowed in non-aggregate queries".to_string()));
         }
 
         builder.project(projection)?
@@ -709,7 +709,7 @@ fn build_value_expr(value: Value) -> Result<ScalarExpr, OptimizerError> {
     let value = match value {
         Value::Number(value, _) => {
             let value = i32::from_str(value.as_str())
-                .map_err(|e| OptimizerError::Internal(format!("Unable to parse a numeric literal: {}", e)))?;
+                .map_err(|e| OptimizerError::argument(format!("Unable to parse a numeric literal: {}", e)))?;
             ScalarValue::Int32(value)
         }
         Value::SingleQuotedString(value) => ScalarValue::String(value),
@@ -748,11 +748,11 @@ fn build_interval_literal(
     last_field: Option<DateTimeField>,
 ) -> Result<ScalarExpr, OptimizerError> {
     fn interval_field_out_of_range(value: &str) -> OptimizerError {
-        OptimizerError::Internal(format!("Interval field is out of range: {}", value))
+        OptimizerError::argument(format!("Interval field is out of range: {}", value))
     }
 
     fn invalid_interval_literal(value: &str) -> OptimizerError {
-        OptimizerError::Internal(format!("Invalid interval literal: {}", value))
+        OptimizerError::argument(format!("Invalid interval literal: {}", value))
     }
 
     fn parse_int_value(part: &str, whole_value: &str, bounds: Option<(u32, u32)>) -> Result<u32, OptimizerError> {
@@ -918,11 +918,11 @@ fn build_function_expr(func: Function, builder: OperatorBuilder) -> Result<Scala
         match func {
             Ok(WindowOrAggregateFunction::Window(_)) if distinct => {
                 let message = format!("FUNCTION: window function {} with DISTINCT option set", name);
-                return Err(OptimizerError::Argument(message));
+                return Err(OptimizerError::argument(message));
             }
             Err(_) if distinct => {
                 let message = format!("FUNCTION: non-aggregate function {} with DISTINCT option set", name);
-                return Err(OptimizerError::Argument(message));
+                return Err(OptimizerError::argument(message));
             }
             _ => {}
         }
@@ -1026,8 +1026,8 @@ fn convert_data_type(input: SqlDataType) -> Result<DataType, OptimizerError> {
 impl From<ParserError> for OptimizerError {
     fn from(e: ParserError) -> Self {
         match e {
-            ParserError::TokenizerError(err) => OptimizerError::Internal(format!("Tokenizer error: {}", err)),
-            ParserError::ParserError(err) => OptimizerError::Internal(format!("Parser error: {}", err)),
+            ParserError::TokenizerError(err) => OptimizerError::internal(format!("Tokenizer error: {}", err)),
+            ParserError::ParserError(err) => OptimizerError::internal(format!("Parser error: {}", err)),
         }
     }
 }

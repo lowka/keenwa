@@ -462,9 +462,7 @@ where
 
                     Ok(Properties::Relational(RelationalProperties { logical, physical }))
                 } else {
-                    Err(OptimizerError::Internal(
-                        "Physical expressions are not allowed in an operator tree".to_string(),
-                    ))
+                    Err(OptimizerError::internal("Physical expressions are not allowed in an operator tree"))
                 }
             }
             OperatorExpr::Scalar(_) => {

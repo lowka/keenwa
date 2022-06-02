@@ -1,3 +1,4 @@
+use crate::error::OptimizerError;
 use crate::memo::{ExprContext, MemoExprFormatter, NewChildExprs};
 use crate::operators::relational::join::{JoinCondition, JoinOn, JoinType};
 use crate::operators::relational::RelNode;
@@ -17,10 +18,14 @@ pub struct LogicalJoin {
 }
 
 impl LogicalJoin {
-    pub(super) fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
-        visitor.visit_rel(expr_ctx, &self.left);
-        visitor.visit_rel(expr_ctx, &self.right);
-        visitor.visit_join_condition(expr_ctx, &self.condition);
+    pub(super) fn copy_in<T>(
+        &self,
+        visitor: &mut OperatorCopyIn<T>,
+        expr_ctx: &mut ExprContext<Operator>,
+    ) -> Result<(), OptimizerError> {
+        visitor.visit_rel(expr_ctx, &self.left)?;
+        visitor.visit_rel(expr_ctx, &self.right)?;
+        visitor.visit_join_condition(expr_ctx, &self.condition)
     }
 
     pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {

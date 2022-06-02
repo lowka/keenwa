@@ -147,7 +147,7 @@ impl OperatorScope {
                 Ok(())
             } else {
                 let message = format!("BUG: a relation has no relation_id but has a name. Relation: {:?}", relation);
-                Err(OptimizerError::Internal(message))
+                Err(OptimizerError::internal(message))
             }
         }
 
@@ -158,8 +158,7 @@ impl OperatorScope {
             set_alias(relation, alias.clone(), columns.clone(), metadata)?;
             set_alias(output_relation, alias, columns, metadata)
         } else {
-            let message = "OperatorScope is empty!".to_string();
-            Err(OptimizerError::Internal(message))
+            Err(OptimizerError::internal("OperatorScope is empty!"))
         }
     }
 
@@ -186,9 +185,9 @@ impl OperatorScope {
                     Ok(columns)
                 }
                 None if self.relations.find_relation_by_name(qualifier).is_some() => {
-                    Err(OptimizerError::Internal(format!("Invalid reference to relation {}", qualifier)))
+                    Err(OptimizerError::internal(format!("Invalid reference to relation {}", qualifier)))
                 }
-                None => Err(OptimizerError::Internal(format!("Unknown relation {}", qualifier))),
+                None => Err(OptimizerError::internal(format!("Unknown relation {}", qualifier))),
             }
         } else {
             Ok(self.relation.columns.to_vec())

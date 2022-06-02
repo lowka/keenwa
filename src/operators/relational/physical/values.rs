@@ -1,3 +1,4 @@
+use crate::error::OptimizerError;
 use crate::memo::{ExprContext, MemoExprFormatter, NewChildExprs};
 use crate::meta::ColumnId;
 use crate::operators::scalar::ScalarNode;
@@ -14,10 +15,15 @@ pub struct Values {
 }
 
 impl Values {
-    pub(super) fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
+    pub(super) fn copy_in<T>(
+        &self,
+        visitor: &mut OperatorCopyIn<T>,
+        expr_ctx: &mut ExprContext<Operator>,
+    ) -> Result<(), OptimizerError> {
         for expr in self.values.iter() {
-            visitor.visit_scalar(expr_ctx, expr);
+            visitor.visit_scalar(expr_ctx, expr)?;
         }
+        Ok(())
     }
 
     pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {

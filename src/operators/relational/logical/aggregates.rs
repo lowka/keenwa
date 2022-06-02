@@ -1,3 +1,4 @@
+use crate::error::OptimizerError;
 use crate::memo::{ExprContext, MemoExprFormatter, NewChildExprs};
 use crate::meta::ColumnId;
 use crate::operators::relational::RelNode;
@@ -20,15 +21,19 @@ pub struct LogicalAggregate {
 }
 
 impl LogicalAggregate {
-    pub(super) fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
-        visitor.visit_rel(expr_ctx, &self.input);
+    pub(super) fn copy_in<T>(
+        &self,
+        visitor: &mut OperatorCopyIn<T>,
+        expr_ctx: &mut ExprContext<Operator>,
+    ) -> Result<(), OptimizerError> {
+        visitor.visit_rel(expr_ctx, &self.input)?;
         for expr in self.aggr_exprs.iter() {
-            visitor.visit_scalar(expr_ctx, expr);
+            visitor.visit_scalar(expr_ctx, expr)?;
         }
         for expr in self.group_exprs.iter() {
-            visitor.visit_scalar(expr_ctx, expr);
+            visitor.visit_scalar(expr_ctx, expr)?;
         }
-        visitor.visit_opt_scalar(expr_ctx, self.having.as_ref());
+        visitor.visit_opt_scalar(expr_ctx, self.having.as_ref())
     }
 
     pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
@@ -91,9 +96,13 @@ pub struct LogicalWindowAggregate {
 }
 
 impl LogicalWindowAggregate {
-    pub(super) fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
-        visitor.visit_rel(expr_ctx, &self.input);
-        visitor.visit_scalar(expr_ctx, &self.window_expr);
+    pub(super) fn copy_in<T>(
+        &self,
+        visitor: &mut OperatorCopyIn<T>,
+        expr_ctx: &mut ExprContext<Operator>,
+    ) -> Result<(), OptimizerError> {
+        visitor.visit_rel(expr_ctx, &self.input)?;
+        visitor.visit_scalar(expr_ctx, &self.window_expr)
     }
 
     pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {

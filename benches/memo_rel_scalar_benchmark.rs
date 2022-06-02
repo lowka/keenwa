@@ -1,6 +1,7 @@
 use std::fmt::{Display, Formatter};
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use keenwa::error::OptimizerError;
 
 use keenwa::memo::{
     CopyInExprs, CopyInNestedExprs, Expr, ExprContext, MemoBuilder, MemoExpr, MemoExprFormatter, MemoExprState,
@@ -97,16 +98,14 @@ impl TestScalarExpr {
         }
     }
 
-    fn copy_in_nested<T>(&self, visitor: &mut CopyInNestedExprs<TestOperator, T>) {
+    fn copy_in_nested<T>(&self, visitor: &mut CopyInNestedExprs<TestOperator, T>) -> Result<(), OptimizerError> {
         match self {
-            TestScalarExpr::Value(_) => {}
+            TestScalarExpr::Value(_) => Ok(()),
             TestScalarExpr::Gt { lhs, rhs } => {
-                lhs.copy_in_nested(visitor);
-                rhs.copy_in_nested(visitor);
+                lhs.copy_in_nested(visitor)?;
+                rhs.copy_in_nested(visitor)
             }
-            TestScalarExpr::SubQuery(expr) => {
-                visitor.visit_expr(expr);
-            }
+            TestScalarExpr::SubQuery(expr) => visitor.visit_expr(expr),
         }
     }
 }
@@ -120,22 +119,28 @@ impl<T> TraversalWrapper<'_, '_, T> {
         self.ctx.enter_expr(expr)
     }
 
-    fn visit_rel(&mut self, expr_ctx: &mut ExprContext<TestOperator>, rel: &RelNode) {
-        self.ctx.visit_expr_node(expr_ctx, rel);
+    fn visit_rel(&mut self, expr_ctx: &mut ExprContext<TestOperator>, rel: &RelNode) -> Result<(), OptimizerError> {
+        self.ctx.visit_expr_node(expr_ctx, rel)
     }
 
-    fn visit_scalar(&mut self, expr_ctx: &mut ExprContext<TestOperator>, scalar: &ScalarNode) {
-        self.ctx.visit_expr_node(expr_ctx, scalar);
+    fn visit_scalar(
+        &mut self,
+        expr_ctx: &mut ExprContext<TestOperator>,
+        scalar: &ScalarNode,
+    ) -> Result<(), OptimizerError> {
+        self.ctx.visit_expr_node(expr_ctx, scalar)
     }
 
-    fn copy_in_nested(&mut self, expr_ctx: &mut ExprContext<TestOperator>, expr: &TestScalarExpr) {
+    fn copy_in_nested(
+        &mut self,
+        expr_ctx: &mut ExprContext<TestOperator>,
+        expr: &TestScalarExpr,
+    ) -> Result<(), OptimizerError> {
         let visitor = CopyInNestedExprs::new(self.ctx, expr_ctx);
-        visitor.execute(expr, |expr, c: &mut CopyInNestedExprs<TestOperator, T>| {
-            expr.copy_in_nested(c);
-        })
+        visitor.execute(expr, |expr, c: &mut CopyInNestedExprs<TestOperator, T>| expr.copy_in_nested(c))
     }
 
-    fn copy_in(self, expr: &TestOperator, expr_ctx: ExprContext<TestOperator>) {
+    fn copy_in(self, expr: &TestOperator, expr_ctx: ExprContext<TestOperator>) -> Result<(), OptimizerError> {
         self.ctx.copy_in(expr, expr_ctx)
     }
 }
@@ -204,22 +209,22 @@ impl MemoExpr for TestOperator {
         &self.state
     }
 
-    fn copy_in<T>(&self, ctx: &mut CopyInExprs<Self, T>) {
+    fn copy_in<T>(&self, ctx: &mut CopyInExprs<Self, T>) -> Result<(), OptimizerError> {
         let mut ctx = TraversalWrapper { ctx };
         let mut expr_ctx = ctx.enter_expr(self);
         match self.expr() {
             TestExpr::Relational(expr) => match expr {
                 TestRelExpr::Scan { .. } => {}
                 TestRelExpr::Filter { input, filter } => {
-                    ctx.visit_rel(&mut expr_ctx, input);
-                    ctx.visit_scalar(&mut expr_ctx, filter);
+                    ctx.visit_rel(&mut expr_ctx, input)?;
+                    ctx.visit_scalar(&mut expr_ctx, filter)?
                 }
                 TestRelExpr::Join { left, right, .. } => {
-                    ctx.visit_rel(&mut expr_ctx, left);
-                    ctx.visit_rel(&mut expr_ctx, right);
+                    ctx.visit_rel(&mut expr_ctx, left)?;
+                    ctx.visit_rel(&mut expr_ctx, right)?;
                 }
             },
-            TestExpr::Scalar(expr) => ctx.copy_in_nested(&mut expr_ctx, expr),
+            TestExpr::Scalar(expr) => ctx.copy_in_nested(&mut expr_ctx, expr)?,
         }
         ctx.copy_in(self, expr_ctx)
     }

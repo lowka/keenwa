@@ -1,3 +1,4 @@
+use crate::error::OptimizerError;
 use crate::memo::{ExprContext, MemoExprFormatter, NewChildExprs};
 use crate::meta::ColumnId;
 use crate::operators::relational::RelNode;
@@ -16,11 +17,16 @@ pub struct LogicalProjection {
 }
 
 impl LogicalProjection {
-    pub(super) fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
-        visitor.visit_rel(expr_ctx, &self.input);
+    pub(super) fn copy_in<T>(
+        &self,
+        visitor: &mut OperatorCopyIn<T>,
+        expr_ctx: &mut ExprContext<Operator>,
+    ) -> Result<(), OptimizerError> {
+        visitor.visit_rel(expr_ctx, &self.input)?;
         for expr in self.exprs.iter() {
-            visitor.visit_scalar(expr_ctx, expr);
+            visitor.visit_scalar(expr_ctx, expr)?;
         }
+        Ok(())
     }
 
     pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {

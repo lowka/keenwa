@@ -89,7 +89,7 @@ where
     /// Copies the given expression `expr` into this memo. if this memo does not contain the given expression
     /// a new memo group is created and this method returns a reference to it. Otherwise returns a reference
     /// to the already existing expression.
-    pub fn insert_group(&mut self, expr: E, scope: &E::Scope) -> E {
+    pub fn insert_group(&mut self, expr: E, scope: &E::Scope) -> Result<E, OptimizerError> {
         let copy_in = CopyIn {
             scope,
             memo: &mut self.memo_impl,
@@ -104,7 +104,12 @@ where
     /// # Panics
     ///
     /// This method panics if group with the given id does not exist.
-    pub fn insert_group_member(&mut self, token: MemoGroupToken<E>, expr: E, scope: &E::Scope) -> E {
+    pub fn insert_group_member(
+        &mut self,
+        token: MemoGroupToken<E>,
+        expr: E,
+        scope: &E::Scope,
+    ) -> Result<E, OptimizerError> {
         let copy_in = CopyIn {
             scope,
             memo: &mut self.memo_impl,
@@ -219,7 +224,7 @@ pub trait MemoExpr: Clone {
     fn state(&self) -> &MemoExprState<Self>;
 
     /// Recursively traverses this memo expression and copies it into a memo.
-    fn copy_in<T>(&self, visitor: &mut CopyInExprs<Self, T>);
+    fn copy_in<T>(&self, visitor: &mut CopyInExprs<Self, T>) -> Result<(), OptimizerError>;
 
     /// Creates a new expression from the given expression `expr` by replacing its child expressions
     /// with expressions provided by the given [NewChildExprs](self::NewChildExprs).
@@ -938,7 +943,11 @@ where
     /// Visits the given child expression and recursively copies that expression into the memo:
     /// * If the given expression is in the [owned state](self::OwnedExpr) this methods recursively copies it into the memo.
     /// * If the child expression is in the [memo state](self::MemoizedExpr) this method returns a reference to that group.
-    pub fn visit_expr_node(&mut self, expr_ctx: &mut ExprContext<E>, expr_node: impl AsRef<E>) {
+    pub fn visit_expr_node(
+        &mut self,
+        expr_ctx: &mut ExprContext<E>,
+        expr_node: impl AsRef<E>,
+    ) -> Result<(), OptimizerError> {
         let input = expr_node.as_ref();
         let child_expr = match input.state() {
             MemoExprState::Owned(_) => {
@@ -947,11 +956,12 @@ where
                     memo: self.memo,
                     parent: None,
                 };
-                copy_in.execute(input)
+                copy_in.execute(input)?
             }
             MemoExprState::Memo(state) => self.memo.get_first_memo_expr(state.group_id()),
         };
         expr_ctx.children.push_back(child_expr);
+        Ok(())
     }
 
     /// Visits the given optional child expression if it is present and recursively copies it into a [memo](self::Memo).
@@ -961,14 +971,20 @@ where
     ///   visitor.visit_expr_node(expr_ctx, expr_node);
     /// }
     /// ```
-    pub fn visit_opt_expr_node(&mut self, expr_ctx: &mut ExprContext<E>, expr_node: Option<impl AsRef<E>>) {
+    pub fn visit_opt_expr_node(
+        &mut self,
+        expr_ctx: &mut ExprContext<E>,
+        expr_node: Option<impl AsRef<E>>,
+    ) -> Result<(), OptimizerError> {
         if let Some(expr_node) = expr_node {
-            self.visit_expr_node(expr_ctx, expr_node);
-        };
+            self.visit_expr_node(expr_ctx, expr_node)
+        } else {
+            Ok(())
+        }
     }
 
     /// Copies the expression into the memo.
-    pub fn copy_in(&mut self, expr: &E, expr_ctx: ExprContext<E>) {
+    pub fn copy_in(&mut self, expr: &E, expr_ctx: ExprContext<E>) -> Result<(), OptimizerError> {
         let expr_id = ExprId(self.memo.exprs.len());
 
         let ExprContext { children, parent } = expr_ctx;
@@ -989,16 +1005,14 @@ where
             if let Some(token) = parent {
                 let parent_id = token.group_id;
                 let (group_exprs, expr_group_data) =
-                    self.memo.groups.get_mut(parent_id.index()).expect("Unexpected group");
+                    self.memo.groups.get_mut(parent_id.index()).expect("Unexpected group id");
                 let expr_group_data = expr_group_data.clone();
                 group_exprs.push(expr_id);
 
                 self.memo.add_expr(expr_id, expr, expr_group_data)
             } else {
                 let props = if let Some(callback) = &self.memo.callback {
-                    callback
-                        .new_group(&expr, self.scope, props, &self.memo.metadata)
-                        .expect("new group callback has returned an error")
+                    callback.new_group(&expr, self.scope, props, &self.memo.metadata)?
                 } else {
                     props
                 };
@@ -1011,6 +1025,7 @@ where
             expr.clone()
         };
         self.result = Some(expr);
+        Ok(())
     }
 }
 
@@ -1068,10 +1083,13 @@ impl<'a, E, T> CopyIn<'a, E, T>
 where
     E: MemoExpr,
 {
-    fn execute(mut self, expr: &E) -> E {
+    fn execute(mut self, expr: &E) -> Result<E, OptimizerError> {
         let mut visitor = CopyInExprs::new(self.scope, self.memo, self.parent.take());
-        expr.copy_in(&mut visitor);
-        visitor.result.unwrap()
+        expr.copy_in(&mut visitor)?;
+        match visitor.result {
+            Some(expr) => Ok(expr),
+            None => unreachable!("Expressions: result expression has not been set"),
+        }
     }
 }
 
@@ -1102,32 +1120,36 @@ where
 
     /// Traverses the given expression `expr` of some arbitrary type.
     /// When traversal completes all collected nested expressions are copies into a memo.
-    pub fn execute<F, S>(mut self, expr: &S, f: F)
+    pub fn execute<F, S>(mut self, expr: &S, f: F) -> Result<(), OptimizerError>
     where
-        F: Fn(&S, &mut Self),
+        F: Fn(&S, &mut Self) -> Result<(), OptimizerError>,
     {
-        (f)(expr, &mut self);
+        (f)(expr, &mut self)?;
         // Visit collected nested expressions so that they will be added to the given expression as child expressions.
         for expr_node in self.nested_exprs {
             let rel_node = RelNode::from_mexpr(expr_node);
-            self.ctx.visit_expr_node(self.expr_ctx, rel_node);
+            self.ctx.visit_expr_node(self.expr_ctx, rel_node)?;
         }
+        Ok(())
     }
 
     /// Copies the given nested expression into a memo.
-    pub fn visit_expr(&mut self, expr: impl AsRef<E>) {
+    pub fn visit_expr(&mut self, expr: impl AsRef<E>) -> Result<(), OptimizerError> {
         let expr = expr.as_ref();
         match expr.state() {
             MemoExprState::Owned(_) => {
-                expr.copy_in(self.ctx);
-                let child_expr = std::mem::take(&mut self.ctx.result).expect("Failed to copy in a nested expressions");
-                self.add_child_expr(child_expr);
+                expr.copy_in(self.ctx)?;
+                match std::mem::take(&mut self.ctx.result) {
+                    Some(child_expr) => self.add_child_expr(child_expr),
+                    None => unreachable!("Nested expressions: result expression has not been set"),
+                }
             }
             MemoExprState::Memo(state) => {
                 let child_expr = self.ctx.memo.get_first_memo_expr(state.group_id());
                 self.add_child_expr(child_expr)
             }
         }
+        Ok(())
     }
 
     fn add_child_expr(&mut self, expr: E) {
@@ -1395,6 +1417,7 @@ where
 
     pub(crate) fn get_group(&self, group_id: &GroupId) -> MemoGroupRef<E, T> {
         let (group_exprs, group_data) = &self.groups[group_id.index()];
+        // A group always holds at least one expression.
         let first_expr_id = group_exprs[0];
         let expr = self.exprs[first_expr_id.index()].clone();
 

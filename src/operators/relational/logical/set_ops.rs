@@ -1,3 +1,4 @@
+use crate::error::OptimizerError;
 use crate::memo::{ExprContext, MemoExprFormatter, NewChildExprs};
 use crate::meta::ColumnId;
 use crate::operators::relational::RelNode;
@@ -17,9 +18,13 @@ pub struct LogicalUnion {
 }
 
 impl LogicalUnion {
-    pub(super) fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
-        visitor.visit_rel(expr_ctx, &self.left);
-        visitor.visit_rel(expr_ctx, &self.right);
+    pub(super) fn copy_in<T>(
+        &self,
+        visitor: &mut OperatorCopyIn<T>,
+        expr_ctx: &mut ExprContext<Operator>,
+    ) -> Result<(), OptimizerError> {
+        visitor.visit_rel(expr_ctx, &self.left)?;
+        visitor.visit_rel(expr_ctx, &self.right)
     }
 
     pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
@@ -69,9 +74,13 @@ pub struct LogicalIntersect {
 }
 
 impl LogicalIntersect {
-    pub(super) fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
-        visitor.visit_rel(expr_ctx, &self.left);
-        visitor.visit_rel(expr_ctx, &self.right);
+    pub(super) fn copy_in<T>(
+        &self,
+        visitor: &mut OperatorCopyIn<T>,
+        expr_ctx: &mut ExprContext<Operator>,
+    ) -> Result<(), OptimizerError> {
+        visitor.visit_rel(expr_ctx, &self.left)?;
+        visitor.visit_rel(expr_ctx, &self.right)
     }
 
     pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
@@ -124,9 +133,13 @@ pub struct LogicalExcept {
 }
 
 impl LogicalExcept {
-    pub(super) fn copy_in<T>(&self, visitor: &mut OperatorCopyIn<T>, expr_ctx: &mut ExprContext<Operator>) {
-        visitor.visit_rel(expr_ctx, &self.left);
-        visitor.visit_rel(expr_ctx, &self.right);
+    pub(super) fn copy_in<T>(
+        &self,
+        visitor: &mut OperatorCopyIn<T>,
+        expr_ctx: &mut ExprContext<Operator>,
+    ) -> Result<(), OptimizerError> {
+        visitor.visit_rel(expr_ctx, &self.left)?;
+        visitor.visit_rel(expr_ctx, &self.right)
     }
 
     pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {

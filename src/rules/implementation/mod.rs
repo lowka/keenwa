@@ -64,7 +64,7 @@ impl Rule for GetToScanRule {
                         Ok(Some(RuleResult::Implementation(expr)))
                     }
                     None => {
-                        Err(OptimizerError::Internal(format!("Table is not found or does not exists: {:?}", source)))
+                        Err(OptimizerError::internal(format!("Table is not found or does not exists: {:?}", source)))
                     }
                 }
             }
