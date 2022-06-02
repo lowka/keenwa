@@ -4,7 +4,7 @@ use crate::operators::builder::{OrderingOption, OrderingOptions};
 use crate::operators::relational::join::JoinType;
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::{col, cols, scalar, ScalarExpr};
-use crate::rules::implementation::aggregate::HashAggregateRule;
+use crate::rules::implementation::aggregate::{HashAggregateRule, StreamingAggregateRule};
 use crate::rules::implementation::*;
 use crate::rules::transformation::*;
 use crate::testing::OptimizerTester;
@@ -803,6 +803,33 @@ fn test_enforce_grouping() {
 03 HashAggregate [00 01 02] cols=[3]
 02 Expr col:2
 01 Expr count(col:1)
+00 Scan A cols=[1, 2]
+"#,
+    );
+}
+
+#[test]
+fn test_prefer_streaming_aggregate_when_data_is_sorted() {
+    let mut tester = OptimizerTester::new();
+
+    tester.set_operator(|builder| {
+        let from_a = builder.get("A", vec!["a1", "a2"])?;
+        let mut sorted_a = from_a.order_by(OrderingOption::by("a2", false))?;
+        let aggr = sorted_a.aggregate_builder().add_func("count", "a1")?.group_by("a2")?.build()?;
+
+        aggr.build()
+    });
+
+    tester.add_rules(|_| vec![Box::new(HashAggregateRule), Box::new(StreamingAggregateRule)]);
+
+    tester.set_table_row_count("A", 100);
+
+    tester.optimize(
+        r#"
+03 StreamingAggregate [ord:[+2]=00 01 02] cols=[3] ordering=[+2]
+02 Expr col:2
+01 Expr count(col:1)
+00 Sort [00] ord=[+2]
 00 Scan A cols=[1, 2]
 "#,
     );
