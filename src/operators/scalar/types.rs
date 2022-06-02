@@ -69,16 +69,35 @@ where
             when_then_exprs,
             else_expr,
         } => {
-            if let Some(expr) = base_expr {
-                let tpe = resolve_expr_type(expr, column_registry)?;
-                expect_type_or_null(&tpe, &DataType::Bool, expr)?
-            }
+            // There are two forms of CASE expressions:
+            //
+            // - The basic form (1):
+            //   CASE WHEN col:1 == 1 THEN 'one'
+            //        WHEN col:1 == 2 THEN 'two'
+            //        ELSE 'three'
+            //
+            // - The "simple" form (2):
+            //   CASE col:1 WHEN 1 THEN 'one'
+            //              WHEN 2 THEN 'two'
+            //              ELSE 'three'
+            //
+            // (1) In the basic form WHEN expressions are boolean expressions.
+            //
+            // (2) In the "simple" form WHEN expressions must be of the same
+            // type as the expression that follows the CASE keyword
+            // (col:1 in the example 2 above).
+            //
+            let when_expr_type = if let Some(expr) = base_expr {
+                resolve_expr_type(expr, column_registry)?
+            } else {
+                DataType::Bool
+            };
 
             let mut expr_result_type: Option<DataType> = None;
 
             for (when, then) in when_then_exprs {
                 let condition_type = resolve_expr_type(when, column_registry)?;
-                expect_type_or_null(&condition_type, &DataType::Bool, when)?;
+                expect_type_or_null(&condition_type, &when_expr_type, when)?;
                 let result_type = resolve_expr_type(then, column_registry)?;
 
                 match &mut expr_result_type {
@@ -108,7 +127,7 @@ where
 
             match expr_result_type {
                 Some(result_type) => Ok(result_type),
-                None => Err(OptimizerError::argument("Invalid case expression")),
+                None => Err(OptimizerError::argument("Invalid CASE expression")),
             }
         }
         Expr::Tuple(exprs) => {
@@ -601,6 +620,53 @@ mod test {
     #[test]
     fn string_not_like() {
         expect_string_expr_type(BinaryOp::NotLike);
+    }
+
+    #[test]
+    fn case_expr_simple_form() {
+        let expr = Expr::Case {
+            expr: Some(Box::new(str_value())),
+            when_then_exprs: vec![(str_value(), int_value()), (str_value(), int_value())],
+            else_expr: None,
+        };
+        expect_type(&expr, &DataType::Int32);
+    }
+
+    #[test]
+    fn case_expr_simple_form_when_exprs_must_be_of_the_same_type_as_base_expr() {
+        let expr = Expr::Case {
+            expr: Some(Box::new(str_value())),
+            when_then_exprs: vec![(str_value(), int_value()), (str_value(), int_value())],
+            else_expr: None,
+        };
+        expect_type(&expr, &DataType::Int32);
+
+        let expr = Expr::Case {
+            expr: Some(Box::new(str_value())),
+            when_then_exprs: vec![(bool_value(), int_value()), (bool_value(), int_value())],
+            else_expr: None,
+        };
+        expect_not_resolved(&expr);
+    }
+
+    #[test]
+    fn case_expr() {
+        let expr = Expr::Case {
+            expr: None,
+            when_then_exprs: vec![(bool_value(), str_value()), (bool_value(), str_value())],
+            else_expr: None,
+        };
+        expect_type(&expr, &DataType::String);
+    }
+
+    #[test]
+    fn case_expr_when_clause_must_be_boolean_exprs() {
+        let expr = Expr::Case {
+            expr: None,
+            when_then_exprs: vec![(bool_value(), str_value()), (bool_value(), str_value())],
+            else_expr: None,
+        };
+        expect_type(&expr, &DataType::String);
     }
 
     // =, !=

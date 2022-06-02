@@ -21,3 +21,14 @@ ok: |
     input: LogicalProjection cols=[1] exprs: [1 AS a1]
       input: LogicalEmpty return_one_row=true
 ---
+query: |
+  SELECT CASE a1 WHEN 1 THEN 'one'
+                 WHEN 2 THEN 'two'
+                 ELSE 'three'
+         END
+  FROM (SELECT 1 as a1)
+ok: |
+  LogicalProjection cols=[2] exprs: [CASE col:1 WHEN 1 THEN one WHEN 2 THEN two ELSE three]
+    input: LogicalProjection cols=[1] exprs: [1 AS a1]
+      input: LogicalEmpty return_one_row=true
+---
