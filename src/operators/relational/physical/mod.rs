@@ -19,6 +19,7 @@ pub use projection::Projection;
 pub use scan::Scan;
 pub use select::Select;
 pub use sort::Sort;
+pub use streaming_aggregate::StreamingAggregate;
 pub use unique::Unique;
 pub use values::Values;
 
@@ -36,6 +37,7 @@ mod projection;
 mod scan;
 mod select;
 mod sort;
+mod streaming_aggregate;
 mod unique;
 mod values;
 
@@ -57,6 +59,8 @@ pub enum PhysicalExpr {
     MergeSortJoin(MergeSortJoin),
     /// NestedLoopJoin operator.
     NestedLoopJoin(NestedLoopJoin),
+    /// Streaming aggregate operator.
+    StreamingAggregate(StreamingAggregate),
     /// Scan operator.
     Scan(Scan),
     /// IndexScan operator.
@@ -92,6 +96,7 @@ impl PhysicalExpr {
             PhysicalExpr::HashJoin(expr) => expr.copy_in(visitor, expr_ctx),
             PhysicalExpr::MergeSortJoin(expr) => expr.copy_in(visitor, expr_ctx),
             PhysicalExpr::NestedLoopJoin(expr) => expr.copy_in(visitor, expr_ctx),
+            PhysicalExpr::StreamingAggregate(expr) => expr.copy_in(visitor, expr_ctx),
             PhysicalExpr::Scan(expr) => expr.copy_in(visitor, expr_ctx),
             PhysicalExpr::IndexScan(expr) => expr.copy_in(visitor, expr_ctx),
             PhysicalExpr::Sort(expr) => expr.copy_in(visitor, expr_ctx),
@@ -113,6 +118,7 @@ impl PhysicalExpr {
             PhysicalExpr::HashJoin(expr) => PhysicalExpr::HashJoin(expr.with_new_inputs(inputs)),
             PhysicalExpr::MergeSortJoin(expr) => PhysicalExpr::MergeSortJoin(expr.with_new_inputs(inputs)),
             PhysicalExpr::NestedLoopJoin(expr) => PhysicalExpr::NestedLoopJoin(expr.with_new_inputs(inputs)),
+            PhysicalExpr::StreamingAggregate(expr) => PhysicalExpr::StreamingAggregate(expr.with_new_inputs(inputs)),
             PhysicalExpr::Scan(expr) => PhysicalExpr::Scan(expr.with_new_inputs(inputs)),
             PhysicalExpr::IndexScan(expr) => PhysicalExpr::IndexScan(expr.with_new_inputs(inputs)),
             PhysicalExpr::Sort(expr) => PhysicalExpr::Sort(expr.with_new_inputs(inputs)),
@@ -134,6 +140,7 @@ impl PhysicalExpr {
             PhysicalExpr::HashJoin(expr) => expr.num_children(),
             PhysicalExpr::MergeSortJoin(expr) => expr.num_children(),
             PhysicalExpr::NestedLoopJoin(expr) => expr.num_children(),
+            PhysicalExpr::StreamingAggregate(expr) => expr.num_children(),
             PhysicalExpr::Scan(expr) => expr.num_children(),
             PhysicalExpr::IndexScan(expr) => expr.num_children(),
             PhysicalExpr::Sort(expr) => expr.num_children(),
@@ -155,6 +162,7 @@ impl PhysicalExpr {
             PhysicalExpr::HashJoin(expr) => expr.get_child(i),
             PhysicalExpr::MergeSortJoin(expr) => expr.get_child(i),
             PhysicalExpr::NestedLoopJoin(expr) => expr.get_child(i),
+            PhysicalExpr::StreamingAggregate(expr) => expr.get_child(i),
             PhysicalExpr::Scan(expr) => expr.get_child(i),
             PhysicalExpr::IndexScan(expr) => expr.get_child(i),
             PhysicalExpr::Sort(expr) => expr.get_child(i),
@@ -176,6 +184,7 @@ impl PhysicalExpr {
             PhysicalExpr::HashJoin(expr) => expr.get_required_input_properties(),
             PhysicalExpr::MergeSortJoin(expr) => expr.get_required_input_properties(),
             PhysicalExpr::NestedLoopJoin(expr) => expr.get_required_input_properties(),
+            PhysicalExpr::StreamingAggregate(expr) => expr.get_required_input_properties(),
             PhysicalExpr::Scan(expr) => expr.get_required_input_properties(),
             PhysicalExpr::IndexScan(expr) => expr.get_required_input_properties(),
             PhysicalExpr::Sort(expr) => expr.get_required_input_properties(),
@@ -199,6 +208,7 @@ impl PhysicalExpr {
             PhysicalExpr::HashJoin(expr) => expr.format_expr(f),
             PhysicalExpr::MergeSortJoin(expr) => expr.format_expr(f),
             PhysicalExpr::NestedLoopJoin(expr) => expr.format_expr(f),
+            PhysicalExpr::StreamingAggregate(expr) => expr.format_expr(f),
             PhysicalExpr::Scan(expr) => expr.format_expr(f),
             PhysicalExpr::IndexScan(expr) => expr.format_expr(f),
             PhysicalExpr::Sort(expr) => expr.format_expr(f),
