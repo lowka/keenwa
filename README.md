@@ -50,7 +50,7 @@ Cost-based query optimizer (WIP).
 - [x] GROUP BY.
 - [x] AGGR(..) FILTER (WHERE _).
 - [x] AGGR(DISTINCT _).
-- [ ] count(*) vs count(col).
+- [ ] count distinct.
 - [ ] Window functions.
 - [ ] User-defined Aggregate functions.
 - [ ] GROUPING SET.
@@ -110,9 +110,9 @@ Cost-based query optimizer (WIP).
 - [x] BETWEEN.
 - [x] CASE expression.
 - [x] LIKE/NOT LIKE
-- [ ] Tuples.
+- [x] Tuples.
 - [ ] Array access.
-- [ ] Window functions.
+- [x] Window functions.
 - [ ] User-defined aggregate functions.
 - TODO
 
