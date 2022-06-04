@@ -117,7 +117,7 @@ impl InternalError {
     {
         InternalError {
             message: message.into(),
-            cause: err.map(|err| Box::new(err)),
+            cause: err.map(Box::new),
             backtrace: Backtrace::new(),
         }
     }

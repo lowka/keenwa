@@ -211,7 +211,7 @@ impl OperatorBuilder {
         let (rel_node, mut scope) = expr.rel_node()?;
         let name = alias.name.clone();
 
-        let num_columns = if alias.columns.len() == 0 {
+        let num_columns = if alias.columns.is_empty() {
             scope.output_relation().columns().len()
         } else {
             alias.columns.len()
@@ -229,8 +229,6 @@ impl OperatorBuilder {
             scope
         };
 
-        println!("scope: {:?}", scope.outer_columns());
-
         if !scope.add_cte(name.clone(), cte) {
             return Err(OptimizerError::argument(format!("WITH query name '{}' specified more than once", name)));
         }
@@ -243,7 +241,7 @@ impl OperatorBuilder {
     ///
     /// Unlike [OperatorBuilder::get] this method adds an operator
     /// that returns all the columns from the given `source`.
-    pub fn from(mut self, source: &str) -> Result<Self, OptimizerError> {
+    pub fn from(self, source: &str) -> Result<Self, OptimizerError> {
         self.add_scan_operator::<String>(source, None)
     }
 
@@ -2274,7 +2272,7 @@ Memo:
     fn test_window_aggregate_function() {
         let mut tester = OperatorBuilderTester::new();
         tester.build_operator(|builder| {
-            let mut from_a = builder.get("A", vec!["a1", "a2"])?;
+            let from_a = builder.get("A", vec!["a1", "a2"])?;
             let row_number = ScalarExpr::WindowAggregate {
                 func: WindowFunction::RowNumber.into(),
                 args: vec![],
@@ -2311,7 +2309,7 @@ Memo:
     fn test_window_aggregate_reuse_operator() {
         let mut tester = OperatorBuilderTester::new();
         tester.build_operator(|builder| {
-            let mut from_a = builder.get("A", vec!["a1", "a2"])?;
+            let from_a = builder.get("A", vec!["a1", "a2"])?;
             let first_value = ScalarExpr::WindowAggregate {
                 func: WindowFunction::FirstValue.into(),
                 args: vec![col("a2")],
@@ -2350,7 +2348,7 @@ Memo:
     fn test_multiple_window_aggregate_functions() {
         let mut tester = OperatorBuilderTester::new();
         tester.build_operator(|builder| {
-            let mut from_a = builder.get("A", vec!["a1", "a2"])?;
+            let from_a = builder.get("A", vec!["a1", "a2"])?;
 
             let rank = ScalarExpr::WindowAggregate {
                 func: WindowFunction::Rank.into(),
@@ -2572,7 +2570,6 @@ Memo:
         tester.build_operator(|builder| {
             let left = builder.get("A", vec!["a1", "a2"])?;
             let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
-            let expr = col("a1").eq(col("b1"));
             let join = left.join_using(right, JoinType::LeftSemi, vec![("a1", "b1")])?;
 
             join.build()
@@ -2637,7 +2634,6 @@ Memo:
         tester.build_operator(|builder| {
             let left = builder.get("A", vec!["a1", "a2"])?;
             let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
-            let expr = col("a1").eq(col("b1"));
             let join = left.join_using(right, JoinType::RightSemi, vec![("a1", "b1")])?;
 
             join.build()
@@ -2702,7 +2698,6 @@ Memo:
         tester.build_operator(|builder| {
             let left = builder.get("A", vec!["a1", "a2"])?;
             let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
-            let expr = col("a1").eq(col("b1"));
             let join = left.join_using(right, JoinType::Anti, vec![("a1", "b1")])?;
 
             join.build()

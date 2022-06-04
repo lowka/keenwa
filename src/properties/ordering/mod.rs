@@ -305,7 +305,7 @@ mod test {
         let mut metadata = TestMetadata::with_tables(vec!["A", "B", "C"]);
         let a_cols = metadata.add_columns("A", vec!["a1", "a2"]);
         let b_cols = metadata.add_columns("B", vec!["b1", "b2"]);
-        let c_cols = metadata.add_columns("C", vec!["c1"]);
+        metadata.add_columns("C", vec!["c1"]);
 
         let ord = ordering_from_string(&metadata, &["A:-a1", "C:-c1", "A:+a2"]);
         let result_ord = ord.with_mapping(&a_cols, &b_cols);

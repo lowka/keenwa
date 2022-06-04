@@ -146,8 +146,6 @@ mod test {
             metadata: &metadata,
             ordering: vec!["A:+a1"],
             input: vec![("A:a1", "B:b1")],
-            left: "A",
-            right: "B",
         };
         test_ordering.expect_ordering(vec!["A:+a1"], vec!["B:+b1"]);
     }
@@ -162,8 +160,6 @@ mod test {
             metadata: &metadata,
             ordering: vec!["A:+a1", "A:+a2"],
             input: vec![("A:a1", "B:b1"), ("A:a2", "B:b2")],
-            left: "A",
-            right: "B",
         };
         test_ordering.expect_ordering(vec!["A:+a1", "A:+a2"], vec!["B:+b1", "B:+b2"]);
     }
@@ -177,8 +173,6 @@ mod test {
             metadata: &metadata,
             ordering: vec!["A:+a1", "A:-a2"],
             input: vec![("A:a1", "A:a1"), ("A:a2", "A:a2")],
-            left: "A",
-            right: "A",
         };
         test_ordering.expect_ordering(vec!["A:+a1", "A:-a2"], vec!["A:+a1", "A:-a2"]);
     }
@@ -194,8 +188,6 @@ mod test {
                 metadata: &metadata,
                 ordering,
                 input: vec![("A:a1", "B:b1"), ("A:a2", "B:b2")],
-                left: "A",
-                right: "B",
             };
             test_ordering.expect_ordering(vec!["A:+a1", "A:+a2"], vec!["B:+b1", "B:+b2"]);
         }
@@ -216,8 +208,6 @@ mod test {
             metadata: &metadata,
             ordering: vec!["A:+a1"],
             input: vec![("A:a1", "B:b1"), ("A:a2", "B:b2")],
-            left: "A",
-            right: "B",
         };
         test_ordering.expect_ordering(vec!["A:+a1", "A:+a2"], vec!["B:+b1", "B:+b2"]);
     }
@@ -232,8 +222,6 @@ mod test {
             metadata: &metadata,
             ordering: vec!["A:+a1", "B:+b2"],
             input: vec![("A:a1", "B:b1")],
-            left: "A",
-            right: "B",
         };
         test_ordering.expect_do_not_provide_ordering();
     }
@@ -248,8 +236,6 @@ mod test {
             metadata: &metadata,
             ordering: vec!["A:+a1", "B:+b1"],
             input: vec![("A:a1", "B:b2")],
-            left: "A",
-            right: "B",
         };
         test_ordering.expect_do_not_provide_ordering();
     }
@@ -266,8 +252,6 @@ mod test {
             metadata: &metadata,
             ordering: vec!["A:+a1", "B:+b2"],
             input: vec![("A:a1", "B:b2"), ("A:a2", "B:b2")],
-            left: "A",
-            right: "B",
         };
         test_ordering.expect_do_not_provide_ordering();
     }
@@ -285,8 +269,6 @@ mod test {
                 metadata: &metadata,
                 ordering: vec!["A:+a1", "B:+b2"].into_iter().chain(ord).collect(),
                 input: vec![("A:a1", "B:b1"), ("A:a2", "B:b2")],
-                left: "A",
-                right: "B",
             };
             test_ordering.expect_ordering(vec!["A:+a1", "A:+a2"], vec!["B:+b1", "B:+b2"]);
         }
@@ -301,8 +283,6 @@ mod test {
         metadata: &'a TestMetadata,
         ordering: Vec<&'a str>,
         input: Vec<(&'a str, &'a str)>,
-        left: &'a str,
-        right: &'a str,
     }
 
     impl<'a> TestDeriveOrdering<'a> {
@@ -328,13 +308,13 @@ mod test {
             (left_columns, right_columns)
         }
 
-        fn expect_do_not_provide_ordering(mut self) {
+        fn expect_do_not_provide_ordering(self) {
             let result = self.build_result();
 
             assert_eq!(result, None, "no child ordering");
         }
 
-        fn expect_ordering(mut self, expected_left_ordering: Vec<&str>, expected_right_ordering: Vec<&str>) {
+        fn expect_ordering(self, expected_left_ordering: Vec<&str>, expected_right_ordering: Vec<&str>) {
             let result = self.build_result();
 
             let expected = (expected_left_ordering.iter().join(", "), expected_right_ordering.iter().join(", "));

@@ -3,7 +3,6 @@ use crate::meta::{ColumnId, MetadataRef, MutableMetadata, RelationId};
 use crate::operators::builder::TableAlias;
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::exprs;
-use crate::operators::Operator;
 use std::collections::HashMap;
 use std::rc::Rc;
 
@@ -122,7 +121,7 @@ impl OperatorScope {
             // Use outer column from the left side of the join
             // because the right side contain the subset of those columns.
             outer_columns: self.outer_columns,
-            with: self.with.clone(),
+            with: self.with,
         }
     }
 
