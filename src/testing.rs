@@ -14,7 +14,7 @@ use crate::meta::MutableMetadata;
 use crate::operators::builder::{MemoizeOperators, OperatorBuilder};
 use crate::operators::properties::LogicalPropertiesBuilder;
 use crate::operators::{Operator, OperatorMemoBuilder};
-use crate::optimizer::{BestExprContext, BestExprRef, Optimizer, ResultCallback};
+use crate::optimizer::{BestExprContext, BestExprRef, OptimizedExprCallback, Optimizer};
 use crate::rules::implementation::{EmptyRule, GetToScanRule, LimitOffsetRule, ProjectionRule, SelectRule, ValuesRule};
 use crate::rules::testing::TestRuleSet;
 use crate::rules::RuleSet;
@@ -183,7 +183,7 @@ impl OptimizerTester {
         let test_result = Rc::new(RefCell::new(VecDeque::new()));
         let result_callback = TestResultBuilder::new(test_result.clone());
 
-        let optimizer = Optimizer::new(Rc::new(rules), Rc::new(cost_estimator), Rc::new(result_callback));
+        let optimizer = Optimizer::with_callback(Arc::new(rules), Arc::new(cost_estimator), Arc::new(result_callback));
 
         let mut memo = memoization.into_memo();
 
@@ -254,7 +254,7 @@ struct TestResultBuilder {
     content: Rc<RefCell<VecDeque<String>>>,
 }
 
-impl ResultCallback for TestResultBuilder {
+impl OptimizedExprCallback for TestResultBuilder {
     fn on_best_expr<C>(&self, expr: BestExprRef, ctx: &C)
     where
         C: BestExprContext,

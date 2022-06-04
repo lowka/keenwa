@@ -51,14 +51,14 @@ Cost-based query optimizer (WIP).
 - [x] AGGR(..) FILTER (WHERE _).
 - [x] AGGR(DISTINCT _).
 - [ ] count distinct.
-- [ ] Window functions.
+- [x] Window functions.
 - [ ] User-defined Aggregate functions.
 - [ ] GROUPING SET.
 
 #### Implementation
 
 - [x] HashAggregate
-- [ ] Aggregate over sorted data.
+- [x] StreamingAggregate.
 - TODO
 
 #### Window functions

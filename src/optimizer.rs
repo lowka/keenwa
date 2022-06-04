@@ -39,6 +39,7 @@ use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::{Debug, Display, Formatter};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use itertools::Itertools;
@@ -57,20 +58,31 @@ use crate::rules::{
 };
 
 /// Cost-based optimizer. See [module docs](self) for an overview of the algorithm.
-pub struct Optimizer<R, T, C> {
-    rule_set: Rc<R>,
-    cost_estimator: Rc<T>,
-    result_callback: Rc<C>,
+pub struct Optimizer<R, T, C = DefaultOptimizedExprCallback> {
+    rule_set: Arc<R>,
+    cost_estimator: Arc<T>,
+    result_callback: Arc<C>,
+}
+
+impl<R, T> Optimizer<R, T> {
+    /// Creates a new instance of `Optimizer`.
+    pub fn new(rule_set: Arc<R>, cost_estimator: Arc<T>) -> Self {
+        Optimizer {
+            rule_set,
+            cost_estimator,
+            result_callback: Arc::new(DefaultOptimizedExprCallback),
+        }
+    }
 }
 
 impl<R, T, C> Optimizer<R, T, C>
 where
     R: RuleSet,
     T: CostEstimator,
-    C: ResultCallback,
+    C: OptimizedExprCallback,
 {
-    /// Creates a new instance of `Optimizer`.
-    pub fn new(rule_set: Rc<R>, cost_estimator: Rc<T>, result_callback: Rc<C>) -> Self {
+    /// Creates a new instance of `Optimizer` with the specified [OptimizedExprCallback].
+    pub fn with_callback(rule_set: Arc<R>, cost_estimator: Arc<T>, result_callback: Arc<C>) -> Self {
         Optimizer {
             rule_set,
             cost_estimator,
@@ -177,7 +189,7 @@ impl<R, T, C> Debug for Optimizer<R, T, C>
 where
     R: RuleSet + Debug,
     T: CostEstimator + Debug,
-    C: ResultCallback + Debug,
+    C: OptimizedExprCallback + Debug,
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Optimizer")
@@ -198,7 +210,7 @@ pub enum BestExprRef<'a> {
 }
 
 /// A callback called by the optimizer when an optimized plan is being built.
-pub trait ResultCallback {
+pub trait OptimizedExprCallback {
     /// Called for each expression in the optimized plan.
     fn on_best_expr<C>(&self, expr: BestExprRef, ctx: &C)
     where
@@ -1115,11 +1127,11 @@ fn new_cost_estimation_ctx(inputs: &OptimizeInputsState, state: &State) -> (Cost
     (CostEstimationContext { inputs: best_exprs }, input_cost)
 }
 
-/// A [`ResultCallback`](ResultCallback) that does nothing.
+/// A [OptimizedExprCallback] that does nothing.
 #[derive(Debug)]
-pub struct NoOpResultCallback;
+pub struct DefaultOptimizedExprCallback;
 
-impl ResultCallback for NoOpResultCallback {
+impl OptimizedExprCallback for DefaultOptimizedExprCallback {
     fn on_best_expr<C>(&self, _expr: BestExprRef, _ctx: &C)
     where
         C: BestExprContext,
@@ -1168,7 +1180,7 @@ fn copy_out_best_expr<'o, T>(
     ctx: &'o OptimizationContext,
 ) -> Result<Operator, OptimizerError>
 where
-    T: ResultCallback,
+    T: OptimizedExprCallback,
 {
     let group_state = state.get_state(ctx);
     match &group_state.best_expr {

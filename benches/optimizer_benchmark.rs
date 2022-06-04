@@ -13,12 +13,11 @@ use keenwa::meta::MutableMetadata;
 use keenwa::operators::builder::{MemoizeOperators, OperatorBuilder, OrderingOption};
 use keenwa::operators::relational::join::JoinType;
 use keenwa::operators::scalar::{col, scalar};
-use keenwa::operators::*;
-use keenwa::optimizer::{NoOpResultCallback, Optimizer};
-use keenwa::rules::implementation::*;
-use keenwa::rules::transformation::*;
-use keenwa::rules::StaticRuleSet;
-use keenwa::rules::*;
+use keenwa::operators::{Operator, OperatorMemoBuilder, OuterScope};
+use keenwa::optimizer::{DefaultOptimizedExprCallback, Optimizer};
+use keenwa::rules::implementation::{GetToScanRule, HashJoinRule, SelectRule};
+use keenwa::rules::transformation::JoinCommutativityRule;
+use keenwa::rules::{Rule, StaticRuleSet, StaticRuleSetBuilder};
 use keenwa::statistics::simple::{PrecomputedSelectivityStatistics, SimpleCatalogStatisticsBuilder};
 
 fn memo_bench(c: &mut Criterion) {
@@ -114,7 +113,7 @@ fn memo_bench(c: &mut Criterion) {
     add_benchmark(c, "Join AxB ordered", build_query);
 }
 
-fn create_optimizer(catalog: CatalogRef) -> Optimizer<StaticRuleSet, SimpleCostEstimator, NoOpResultCallback> {
+fn create_optimizer(catalog: CatalogRef) -> Optimizer<StaticRuleSet, SimpleCostEstimator> {
     let rules: Vec<Box<dyn Rule>> = vec![
         Box::new(GetToScanRule::new(catalog)),
         Box::new(SelectRule),
@@ -124,7 +123,7 @@ fn create_optimizer(catalog: CatalogRef) -> Optimizer<StaticRuleSet, SimpleCostE
 
     let rules = StaticRuleSetBuilder::new().add_rules(rules).build();
     let cost_estimator = SimpleCostEstimator::new();
-    Optimizer::new(Rc::new(rules), Rc::new(cost_estimator), Rc::new(NoOpResultCallback))
+    Optimizer::new(Arc::new(rules), Arc::new(cost_estimator))
 }
 
 criterion_group!(benches, memo_bench,);
