@@ -1,0 +1,177 @@
+query: |
+  WITH a1_vals AS (
+    SELECT * FROM a WHERE a1 > 10
+  )
+  SELECT * FROM a1_vals
+ok: |
+  LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:3, col:4]
+    input: LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:3, col:4]
+      input: LogicalSelect
+        input: LogicalGet a cols=[1, 2, 3, 4]
+        filter: Expr col:1 > 10
+---
+query: |
+  WITH a1_vals AS (
+    SELECT a2, a1 FROM a WHERE a1 > 10
+  )
+  SELECT * FROM a1_vals
+ok: |
+  LogicalProjection cols=[2, 1] exprs: [col:2, col:1]
+    input: LogicalProjection cols=[2, 1] exprs: [col:2, col:1]
+      input: LogicalSelect
+        input: LogicalGet a cols=[1, 2, 3, 4]
+        filter: Expr col:1 > 10
+---
+query: |
+  WITH a1_vals(a1, a2) AS (
+    SELECT a2, a1 FROM a WHERE a1 > 10
+  )
+  SELECT a2, a1 FROM a1_vals
+ok: |
+  LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
+    input: LogicalProjection cols=[2, 1] exprs: [col:2, col:1]
+      input: LogicalSelect
+        input: LogicalGet a cols=[1, 2, 3, 4]
+        filter: Expr col:1 > 10
+---
+query: |
+  WITH a1_vals(c1, c2) AS (
+    SELECT a2, a1 FROM a WHERE a1 > 10
+  )
+  SELECT c1, c2 FROM a1_vals
+ok: |
+  LogicalProjection cols=[2, 1] exprs: [col:2, col:1]
+    input: LogicalProjection cols=[2, 1] exprs: [col:2, col:1]
+      input: LogicalSelect
+        input: LogicalGet a cols=[1, 2, 3, 4]
+        filter: Expr col:1 > 10
+---
+query: |
+  WITH a1_vals AS (
+    SELECT a1 FROM a WHERE a1 > 10
+  ), b2_vals AS (
+    SELECT b2 FROM b
+  )
+  SELECT a1, b2 FROM a1_vals JOIN b2_vals ON a1 = b2
+ok: |
+  LogicalProjection cols=[1, 6] exprs: [col:1, col:6]
+    input: LogicalJoin type=Inner on=col:1 = col:6
+      left: LogicalProjection cols=[1] exprs: [col:1]
+        input: LogicalSelect
+          input: LogicalGet a cols=[1, 2, 3, 4]
+          filter: Expr col:1 > 10
+      right: LogicalProjection cols=[6] exprs: [col:6]
+        input: LogicalGet b cols=[5, 6, 7]
+---
+query: |
+  SELECT t.a1 FROM (
+    WITH a1_vals AS (
+      SELECT a1 FROM a WHERE a1 > 10
+    )
+    SELECT a1 FROM a1_vals
+  ) t
+ok: |
+  LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalProjection cols=[1] exprs: [col:1]
+      input: LogicalProjection cols=[1] exprs: [col:1]
+        input: LogicalSelect
+          input: LogicalGet a cols=[1, 2, 3, 4]
+          filter: Expr col:1 > 10
+---
+query: |
+  WITH a1_vals AS (
+    SELECT a1 FROM a WHERE a1 > 10
+  )
+  SELECT a1 FROM a1_vals
+  UNION
+  SELECT a1 FROM a1_vals
+ok: |
+  LogicalUnion all=false cols=[5]
+    left: LogicalProjection cols=[1] exprs: [col:1]
+      input: LogicalProjection cols=[1] exprs: [col:1]
+        input: LogicalSelect
+          input: LogicalGet a cols=[1, 2, 3, 4]
+          filter: Expr col:1 > 10
+    right: LogicalProjection cols=[1] exprs: [col:1]
+      input: LogicalProjection cols=[1] exprs: [col:1]
+        input: LogicalSelect
+          input: LogicalGet a cols=[1, 2, 3, 4]
+          filter: Expr col:1 > 10
+---
+query: |
+  WITH a1_vals(a1, a2) AS (
+    SELECT a1, a2, a3 FROM a WHERE a1 > 10
+  )
+  SELECT * FROM a1_vals
+ok: |
+  LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
+    input: LogicalProjection cols=[1, 2, 3] exprs: [col:1, col:2, col:3]
+      input: LogicalSelect
+        input: LogicalGet a cols=[1, 2, 3, 4]
+        filter: Expr col:1 > 10
+---
+query: |
+  WITH a1_values AS (
+    SELECT a1 FROM a
+  ) SELECT * FROM a1_values as v(v1);
+ok: |
+  LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalProjection cols=[1] exprs: [col:1]
+      input: LogicalGet a cols=[1, 2, 3, 4]
+---
+# CTE in a subquery.
+query: |
+  WITH a1_vals AS (
+    SELECT a1 FROM a LIMIT 1
+  )
+  SELECT (SELECT a1 FROM a1_vals), a2 FROM a
+ok: |
+  LogicalProjection cols=[5, 2] exprs: [SubQuery 04, col:2]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+
+  Sub query from column 5:
+  LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalLimit rows=1
+      input: LogicalProjection cols=[1] exprs: [col:1]
+        input: LogicalGet a cols=[1, 2, 3, 4]
+---
+# CTE references column from the outer scope.
+query: |
+  SELECT 1, (WITH a1_val AS (SELECT t1, t2) SELECT t1 + t2 FROM a1_val) FROM a as t(t1, t2)
+ok: |
+  LogicalProjection cols=[6, 7] exprs: [1, SubQuery 05]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+
+  Sub query from column 7:
+  LogicalProjection cols=[5] outer_cols=[1, 2] exprs: [col:1 + col:2]
+    input: LogicalProjection cols=[1, 2] outer_cols=[1, 2] exprs: [col:1, col:2]
+      input: LogicalEmpty return_one_row=true
+---
+# CTE references column from the outer scope.
+query: |
+  SELECT 1, (WITH a1_val AS (SELECT t1) SELECT t1 + t2 FROM a1_val) FROM a as t(t1, t2)
+ok: |
+  LogicalProjection cols=[6, 7] exprs: [1, SubQuery 04]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+  
+  Sub query from column 7:
+  LogicalProjection cols=[5] outer_cols=[1, 2] exprs: [col:1 + col:2]
+    input: LogicalProjection cols=[1] outer_cols=[1] exprs: [col:1]
+      input: LogicalEmpty return_one_row=true
+---
+###
+query: |
+  WITH a1_vals AS (SELECT 1),
+       a1_vals AS (SELECT 2)
+  SELECT * FROM a1_vals
+error: |
+  Argument error: WITH query name 'a1_vals' specified more than once
+---
+query: |
+  WITH a1_vals(a1, a2, a3) AS (
+    SELECT * FROM a WHERE a1 > 10
+  )
+  SELECT a4 FROM a1_vals
+error: |
+  Internal error: Unexpected column: a4. Input columns: [(a1, 1), (a2, 2), (a3, 3)], Outer columns: []
+---

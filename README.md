@@ -202,6 +202,9 @@ See test cases in `sql/*_tests.yaml`.
 - [x] NOT IN/ IN `<subquery>`
 - [x] EXISTS/NOT EXISTS `<subquery>`.
 
+- [x] WITH (Common table expressions)
+- [ ] WITH RECURSIVE (Recursive common table expressions)
+
 #### Basic DML operators
 
 TODO
