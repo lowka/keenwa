@@ -5,7 +5,7 @@ use keenwa::datatypes::DataType;
 use keenwa::error::OptimizerError;
 use keenwa::operators::format::format_operator_tree;
 use keenwa::operators::Operator;
-use keenwa::optimizer::{NoOpResultCallback, Optimizer};
+use keenwa::optimizer::Optimizer;
 use keenwa::rules::implementation::{EmptyRule, GetToScanRule, HashJoinRule, ProjectionRule, SelectRule};
 use keenwa::rules::{Rule, StaticRuleSet, StaticRuleSetBuilder};
 use keenwa::sql::OperatorFromSqlBuilder;
@@ -66,7 +66,7 @@ fn create_catalog() -> CatalogRef {
     catalog
 }
 
-fn create_optimizer(catalog: CatalogRef) -> Optimizer<StaticRuleSet, SimpleCostEstimator, NoOpResultCallback> {
+fn create_optimizer(catalog: CatalogRef) -> Optimizer<StaticRuleSet, SimpleCostEstimator> {
     // Setup transformation/implementation rules.
     let rules: Vec<Box<dyn Rule>> = vec![
         Box::new(GetToScanRule::new(catalog)),
@@ -79,7 +79,7 @@ fn create_optimizer(catalog: CatalogRef) -> Optimizer<StaticRuleSet, SimpleCostE
     let rule_set = StaticRuleSetBuilder::new().add_rules(rules).build();
     let cost_estimator = SimpleCostEstimator::new();
 
-    Optimizer::new(Rc::new(rule_set), Rc::new(cost_estimator), Rc::new(NoOpResultCallback))
+    Optimizer::new(Arc::new(rule_set), Arc::new(cost_estimator))
 }
 
 fn expect_plan(operator: &Operator, plan_type: &str, expected_plan: &str) {
