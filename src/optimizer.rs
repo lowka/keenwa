@@ -332,29 +332,6 @@ impl Display for EnforcerTask {
     }
 }
 
-#[derive(Debug)]
-struct ExprRefOption {
-    expr: Option<ExprRef>,
-}
-
-impl ExprRefOption {
-    fn some(expr: ExprRef) -> Self {
-        ExprRefOption { expr: Some(expr) }
-    }
-    fn none() -> Self {
-        ExprRefOption { expr: None }
-    }
-}
-
-impl Display for ExprRefOption {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self.expr.as_ref() {
-            None => write!(f, "none"),
-            Some(expr) => write!(f, "{}", expr),
-        }
-    }
-}
-
 fn optimize_group<R>(runtime_state: &mut RuntimeState, memo: &ExprMemo, ctx: OptimizationContext, rule_set: &R)
 where
     R: RuleSet,

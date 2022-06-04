@@ -139,7 +139,7 @@ fn build_statement(builder: OperatorBuilder, stmt: Statement) -> Result<Operator
 
 fn build_query(builder: OperatorBuilder, query: Query) -> Result<OperatorBuilder, OptimizerError> {
     let builder = if let Some(with) = query.with {
-        build_cte(builder.clone(), with)?
+        build_cte(builder, with)?
     } else {
         builder
     };
