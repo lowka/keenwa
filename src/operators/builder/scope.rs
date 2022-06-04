@@ -1,7 +1,10 @@
 use crate::error::OptimizerError;
 use crate::meta::{ColumnId, MetadataRef, MutableMetadata, RelationId};
 use crate::operators::builder::TableAlias;
+use crate::operators::relational::RelNode;
 use crate::operators::scalar::exprs;
+use crate::operators::Operator;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 /// Stores columns and relations visible to/accessible from the current node of an operator tree.
@@ -13,11 +16,22 @@ pub struct OperatorScope {
     // FIXME: Rewrite OperatorScope so it uses the parent scope.
     //  (currently parent is never set to anything but None)
     parent: Option<Rc<OperatorScope>>,
-    // FIXME: store relations that are not accessible from this scope.
+    // FIXED: store relations that are not accessible from this scope.
     //  (eg. SELECT .. FROM a JOIN (SELECT * FROM b1 WHERE b1 = a1)
     //    in the above query column a1 should not be accessible
     // columns from the outer scope.
     outer_columns: Vec<ColumnId>,
+    // Common table expressions accessible from this scope.
+    with: HashMap<String, CteInScope>,
+}
+
+/// Common table expression.
+#[derive(Debug, Clone)]
+pub struct CteInScope {
+    /// The relational operator that represents this common table expression.
+    pub expr: RelNode,
+    /// The output columns of that operator. (<name>, id).
+    pub relation: Vec<(String, ColumnId)>,
 }
 
 impl OperatorScope {
@@ -29,6 +43,7 @@ impl OperatorScope {
             parent: None,
             relations,
             outer_columns: Vec::new(),
+            with: HashMap::new(),
         }
     }
 
@@ -41,6 +56,7 @@ impl OperatorScope {
             parent: None,
             relations,
             outer_columns,
+            with: HashMap::new(),
         }
     }
 
@@ -55,6 +71,7 @@ impl OperatorScope {
             parent: Some(Rc::new(self.clone())),
             relations,
             outer_columns,
+            with: self.with.clone(),
         }
     }
 
@@ -73,6 +90,7 @@ impl OperatorScope {
             parent: None,
             relations,
             outer_columns,
+            with: self.with.clone(),
         }
     }
 
@@ -85,6 +103,7 @@ impl OperatorScope {
             parent: None,
             relations,
             outer_columns: self.outer_columns.clone(),
+            with: self.with.clone(),
         }
     }
 
@@ -103,6 +122,7 @@ impl OperatorScope {
             // Use outer column from the left side of the join
             // because the right side contain the subset of those columns.
             outer_columns: self.outer_columns,
+            with: self.with.clone(),
         }
     }
 
@@ -225,6 +245,26 @@ impl OperatorScope {
 
     pub fn outer_columns(&self) -> &[ColumnId] {
         &self.outer_columns
+    }
+
+    pub fn add_cte(&mut self, name: String, cte: CteInScope) -> bool {
+        if self.with.insert(name, cte).is_some() {
+            false
+        } else {
+            // Remove output columns otherwise they are going be to be added
+            // to the outer scope of an operator (see get_outer_columns in new_scope/new_child_scope)
+            self.relation.columns = Vec::new();
+            for r in self.relations.relations.iter_mut() {
+                if r.relation_id == self.relation.relation_id {
+                    r.columns = Vec::new();
+                }
+            }
+            true
+        }
+    }
+
+    pub fn find_cte(&self, name: &str) -> Option<&CteInScope> {
+        self.with.get(name)
     }
 
     fn find_in_scope<F>(&self, f: &F) -> Option<ColumnId>

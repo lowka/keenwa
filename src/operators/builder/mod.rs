@@ -17,6 +17,7 @@ use crate::memo::MemoExprState;
 use crate::meta::{ColumnId, ColumnMetadata, MetadataRef, MutableMetadata};
 use crate::not_implemented;
 use crate::operators::builder::aggregate::{add_window_aggregates, has_window_aggregates};
+use crate::operators::builder::scope::CteInScope;
 use crate::operators::builder::subqueries::{
     decorrelate_subqueries, possibly_has_correlated_subqueries, BuildFilter, BuildOperators,
 };
@@ -205,22 +206,50 @@ impl OperatorBuilder {
         }
     }
 
+    /// Adds a common table expression with the given table alias.
+    pub fn with_table_expr(mut self, alias: TableAlias, mut expr: OperatorBuilder) -> Result<Self, OptimizerError> {
+        let (rel_node, mut scope) = expr.rel_node()?;
+        let name = alias.name.clone();
+
+        let num_columns = if alias.columns.len() == 0 {
+            scope.output_relation().columns().len()
+        } else {
+            alias.columns.len()
+        };
+        scope.set_alias(alias, &self.metadata)?;
+
+        let cte = CteInScope {
+            expr: rel_node,
+            relation: scope.output_relation().columns().iter().take(num_columns).cloned().collect(),
+        };
+
+        let mut scope = if let Some(scope) = self.scope.take() {
+            scope
+        } else {
+            scope
+        };
+
+        println!("scope: {:?}", scope.outer_columns());
+
+        if !scope.add_cte(name.clone(), cte) {
+            return Err(OptimizerError::argument(format!("WITH query name '{}' specified more than once", name)));
+        }
+        self.scope = Some(scope);
+
+        Ok(self)
+    }
+
     /// Add a scan operator to an operator tree. A scan operator can only be added as a leaf node of a tree.
     ///
     /// Unlike [OperatorBuilder::get] this method adds an operator
     /// that returns all the columns from the given `source`.
-    pub fn from(self, source: &str) -> Result<Self, OptimizerError> {
-        let table = self
-            .catalog
-            .get_table(source)
-            .ok_or_else(|| OptimizerError::argument(format!("Table does not exist. Table: {}", source)))?;
-        let columns = table.columns().iter().map(|c| c.name().to_string()).collect();
-        self.add_scan_operator(source, columns)
+    pub fn from(mut self, source: &str) -> Result<Self, OptimizerError> {
+        self.add_scan_operator::<String>(source, None)
     }
 
     /// Adds a scan operator to an operator tree. A scan operator can only be added as leaf node of a tree.
     pub fn get(self, source: &str, columns: Vec<impl Into<String>>) -> Result<Self, OptimizerError> {
-        self.add_scan_operator(source, columns)
+        self.add_scan_operator(source, Some(columns))
     }
 
     /// Adds an operator that returns the given list of rows.
@@ -719,17 +748,68 @@ impl OperatorBuilder {
         }
     }
 
-    fn add_scan_operator(mut self, source: &str, columns: Vec<impl Into<String>>) -> Result<Self, OptimizerError> {
+    fn add_scan_operator<T>(mut self, source: &str, columns: Option<Vec<T>>) -> Result<Self, OptimizerError>
+    where
+        T: Into<String>,
+    {
         if self.operator.is_some() {
             return Err(OptimizerError::internal(
                 "Adding a scan operator on top of another operator is not allowed".to_string(),
             ));
         }
-        let columns: Vec<String> = columns.into_iter().map(|c| c.into()).collect();
+
+        if let Some((input_scope, cte)) =
+            self.scope.as_ref().and_then(|scope| scope.find_cte(source).map(|cte| (scope, cte)))
+        {
+            let column_ids = cte.expr.props().logical().output_columns();
+            let columns: Result<Vec<_>, OptimizerError> = match columns {
+                Some(columns) => columns
+                    .into_iter()
+                    .map(|name| name.into())
+                    .zip(column_ids.iter())
+                    .map(|(name, _)| {
+                        let mut rewriter = RewriteExprs::new(
+                            input_scope,
+                            self.metadata.clone(),
+                            ValidateProjectionExpr::projection_expr(),
+                        );
+                        let expr = ScalarExpr::ColumnName(name.clone());
+                        let expr = expr.rewrite(&mut rewriter)?;
+                        if let ScalarExpr::Column(id) = expr {
+                            Ok((name, id))
+                        } else {
+                            unreachable!()
+                        }
+                    })
+                    .collect(),
+                None => Ok(cte.relation.clone()),
+            };
+            let columns = columns?;
+            let operator = Operator::from(OperatorExpr::from(cte.expr.expr().logical().clone()));
+
+            // Set new scope which includes:
+            //  + outer columns from the input scope
+            //  + output columns returned by CTE.
+            //  + relations from the input scope (technically, the relations from the outer scope)
+            let outer_columns = input_scope.outer_columns().to_vec();
+            let mut scope = OperatorScope::from_columns(columns, outer_columns);
+            scope.add_relations(input_scope.clone());
+
+            self.operator = Some(operator);
+            self.scope = Some(scope);
+
+            return Ok(self);
+        }
+
         let table = self
             .catalog
             .get_table(source)
             .ok_or_else(|| OptimizerError::argument(format!("Table does not exist. Table: {}", source)))?;
+
+        let columns: Vec<_> = match columns {
+            None => table.columns().iter().map(|c| c.name().to_string()).collect(),
+            Some(columns) => columns.into_iter().map(|s| s.into()).collect(),
+        };
 
         let relation_name = String::from(source);
         let relation_id = self.metadata.add_table(relation_name.as_str());
@@ -2752,6 +2832,41 @@ Memo:
             .replace(":set_op", logical_op)
             .replace(":all", format!("{}", all).as_str())
             .as_str(),
+        );
+    }
+
+    #[test]
+    fn test_cte() {
+        let mut tester = OperatorBuilderTester::new();
+        tester.build_operator(|builder| {
+            let a1_vals = builder.new_relation_builder().from("a")?.project(vec![col("a1")])?;
+            let builder = builder.with_table_expr(
+                TableAlias {
+                    name: "a1_vals".to_string(),
+                    columns: vec![],
+                },
+                a1_vals,
+            )?;
+            let project = builder.from("a1_vals")?.project(vec![col("a1")])?;
+            project.build()
+        });
+        tester.expect_expr(
+            r#"
+LogicalProjection cols=[1] exprs: [col:1]
+  input: LogicalProjection cols=[1] exprs: [col:1]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+  output cols: [1]
+Metadata:
+  col:1 a.a1 Int32
+  col:2 a.a2 Int32
+  col:3 a.a3 Int32
+  col:4 a.a4 Int32
+Memo:
+  03 LogicalProjection input=02 exprs=[01] cols=[1]
+  02 LogicalProjection input=00 exprs=[01] cols=[1]
+  01 Expr col:1
+  00 LogicalGet a cols=[1, 2, 3, 4]
+"#,
         );
     }
 

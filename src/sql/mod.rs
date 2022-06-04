@@ -21,9 +21,10 @@ use crate::operators::{ExprMemo, Operator, OperatorMemoBuilder, OperatorMetadata
 use crate::statistics::StatisticsBuilder;
 use itertools::Itertools;
 use sqlparser::ast::{
-    BinaryOperator, DataType as SqlDataType, DateTimeField, Expr, Function, FunctionArg, FunctionArgExpr, Ident, Join,
-    JoinConstraint, JoinOperator, ObjectName, OrderByExpr, Query, Select, SelectItem, SetExpr, SetOperator, Statement,
-    TableAlias as SqlTableAlias, TableFactor, TableWithJoins, UnaryOperator, Value, Values, WindowSpec,
+    BinaryOperator, Cte, DataType as SqlDataType, DateTimeField, Expr, Function, FunctionArg, FunctionArgExpr, Ident,
+    Join, JoinConstraint, JoinOperator, ObjectName, OrderByExpr, Query, Select, SelectItem, SetExpr, SetOperator,
+    Statement, TableAlias as SqlTableAlias, TableFactor, TableWithJoins, UnaryOperator, Value, Values, WindowSpec,
+    With,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::{Parser, ParserError};
@@ -137,6 +138,12 @@ fn build_statement(builder: OperatorBuilder, stmt: Statement) -> Result<Operator
 }
 
 fn build_query(builder: OperatorBuilder, query: Query) -> Result<OperatorBuilder, OptimizerError> {
+    let builder = if let Some(with) = query.with {
+        build_cte(builder.clone(), with)?
+    } else {
+        builder
+    };
+
     let builder = build_set_expr(builder, query.body)?;
     let builder = build_order_by(builder, query.order_by)?;
 
@@ -180,6 +187,24 @@ fn build_set_expr(builder: OperatorBuilder, set_expr: SetExpr) -> Result<Operato
         SetExpr::Values(values) => build_values(builder, values),
         SetExpr::Insert(_) => not_implemented!("INSERT"),
     }
+}
+
+fn build_cte(builder: OperatorBuilder, with: With) -> Result<OperatorBuilder, OptimizerError> {
+    not_implemented!(with.recursive, "Recursive CTE");
+
+    let mut cte_builder = builder.sub_query_builder();
+
+    for cte_table in with.cte_tables {
+        let cte_table: Cte = cte_table;
+        let table_expr = build_query(cte_builder.clone(), cte_table.query)?;
+        let table_alias = TableAlias {
+            name: cte_table.alias.name.to_string(),
+            columns: cte_table.alias.columns.into_iter().map(|c| c.to_string()).collect(),
+        };
+        cte_builder = cte_builder.with_table_expr(table_alias, table_expr)?;
+    }
+
+    Ok(cte_builder)
 }
 
 fn build_select(builder: OperatorBuilder, select: Select) -> Result<OperatorBuilder, OptimizerError> {
@@ -1132,6 +1157,12 @@ catalog:
     #[test]
     fn test_set_operators() {
         let text = include_str!("set_operator_tests.yaml");
+        run_test_cases(text);
+    }
+
+    #[test]
+    fn test_cte() {
+        let text = include_str!("cte_tests.yaml");
         run_test_cases(text);
     }
 
