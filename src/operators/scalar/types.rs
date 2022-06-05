@@ -314,15 +314,15 @@ mod test {
     }
 
     fn bool_value() -> Expr {
-        Expr::Scalar(ScalarValue::Bool(true))
+        Expr::Scalar(ScalarValue::Bool(Some(true)))
     }
 
     fn int_value() -> Expr {
-        Expr::Scalar(ScalarValue::Int32(1))
+        Expr::Scalar(ScalarValue::Int32(Some(1)))
     }
 
     fn str_value() -> Expr {
-        Expr::Scalar(ScalarValue::String("s".into()))
+        Expr::Scalar(ScalarValue::String(Some("s".to_string())))
     }
 
     fn col_name(name: &str) -> Expr {

@@ -116,7 +116,7 @@ impl StreamingAggregate {
 mod test {
     use crate::meta::testing::TestMetadata;
     use crate::operators::relational::physical::StreamingAggregate;
-    use crate::operators::scalar::value::ScalarValue;
+    use crate::operators::scalar::value::Scalar;
     use crate::operators::scalar::{ScalarExpr, ScalarNode};
     use crate::properties::testing::ordering_from_string;
 
@@ -140,7 +140,7 @@ mod test {
         metadata.add_columns("A", vec!["a1", "a2"]);
 
         let a1 = ScalarExpr::Column(metadata.find_column("A", "a1"));
-        let int = ScalarExpr::Scalar(ScalarValue::Int32(1));
+        let int = ScalarExpr::Scalar(1.get_value());
 
         let group_by_a1 = ScalarNode::from(a1.clone());
         let group_by_a1_plus_int = ScalarNode::from(a1 + int);

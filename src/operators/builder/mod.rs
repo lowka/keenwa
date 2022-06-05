@@ -30,7 +30,7 @@ use crate::operators::relational::{RelNode, SetOperator};
 use crate::operators::scalar::expr::ExprRewriter;
 use crate::operators::scalar::types::resolve_expr_type;
 use crate::operators::scalar::value::ScalarValue;
-use crate::operators::scalar::{get_subquery, ScalarExpr, ScalarNode};
+use crate::operators::scalar::{get_subquery, scalar, ScalarExpr, ScalarNode};
 use crate::operators::{ExprMemo, Operator, OperatorExpr, OperatorMetadata, OuterScope, Properties, ScalarProperties};
 use crate::properties::physical::{PhysicalProperties, RequiredProperties};
 use crate::properties::{OrderingChoice, OrderingColumn};
@@ -96,7 +96,7 @@ impl OrderingOption {
 
     /// Creates an option to order data by `i`-th column (1-based)
     pub fn by_position(i: usize, descending: bool) -> Self {
-        OrderingOption::new(ScalarExpr::Scalar(ScalarValue::Int32(i as i32)), descending)
+        OrderingOption::new(ScalarExpr::Scalar(ScalarValue::Int32(Some(i as i32))), descending)
     }
 
     /// Creates an option to order data by the given column.
@@ -460,7 +460,7 @@ impl OperatorBuilder {
 
         if join_type == JoinType::Cross {
             match expr {
-                ScalarExpr::Scalar(ScalarValue::Bool(true)) => {}
+                ScalarExpr::Scalar(ScalarValue::Bool(Some(true))) => {}
                 _ => {
                     return Err(OptimizerError::argument(format!(
                         "CROSS JOIN: Invalid expression in ON <expr> condition: {}",
@@ -504,7 +504,7 @@ impl OperatorBuilder {
         let condition = if !column_ids.is_empty() {
             JoinCondition::Using(JoinUsing::new(column_ids))
         } else {
-            let expr = self.add_scalar_node(ScalarExpr::Scalar(ScalarValue::Bool(true)), &scope)?;
+            let expr = self.add_scalar_node(scalar(true), &scope)?;
             JoinCondition::On(JoinOn::new(expr))
         };
 
@@ -535,7 +535,7 @@ impl OperatorBuilder {
                     let columns = scope.columns();
 
                     let column_id = match expr {
-                        ScalarExpr::Scalar(ScalarValue::Int32(pos)) => match usize::try_from(pos - 1).ok() {
+                        ScalarExpr::Scalar(ScalarValue::Int32(Some(pos))) => match usize::try_from(pos - 1).ok() {
                             Some(pos) if pos < columns.len() => {
                                 let (_, id) = columns[pos];
                                 id
@@ -1522,6 +1522,7 @@ mod test {
     use crate::operators::format::{AppendMemo, AppendMetadata, OperatorTreeFormatter, SubQueriesFormatter};
     use crate::operators::properties::LogicalPropertiesBuilder;
     use crate::operators::scalar::aggregates::{AggregateFunction, WindowFunction};
+    use crate::operators::scalar::value::Scalar;
     use crate::operators::scalar::{col, qualified_wildcard, scalar, wildcard};
     use crate::operators::{OperatorMemoBuilder, Properties, RelationalProperties};
     use crate::properties::logical::LogicalProperties;
@@ -1998,8 +1999,8 @@ Memo:
             tester.expect_error("CROSS JOIN: Invalid expression in ON <expr> condition");
         }
 
-        expect_cross_join_is_rejected(ScalarExpr::Scalar(ScalarValue::Bool(false)));
-        expect_cross_join_is_rejected(ScalarExpr::Scalar(ScalarValue::Int32(1)));
+        expect_cross_join_is_rejected(ScalarExpr::Scalar(false.get_value()));
+        expect_cross_join_is_rejected(ScalarExpr::Scalar(1.get_value()));
     }
 
     #[test]

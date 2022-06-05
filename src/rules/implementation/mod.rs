@@ -309,7 +309,7 @@ impl Rule for LimitOffsetRule {
 mod test {
     use super::*;
     use crate::meta::testing::TestMetadata;
-    use crate::operators::scalar::value::ScalarValue;
+    use crate::operators::scalar::value::Scalar;
     use crate::rules::testing::RuleTester;
 
     #[test]
@@ -331,8 +331,8 @@ Empty return_one_row=true
         let col1 = metadata.column("A").build();
         let col2 = metadata.column("A").build();
 
-        let val1 = ScalarExpr::Scalar(ScalarValue::Int32(1));
-        let val2 = ScalarExpr::Scalar(ScalarValue::Bool(true));
+        let val1 = ScalarExpr::Scalar(1.get_value());
+        let val2 = ScalarExpr::Scalar(true.get_value());
 
         let tuple = ScalarNode::from(ScalarExpr::Tuple(vec![val1, val2]));
         let expr = LogicalExpr::Values(LogicalValues {

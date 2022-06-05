@@ -1117,36 +1117,6 @@ where
     }
 }
 
-/// Converts a type to a [scalar value](super::value::ScalarValue).
-pub trait Scalar {
-    /// Convert this type to a scalar value.
-    fn get_value(&self) -> ScalarValue;
-}
-
-impl Scalar for bool {
-    fn get_value(&self) -> ScalarValue {
-        ScalarValue::Bool(*self)
-    }
-}
-
-impl Scalar for i32 {
-    fn get_value(&self) -> ScalarValue {
-        ScalarValue::Int32(*self)
-    }
-}
-
-impl Scalar for &str {
-    fn get_value(&self) -> ScalarValue {
-        ScalarValue::String((*self).to_owned())
-    }
-}
-
-impl Scalar for String {
-    fn get_value(&self) -> ScalarValue {
-        ScalarValue::String(self.to_owned())
-    }
-}
-
 #[cfg(test)]
 mod test {
     use crate::operators::scalar::aggregates::WindowFunction;
@@ -1195,13 +1165,21 @@ mod test {
     }
 
     fn str_val(val: &str) -> Expr {
-        Expr::Scalar(ScalarValue::String(String::from(val)))
+        Expr::Scalar(ScalarValue::String(Some(String::from(val))))
+    }
+
+    fn bool_val(val: bool) -> Expr {
+        Expr::Scalar(ScalarValue::Bool(Some(val)))
+    }
+
+    fn int_val(val: i32) -> Expr {
+        Expr::Scalar(ScalarValue::Int32(Some(val)))
     }
 
     #[test]
     fn expr_methods() {
-        let expr = Expr::Scalar(ScalarValue::Int32(1));
-        let rhs = Expr::Scalar(ScalarValue::Int32(10));
+        let expr = int_val(1);
+        let rhs = int_val(10);
 
         expect_expr(expr.clone().and(rhs.clone()), "1 AND 10");
         expect_expr(expr.clone().or(rhs.clone()), "1 OR 10");
@@ -1255,19 +1233,19 @@ mod test {
 
     #[test]
     fn scalar_traversal() {
-        let expr = Expr::Scalar(ScalarValue::Int32(1));
+        let expr = int_val(1);
         expect_traversal_order(&expr, vec!["pre:1", "post:1"]);
     }
 
     #[test]
     fn binary_expr_traversal() {
-        let expr = Expr::Scalar(ScalarValue::Int32(1)).ne(Expr::Scalar(ScalarValue::Int32(2)));
+        let expr = int_val(1).ne(int_val(2));
         expect_traversal_order(&expr, vec!["pre:1 != 2", "pre:1", "post:1", "pre:2", "post:2", "post:1 != 2"]);
     }
 
     #[test]
     fn not_expr_traversal() {
-        let expr = Expr::Scalar(ScalarValue::Bool(true)).not();
+        let expr = bool_val(true).not();
         expect_traversal_order(&expr, vec!["pre:NOT true", "pre:true", "post:true", "post:NOT true"])
     }
 
@@ -1275,7 +1253,7 @@ mod test {
     fn is_null_expr_traversal() {
         let expr = Expr::IsNull {
             not: false,
-            expr: Box::new(Expr::Scalar(ScalarValue::Bool(true))),
+            expr: Box::new(bool_val(true)),
         };
         expect_traversal_order(&expr, vec!["pre:true IS NULL", "pre:true", "post:true", "post:true IS NULL"])
     }
@@ -1284,8 +1262,8 @@ mod test {
     fn in_list_expr_traversal() {
         let expr = Expr::InList {
             not: false,
-            expr: Box::new(Expr::Scalar(ScalarValue::Bool(false))),
-            exprs: vec![Expr::Scalar(ScalarValue::Bool(true)), Expr::Scalar(ScalarValue::Int32(1))],
+            expr: Box::new(bool_val(false)),
+            exprs: vec![bool_val(true), int_val(1)],
         };
         expect_traversal_order_with_depth(
             &expr,
@@ -1298,7 +1276,7 @@ mod test {
     fn is_not_null_expr_traversal() {
         let expr = Expr::IsNull {
             not: true,
-            expr: Box::new(Expr::Scalar(ScalarValue::Bool(true))),
+            expr: Box::new(bool_val(true)),
         };
         expect_traversal_order(&expr, vec!["pre:true IS NOT NULL", "pre:true", "post:true", "post:true IS NOT NULL"])
     }
@@ -1332,7 +1310,7 @@ mod test {
             func: AggregateFunction::Avg,
             distinct: false,
             args: vec![col("a1")],
-            filter: Some(Box::new(Expr::Scalar(ScalarValue::Bool(true)))),
+            filter: Some(Box::new(bool_val(true))),
         };
         expect_traversal_order(
             &expr,
@@ -1349,17 +1327,13 @@ mod test {
 
     #[test]
     fn case_traversal() {
-        fn val(i: i32) -> Expr {
-            Expr::Scalar(ScalarValue::Int32(i))
-        }
-
         let col1 = col("a1");
 
         let expr = Expr::Case {
-            expr: Some(Box::new(col1.clone().gt(val(10)))),
+            expr: Some(Box::new(col1.clone().gt(int_val(10)))),
             when_then_exprs: vec![
-                (col1.clone().eq(val(11)), val(10) + val(1)),
-                (col1.clone().eq(val(12)), val(10) + val(2)),
+                (col1.clone().eq(int_val(11)), int_val(10) + int_val(1)),
+                (col1.clone().eq(int_val(12)), int_val(10) + int_val(2)),
             ],
             else_expr: Some(Box::new(col1.clone())),
         };
@@ -1396,8 +1370,8 @@ mod test {
         let expr = Expr::Between {
             not: false,
             expr: Box::new(col("a1")),
-            low: Box::new(Expr::Scalar(ScalarValue::Int32(2))),
-            high: Box::new(Expr::Scalar(ScalarValue::Int32(4))),
+            low: Box::new(int_val(2)),
+            high: Box::new(int_val(4)),
         };
         expect_traversal_order(
             &expr,
@@ -1419,8 +1393,8 @@ mod test {
         let expr = Expr::Between {
             not: true,
             expr: Box::new(col("a1")),
-            low: Box::new(Expr::Scalar(ScalarValue::Int32(2))),
-            high: Box::new(Expr::Scalar(ScalarValue::Int32(4))),
+            low: Box::new(int_val(2)),
+            high: Box::new(int_val(4)),
         };
         expect_traversal_order(
             &expr,
@@ -1439,8 +1413,7 @@ mod test {
 
     #[test]
     fn tuple_traversal() {
-        let expr =
-            Expr::Tuple(vec![Expr::Scalar(ScalarValue::Bool(true)), Expr::Scalar(ScalarValue::Int32(1)), col("a1")]);
+        let expr = Expr::Tuple(vec![bool_val(true), int_val(1), col("a1")]);
         expect_traversal_order(
             &expr,
             vec![
@@ -1458,8 +1431,7 @@ mod test {
 
     #[test]
     fn array_traversal() {
-        let expr =
-            Expr::Array(vec![Expr::Scalar(ScalarValue::Bool(true)), Expr::Scalar(ScalarValue::Bool(false)), col("a1")]);
+        let expr = Expr::Array(vec![bool_val(true), bool_val(false), col("a1")]);
         expect_traversal_order(
             &expr,
             vec![

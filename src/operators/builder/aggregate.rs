@@ -323,7 +323,7 @@ fn build_group_by_exprs(
     let mut group_by_columns = HashSet::new();
 
     for expr in exprs {
-        let expr = if let ScalarExpr::Scalar(ScalarValue::Int32(pos)) = expr {
+        let expr = if let ScalarExpr::Scalar(ScalarValue::Int32(Some(pos))) = expr {
             let pos = pos - 1;
             if pos >= 0 && (pos as usize) < aggr_exprs.len() {
                 aggr_exprs[pos as usize].expr().clone()

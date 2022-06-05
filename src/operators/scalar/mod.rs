@@ -7,8 +7,9 @@ use std::ops::Deref;
 use crate::memo::NewChildExprs;
 use crate::meta::{ColumnId, MutableMetadata};
 use crate::operators::relational::RelNode;
-use crate::operators::scalar::expr::{ExprRewriter, Scalar};
+use crate::operators::scalar::expr::ExprRewriter;
 use crate::operators::scalar::types::ColumnTypeRegistry;
+use crate::operators::scalar::value::Scalar;
 use crate::operators::Operator;
 
 pub mod aggregates;

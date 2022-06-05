@@ -6,15 +6,30 @@ use std::fmt::{Display, Formatter};
 /// Data types supported in scalar expressions and column definitions.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum DataType {
+    /// NULL data type.
     Null,
+    /// Boolean.
     Bool,
+    /// 32-bit signed integer.
     Int32,
+    /// Utf-8 string.
     String,
+    /// Date in days since January 1, year 1 in the Gregorian calendar.
     Date,
+    /// Time (seconds and nanoseconds) since midnight.
     Time,
+    /// Timestamp in milliseconds since UNIX epoch.
+    /// The boolean argument indicates whether this timestamp type has a timezone or not.
     Timestamp(bool),
+    /// Interval.
     Interval,
+    /// Tuple data type.
+    ///
+    /// The arguments holds the types of each field of this tuple type.
     Tuple(Vec<DataType>),
+    /// Array data type.
+    ///
+    /// The argument holds the element type of this array type.
     Array(Box<DataType>),
 }
 

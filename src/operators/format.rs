@@ -533,7 +533,7 @@ mod test {
         LogicalAggregate, LogicalEmpty, LogicalExpr, LogicalGet, LogicalProjection,
     };
     use crate::operators::relational::RelNode;
-    use crate::operators::scalar::value::ScalarValue;
+    use crate::operators::scalar::value::{Scalar, ScalarValue};
     use crate::operators::scalar::ScalarExpr;
     use crate::operators::{Operator, OperatorExpr, Properties, RelationalProperties};
     use crate::properties::logical::LogicalProperties;
@@ -588,7 +588,7 @@ LogicalProjection cols=[1] exprs: [col:1]
         });
         let aggr = LogicalExpr::Aggregate(LogicalAggregate {
             input: Operator::from(OperatorExpr::from(from_a)).into(),
-            aggr_exprs: vec![ScalarNode::from(ScalarExpr::Scalar(ScalarValue::Int32(10)))],
+            aggr_exprs: vec![ScalarNode::from(ScalarExpr::Scalar(10.get_value()))],
             group_exprs: vec![ScalarNode::from(ScalarExpr::Column(col1))],
             having: None,
             columns: vec![col3, col4],

@@ -47,7 +47,7 @@ mod test {
     use crate::meta::ColumnId;
     use crate::operators::scalar::expr::NestedExpr;
     use crate::operators::scalar::exprs::collect_columns;
-    use crate::operators::scalar::value::ScalarValue;
+    use crate::operators::scalar::value::{Scalar, ScalarValue};
 
     #[derive(Debug, Eq, PartialEq, Clone, Hash, Default)]
     struct DummyExpr {
@@ -85,7 +85,7 @@ mod test {
         let columns = collect_columns(&expr);
         assert_eq!(columns, vec![col1, col2], "nested columns");
 
-        let expr = Expr::Scalar(ScalarValue::Int32(1));
+        let expr = Expr::Scalar(1.get_value());
         let columns = collect_columns(&expr);
         let empty = Vec::<ColumnId>::new();
         assert_eq!(columns, empty, "no columns");
@@ -132,7 +132,7 @@ mod test {
 
         let subquery = Expr::InSubQuery {
             not: false,
-            expr: Box::new(Expr::Scalar(ScalarValue::Int32(1))),
+            expr: Box::new(Expr::Scalar(1.get_value())),
             query: expr.clone(),
         };
         expect_columns(&subquery, expected, message);

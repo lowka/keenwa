@@ -8,22 +8,32 @@ use crate::error::OptimizerError;
 /// Supported scalar values.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub enum ScalarValue {
+    /// Null.
     Null,
-    Bool(bool),
-    Int32(i32),
-    String(String),
+    /// Boolean.
+    Bool(Option<bool>),
+    /// 32-bit signed integer.
+    Int32(Option<i32>),
+    /// Utf-8 string.
+    String(Option<String>),
     /// Date in days since January 1, year 1 in the Gregorian calendar.
-    Date(i32),
+    Date(Option<i32>),
     /// Time (seconds and nanoseconds) since midnight.
-    Time(u32, u32),
+    Time(Option<(u32, u32)>),
     /// Time in milliseconds since UNIX epoch with an optional timezone.
-    Timestamp(i64, Option<i32>),
+    Timestamp(Option<i64>, Option<i32>),
     /// Interval.
-    Interval(Interval),
-    /// Tuple.
-    Tuple(Vec<ScalarValue>),
-    /// Array.
-    Array(Array),
+    Interval(Option<Interval>),
+    /// Tuple and its type [DataType::Tuple].
+    Tuple(Option<Vec<ScalarValue>>, Box<DataType>),
+    /// Array and its type [DataType::Array].
+    Array(Option<Array>, Box<DataType>),
+}
+
+/// Converts a type to a [scalar value](ScalarValue).
+pub trait Scalar {
+    /// Convert this type to a scalar value.
+    fn get_value(&self) -> ScalarValue;
 }
 
 /// Interval.
@@ -73,8 +83,6 @@ impl Interval {
 /// Array.
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
 pub struct Array {
-    /// The type of elements.
-    pub element_type: DataType,
     /// Elements of the array.
     pub elements: Vec<ScalarValue>,
 }
@@ -84,15 +92,16 @@ impl ScalarValue {
     pub fn data_type(&self) -> DataType {
         match self {
             ScalarValue::Null => DataType::Null,
-            ScalarValue::Bool(_) => DataType::Bool,
+            ScalarValue::Bool(Some(_)) => DataType::Bool,
+            ScalarValue::Bool(None) => DataType::Null,
             ScalarValue::Int32(_) => DataType::Int32,
             ScalarValue::String(_) => DataType::String,
             ScalarValue::Date(_) => DataType::Date,
-            ScalarValue::Time(_, _) => DataType::Time,
+            ScalarValue::Time(_) => DataType::Time,
             ScalarValue::Timestamp(_, tz) => DataType::Timestamp(tz.is_some()),
             ScalarValue::Interval(_) => DataType::Interval,
-            ScalarValue::Tuple(values) => DataType::Tuple(values.iter().map(|val| val.data_type()).collect()),
-            ScalarValue::Array(array) => DataType::Array(Box::new(array.element_type.clone())),
+            ScalarValue::Tuple(_, tuple_type) => *tuple_type.clone(),
+            ScalarValue::Array(_, array_type) => *array_type.clone(),
         }
     }
 }
@@ -101,18 +110,20 @@ impl Display for ScalarValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             ScalarValue::Null => write!(f, "NULL"),
-            ScalarValue::Bool(value) => write!(f, "{}", value),
-            ScalarValue::Int32(value) => write!(f, "{}", value),
-            ScalarValue::String(value) => write!(f, "{}", value),
-            ScalarValue::Date(value) => match NaiveDate::from_num_days_from_ce_opt(*value) {
+            ScalarValue::Bool(Some(value)) => write!(f, "{}", value),
+            ScalarValue::Int32(Some(value)) => write!(f, "{}", value),
+            ScalarValue::String(Some(value)) => write!(f, "{}", value),
+            ScalarValue::Date(Some(value)) => match NaiveDate::from_num_days_from_ce_opt(*value) {
                 Some(date) => write!(f, "{}", date),
                 None => write!(f, "Invalid date: {} days", value),
             },
-            ScalarValue::Time(secs, nanos) => match NaiveTime::from_num_seconds_from_midnight_opt(*secs, *nanos) {
-                Some(time) => write!(f, "{}", time.format("%H:%M:%S%.3f")),
-                None => write!(f, "Invalid time: {} secs {} nanos", secs, nanos),
-            },
-            ScalarValue::Timestamp(value, tz) => {
+            ScalarValue::Time(Some((secs, nanos))) => {
+                match NaiveTime::from_num_seconds_from_midnight_opt(*secs, *nanos) {
+                    Some(time) => write!(f, "{}", time.format("%H:%M:%S%.3f")),
+                    None => write!(f, "Invalid time: {} secs {} nanos", secs, nanos),
+                }
+            }
+            ScalarValue::Timestamp(Some(value), tz) => {
                 let secs = *value / 1000;
                 let millis = *value - 1000 * secs;
 
@@ -145,12 +156,12 @@ impl Display for ScalarValue {
                 }
                 Ok(())
             }
-            ScalarValue::Interval(Interval::YearMonth(years, months)) => {
+            ScalarValue::Interval(Some(Interval::YearMonth(years, months))) => {
                 let sign = if *years < 0 || *months < 0 { "-" } else { "" };
 
                 write!(f, "{sign}{} YEARS {} MONTHS", years.abs(), months.abs(), sign = sign)
             }
-            ScalarValue::Interval(Interval::DaySecond(days, time_in_seconds)) => {
+            ScalarValue::Interval(Some(Interval::DaySecond(days, time_in_seconds))) => {
                 let sign = if *days < 0 || *time_in_seconds < 0 { "-" } else { "" };
 
                 let days = days.abs() as u32;
@@ -170,12 +181,21 @@ impl Display for ScalarValue {
                 }
                 Ok(())
             }
-            ScalarValue::Tuple(values) => {
+            ScalarValue::Tuple(Some(values), _) => {
                 write!(f, "({})", values.iter().join(", "))
             }
-            ScalarValue::Array(array) => {
+            ScalarValue::Array(Some(array), _) => {
                 write!(f, "[{}]", array.elements.iter().join(", "))
             }
+            ScalarValue::Bool(None) => write!(f, "NULL"),
+            ScalarValue::Int32(None) => write!(f, "NULL"),
+            ScalarValue::String(None) => write!(f, "NULL"),
+            ScalarValue::Date(None) => write!(f, "NULL"),
+            ScalarValue::Time(None) => write!(f, "NULL"),
+            ScalarValue::Timestamp(None, _) => write!(f, "NULL"),
+            ScalarValue::Interval(None) => write!(f, "NULL"),
+            ScalarValue::Tuple(None, _) => write!(f, "NULL"),
+            ScalarValue::Array(None, _) => write!(f, "NULL"),
         }
     }
 }
@@ -183,7 +203,7 @@ impl Display for ScalarValue {
 /// Parses the given string into [ScalarValue::Date].
 pub fn parse_date(input: &str) -> Result<ScalarValue, OptimizerError> {
     match input.parse::<chrono::NaiveDate>() {
-        Ok(val) => Ok(ScalarValue::Date(val.num_days_from_ce())),
+        Ok(val) => Ok(ScalarValue::Date(Some(val.num_days_from_ce()))),
         Err(err) => Err(OptimizerError::argument(format!("Invalid date: {}", err))),
     }
 }
@@ -194,7 +214,7 @@ pub fn parse_time(input: &str) -> Result<ScalarValue, OptimizerError> {
         Ok(val) => {
             let secs = val.num_seconds_from_midnight();
             let nanos = val.nanosecond();
-            Ok(ScalarValue::Time(secs, nanos))
+            Ok(ScalarValue::Time(Some((secs, nanos))))
         }
         Err(err) => Err(OptimizerError::argument(format!("Invalid time: {}", err))),
     }
@@ -210,16 +230,40 @@ pub fn parse_timestamp(input: &str) -> Result<ScalarValue, OptimizerError> {
     if may_include_timezone {
         match DateTime::parse_from_rfc3339(input) {
             Ok(val) => Ok(ScalarValue::Timestamp(
-                val.with_timezone(&Utc).timestamp_millis(),
+                Some(val.with_timezone(&Utc).timestamp_millis()),
                 Some(val.timezone().local_minus_utc()),
             )),
             Err(err) => Err(OptimizerError::argument(format!("Invalid timestamp: {}", err))),
         }
     } else {
         match NaiveDateTime::parse_from_str(input, "%Y-%m-%dT%H:%M:%S%.3f") {
-            Ok(val) => Ok(ScalarValue::Timestamp(val.timestamp_millis(), None)),
+            Ok(val) => Ok(ScalarValue::Timestamp(Some(val.timestamp_millis()), None)),
             Err(err) => Err(OptimizerError::argument(format!("Invalid timestamp: {}", err))),
         }
+    }
+}
+
+impl Scalar for bool {
+    fn get_value(&self) -> ScalarValue {
+        ScalarValue::Bool(Some(*self))
+    }
+}
+
+impl Scalar for i32 {
+    fn get_value(&self) -> ScalarValue {
+        ScalarValue::Int32(Some(*self))
+    }
+}
+
+impl Scalar for &str {
+    fn get_value(&self) -> ScalarValue {
+        ScalarValue::String(Some((*self).to_owned()))
+    }
+}
+
+impl Scalar for String {
+    fn get_value(&self) -> ScalarValue {
+        ScalarValue::String(Some(self.clone()))
     }
 }
 
@@ -231,33 +275,48 @@ mod test {
     #[test]
     fn test_scalar_value_data_types() {
         assert_eq!(ScalarValue::Null.data_type(), DataType::Null, "null value");
-        assert_eq!(ScalarValue::Bool(true).data_type(), DataType::Bool, "bool value");
-        assert_eq!(ScalarValue::Int32(1).data_type(), DataType::Int32, "i32 value");
-        assert_eq!(ScalarValue::String(String::from("abc")).data_type(), DataType::String, "string value");
+        assert_eq!(true.get_value().data_type(), DataType::Bool, "bool value");
+        assert_eq!(1.get_value().data_type(), DataType::Int32, "i32 value");
+        assert_eq!(ScalarValue::String(Some(String::from("abc"))).data_type(), DataType::String, "string value");
 
-        assert_eq!(ScalarValue::Interval(Interval::YearMonth(0, 0)).data_type(), DataType::Interval, "date value");
-        assert_eq!(ScalarValue::Interval(Interval::DaySecond(0, 0)).data_type(), DataType::Interval, "date value");
-
-        assert_eq!(ScalarValue::Date(1).data_type(), DataType::Date, "date value");
-        assert_eq!(ScalarValue::Time(0, 0).data_type(), DataType::Time, "time value");
-        assert_eq!(ScalarValue::Timestamp(0, None).data_type(), DataType::Timestamp(false), "timestamp value");
         assert_eq!(
-            ScalarValue::Timestamp(0, Some(0)).data_type(),
+            ScalarValue::Interval(Some(Interval::YearMonth(0, 0))).data_type(),
+            DataType::Interval,
+            "date value"
+        );
+        assert_eq!(
+            ScalarValue::Interval(Some(Interval::DaySecond(0, 0))).data_type(),
+            DataType::Interval,
+            "date value"
+        );
+
+        assert_eq!(ScalarValue::Date(Some(1)).data_type(), DataType::Date, "date value");
+        assert_eq!(ScalarValue::Time(Some((0, 0))).data_type(), DataType::Time, "time value");
+        assert_eq!(ScalarValue::Timestamp(Some(0), None).data_type(), DataType::Timestamp(false), "timestamp value");
+        assert_eq!(
+            ScalarValue::Timestamp(Some(0), Some(0)).data_type(),
             DataType::Timestamp(true),
             "timestamp with time zone value"
         );
 
+        let fields = vec![ScalarValue::Bool(Some(true)), ScalarValue::Int32(Some(1))];
+        let tuple_type = Box::new(DataType::Tuple(fields.iter().map(|f| f.data_type()).collect()));
         assert_eq!(
-            ScalarValue::Tuple(vec![ScalarValue::Bool(true), ScalarValue::Int32(1)]).data_type(),
+            ScalarValue::Tuple(Some(fields), tuple_type).data_type(),
             DataType::Tuple(vec![DataType::Bool, DataType::Int32]),
             "tuple value"
         );
 
         let array = Array {
-            element_type: DataType::Int32,
-            elements: vec![ScalarValue::Int32(1)],
+            elements: vec![ScalarValue::Int32(Some(1))],
         };
-        assert_eq!(ScalarValue::Array(array).data_type(), DataType::Array(Box::new(DataType::Int32)), "array value");
+        let array_type = Box::new(DataType::Array(Box::new(array.elements[0].data_type())));
+
+        assert_eq!(
+            ScalarValue::Array(Some(array), array_type).data_type(),
+            DataType::Array(Box::new(DataType::Int32)),
+            "array value"
+        );
     }
 
     #[test]
@@ -265,7 +324,7 @@ mod test {
         let input = "2000-10-01";
         let result = parse_date(input).expect("Failed to parse date");
         let expected_date = NaiveDate::from_ymd(2000, 10, 1);
-        let actual_date = ScalarValue::Date(expected_date.num_days_from_ce());
+        let actual_date = ScalarValue::Date(Some(expected_date.num_days_from_ce()));
 
         assert_eq!(actual_date, result);
         assert_eq!(format!("{}", actual_date), input, "Display impl for Date");
@@ -276,7 +335,8 @@ mod test {
         let input = "01:18:53.502";
         let result = parse_time(input).expect("Failed to parse time");
         let expected_time = NaiveTime::from_hms_nano(1, 18, 53, 502_000_000);
-        let actual_time = ScalarValue::Time(expected_time.num_seconds_from_midnight(), expected_time.nanosecond());
+        let actual_time =
+            ScalarValue::Time(Some((expected_time.num_seconds_from_midnight(), expected_time.nanosecond())));
 
         assert_eq!(actual_time, result);
         assert_eq!(format!("{}", actual_time), input, "Display impl for Time");
@@ -307,7 +367,7 @@ mod test {
     #[test]
     pub fn test_format_date() {
         fn format_date(days: i32, expected: &str) {
-            let ts = ScalarValue::Date(days);
+            let ts = ScalarValue::Date(Some(days));
             assert_eq!(format!("{}", ts), expected, "days: {:?}", days);
         }
         format_date(-100000000, "Invalid date: -100000000 days");
@@ -323,7 +383,7 @@ mod test {
     #[test]
     pub fn test_format_time() {
         fn format_time(seconds: u32, nanos: u32, expected: &str) {
-            let ts = ScalarValue::Time(seconds, nanos);
+            let ts = ScalarValue::Time(Some((seconds, nanos)));
             assert_eq!(format!("{}", ts), expected, "seconds: {:?} nanos: {:?}", seconds, nanos);
         }
 
@@ -342,7 +402,7 @@ mod test {
     #[test]
     pub fn test_format_timestamp() {
         fn format_ts(millis: i64, zone_offset: Option<i32>, expected: &str) {
-            let ts = ScalarValue::Timestamp(millis, zone_offset);
+            let ts = ScalarValue::Timestamp(Some(millis), zone_offset);
             assert_eq!(format!("{}", ts), expected, "millis: {:?} zone offset: {:?}", millis, zone_offset);
         }
 
