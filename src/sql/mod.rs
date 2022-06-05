@@ -168,7 +168,7 @@ fn build_query(builder: OperatorBuilder, query: Query) -> Result<OperatorBuilder
 
 fn build_limit_offset_argument(operator: &str, expr: Expr, builder: OperatorBuilder) -> Result<usize, OptimizerError> {
     let expr = build_scalar_expr(expr, builder)?;
-    if let ScalarExpr::Scalar(ScalarValue::Int32(value)) = &expr {
+    if let ScalarExpr::Scalar(ScalarValue::Int32(Some(value))) = &expr {
         if *value < 0 {
             Err(OptimizerError::argument(format!("{}: number of rows must be non negative: {}", operator, value)))
         } else {
@@ -735,13 +735,13 @@ fn build_value_expr(value: Value) -> Result<ScalarExpr, OptimizerError> {
         Value::Number(value, _) => {
             let value = i32::from_str(value.as_str())
                 .map_err(|e| OptimizerError::argument(format!("Unable to parse a numeric literal: {}", e)))?;
-            ScalarValue::Int32(value)
+            ScalarValue::Int32(Some(value))
         }
-        Value::SingleQuotedString(value) => ScalarValue::String(value),
+        Value::SingleQuotedString(value) => ScalarValue::String(Some(value)),
         Value::NationalStringLiteral(_) => not_supported!("National string literal"),
         Value::HexStringLiteral(_) => not_supported!("HEX value literal"),
-        Value::DoubleQuotedString(value) => ScalarValue::String(value),
-        Value::Boolean(value) => ScalarValue::Bool(value),
+        Value::DoubleQuotedString(value) => ScalarValue::String(Some(value)),
+        Value::Boolean(value) => ScalarValue::Bool(Some(value)),
         Value::Interval {
             value,
             leading_field,
@@ -899,7 +899,7 @@ fn build_interval_literal(
         } else {
             parse_day_second(sign, unsigned_value, value, *from, *to)?
         };
-        Ok(ScalarExpr::Scalar(ScalarValue::Interval(interval)))
+        Ok(ScalarExpr::Scalar(ScalarValue::Interval(Some(interval))))
     } else {
         Err(invalid_interval_literal(value))
     }
