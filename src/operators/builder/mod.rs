@@ -359,7 +359,7 @@ impl OperatorBuilder {
     /// # NOTE
     ///
     /// This method do not accept aggregate expressions but accepts window aggregate expressions
-    /// without aggregate in their arguments.
+    /// with or without aggregate functions in their arguments.
     pub fn project(self, exprs: Vec<ScalarExpr>) -> Result<Self, OptimizerError> {
         self.projection_with_window_functions(exprs, false, true, false)
     }

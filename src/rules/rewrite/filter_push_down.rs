@@ -106,7 +106,11 @@ fn rewrite(mut state: State, expr: &RelNode) -> RelNode {
 
             add_filters(state, expr, &aggr_columns)
         }
-        LogicalExpr::WindowAggregate(_) => rewrite_inputs(state, expr),
+        LogicalExpr::WindowAggregate(_) => {
+            // Window aggregate operator does not introduce new columns
+            // We can safely push the filters past it.
+            rewrite_inputs(state, expr)
+        }
         LogicalExpr::Join(LogicalJoin {
             left, right, condition, ..
         }) => rewrite_join(state, expr, left, right, condition),
@@ -466,6 +470,7 @@ mod test {
     use crate::error::OptimizerError;
     use crate::operators::builder::OperatorBuilder;
     use crate::operators::relational::join::JoinType;
+    use crate::operators::scalar::aggregates::{AggregateFunction, WindowOrAggregateFunction};
     use crate::operators::scalar::{col, scalar};
     use crate::rules::rewrite::testing::build_and_rewrite_expr;
 
@@ -1045,6 +1050,33 @@ LogicalExcept all=:all cols=[5, 6]
 
         rewrite_except(false);
         rewrite_except(true);
+    }
+
+    #[test]
+    fn test_push_past_window_aggregate() {
+        rewrite_expr(
+            |builder| {
+                let mut from_a = builder.get("A", vec!["a1", "a2"])?;
+                let window_aggr = ScalarExpr::WindowAggregate {
+                    func: WindowOrAggregateFunction::Aggregate(AggregateFunction::Count),
+                    args: vec![col("a1")],
+                    partition_by: vec![],
+                    order_by: vec![],
+                };
+                let project = from_a.project(vec![col("a1"), window_aggr])?;
+                let filter = col("a1").gt(scalar(100));
+                let filter_a1 = project.select(Some(filter))?;
+                Ok(filter_a1)
+            },
+            r#"
+LogicalProjection cols=[1, 3] exprs: [col:1, col:3]
+  input: LogicalWindowAggregate cols=[1, 3]
+    input: LogicalSelect
+      input: LogicalGet A cols=[1, 2]
+      filter: Expr col:1 > 100
+    window_expr: Expr count(col:1) OVER()
+"#,
+        );
     }
 
     fn rewrite_expr<F>(f: F, expected: &str)
