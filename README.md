@@ -50,7 +50,8 @@ Cost-based query optimizer (WIP).
 - [x] GROUP BY.
 - [x] AGGR(..) FILTER (WHERE _).
 - [x] AGGR(DISTINCT _).
-- [ ] count distinct.
+- [x] count not null.
+- [x] count all.
 - [x] Window functions.
 - [ ] User-defined Aggregate functions.
 - [ ] GROUPING SET.
