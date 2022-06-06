@@ -920,7 +920,7 @@ fn build_function_expr(func: Function, builder: OperatorBuilder) -> Result<Scala
     for arg in func.args {
         let arg: FunctionArg = arg;
         match arg {
-            FunctionArg::Named { .. } => not_supported!("FUNCTION: named function arguments are"),
+            FunctionArg::Named { .. } => not_supported!("FUNCTION: named function arguments"),
             FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => {
                 let expr = build_scalar_expr(expr, builder.clone())?;
                 args.push(expr);
@@ -942,7 +942,7 @@ fn build_function_expr(func: Function, builder: OperatorBuilder) -> Result<Scala
 
     // Reject COUNT(*, a1), COUNT(DISTINCT *) and alike.
     if count_all && args.len() > 1 || count_all && distinct {
-        return Err(OptimizerError::argument(format!("FUNCTION: function {} with invalid arguments", name)));
+        return Err(OptimizerError::argument(format!("FUNCTION: function {} is called with invalid arguments", name)));
     }
 
     // DISTINCT ON (expr) workaround:
@@ -953,12 +953,8 @@ fn build_function_expr(func: Function, builder: OperatorBuilder) -> Result<Scala
     } else {
         let func = WindowOrAggregateFunction::try_from(name.as_str());
         match func {
-            Ok(WindowOrAggregateFunction::Window(_)) if distinct => {
-                let message = format!("FUNCTION: window function {} with DISTINCT option set", name);
-                return Err(OptimizerError::argument(message));
-            }
             Err(_) if distinct => {
-                let message = format!("FUNCTION: non-aggregate function {} with DISTINCT option set", name);
+                let message = format!("DISTINCT is not implemented for non-aggregate functions: {}", name);
                 return Err(OptimizerError::argument(message));
             }
             _ => {}
@@ -967,6 +963,10 @@ fn build_function_expr(func: Function, builder: OperatorBuilder) -> Result<Scala
         match (func, window_spec) {
             (Ok(func), Some(spec)) => {
                 let FunctionExprWindowSpec { partition_by, order_by } = spec;
+                if distinct {
+                    let message = format!("DISTINCT is not implemented for window functions: {}", name);
+                    return Err(OptimizerError::argument(message));
+                }
                 Ok(ScalarExpr::WindowAggregate {
                     func,
                     args,

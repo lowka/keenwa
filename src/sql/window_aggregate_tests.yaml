@@ -291,3 +291,7 @@ query: |
 error: |
   Not implemented: WINDOW FUNCTIONS: must be a root of an expression tree: row_number() OVER()
 ---
+query: |
+  SELECT count(DISTINCT a1) OVER() FROM a
+error: |
+  Argument error: DISTINCT is not implemented for window functions: count

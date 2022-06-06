@@ -124,5 +124,5 @@ queries:
   - SELECT count(a1, *) FROM a
   - SELECT count(DISTINCT *) FROM a
 error: |
-  Argument error: FUNCTION: function count with invalid arguments
+  Argument error: FUNCTION: function count is called with invalid arguments
 ---
