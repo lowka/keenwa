@@ -915,6 +915,8 @@ fn build_function_expr(func: Function, builder: OperatorBuilder) -> Result<Scala
     };
 
     let mut args = vec![];
+    let mut count_all = false;
+
     for arg in func.args {
         let arg: FunctionArg = arg;
         match arg {
@@ -924,13 +926,23 @@ fn build_function_expr(func: Function, builder: OperatorBuilder) -> Result<Scala
                 args.push(expr);
             }
             FunctionArg::Unnamed(FunctionArgExpr::Wildcard) => {
-                not_implemented!("FUNCTION: wildcard expression in argument list")
+                if name.eq_ignore_ascii_case("count") {
+                    args.push(scalar(1));
+                    count_all = true;
+                } else {
+                    not_implemented!("FUNCTION: wildcard expression in argument list")
+                }
             }
             FunctionArg::Unnamed(FunctionArgExpr::QualifiedWildcard(expr)) => {
                 let msg = format!("FUNCTION: qualified wildcard {} expression in argument list", expr);
                 not_implemented!(true, msg)
             }
         }
+    }
+
+    // Reject COUNT(*, a1), COUNT(DISTINCT *) and alike.
+    if count_all && args.len() > 1 || count_all && distinct {
+        return Err(OptimizerError::argument(format!("FUNCTION: function {} with invalid arguments", name)));
     }
 
     // DISTINCT ON (expr) workaround:

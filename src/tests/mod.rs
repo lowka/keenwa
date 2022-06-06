@@ -814,8 +814,9 @@ fn test_prefer_streaming_aggregate_when_data_is_sorted() {
 
     tester.set_operator(|builder| {
         let from_a = builder.get("A", vec!["a1", "a2"])?;
-        let mut sorted_a = from_a.order_by(OrderingOption::by("a2", false))?;
-        let aggr = sorted_a.aggregate_builder().add_func("count", "a1")?.group_by("a2")?.build()?;
+        let sorted_a = from_a.order_by(OrderingOption::by("a2", false))?;
+        let mut projection = sorted_a.project(vec![col("a1"), col("a2")])?;
+        let aggr = projection.aggregate_builder().add_func("count", "a1")?.group_by("a2")?.build()?;
 
         aggr.build()
     });
@@ -826,9 +827,12 @@ fn test_prefer_streaming_aggregate_when_data_is_sorted() {
 
     tester.optimize(
         r#"
-03 StreamingAggregate [ord:[+2]=00 01 02] cols=[3] ordering=[+2]
+05 StreamingAggregate [ord:[+2]=03 04 02] cols=[3] ordering=[+2]
 02 Expr col:2
-01 Expr count(col:1)
+04 Expr count(col:1)
+03 Projection [ord:[+2]=00 01 02] cols=[1, 2]
+02 Expr col:2
+01 Expr col:1
 00 Sort [00] ord=[+2]
 00 Scan A cols=[1, 2]
 "#,

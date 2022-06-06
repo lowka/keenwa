@@ -6,6 +6,13 @@ ok: |
 
 ---
 query: |
+  SELECT count(*) FROM a
+ok: |
+  LogicalAggregate cols=[5] aggr_exprs: [count(1)]
+    input: LogicalGet a cols=[1, 2, 3, 4]
+
+---
+query: |
   SELECT a1, count(a1) FROM a GROUP BY a1
 ok: |
   LogicalAggregate cols=[1, 5]
@@ -111,3 +118,11 @@ query: |
   SELECT a1 FROM a HAVING a1 > 100
 error: |
   Argument error: HAVING clause is not allowed in non-aggregate queries
+---
+queries:
+  - SELECT count(*, a1) FROM a
+  - SELECT count(a1, *) FROM a
+  - SELECT count(DISTINCT *) FROM a
+error: |
+  Argument error: FUNCTION: function count with invalid arguments
+---
