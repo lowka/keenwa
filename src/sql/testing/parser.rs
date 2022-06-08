@@ -1,5 +1,5 @@
 use crate::datatypes::DataType;
-use crate::sql::testing::{SqlTestCase, SqlTestCaseSet, TestCaseFailure, TestCatalog, TestOptions, TestTable};
+use crate::sql::testing::runner::{SqlTestCase, SqlTestCaseSet, TestCaseFailure, TestCatalog, TestOptions, TestTable};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -165,7 +165,8 @@ where
     } else {
         let catalog = yaml_to_catalog(test_case.catalog.take())?;
         let options = if let Some(options) = test_case.options {
-            Some(options_parser.parse_options(TestOptionsRaw(options))?)
+            let options = options_parser.parse_options(TestOptionsRaw(options))?;
+            Some(options.merge(&TestOptions::default()))
         } else {
             None
         };
@@ -287,7 +288,7 @@ mod test {
     use crate::sql::testing::parser::{
         parse_test_case, parse_test_cases, NoOpTestOptionsParser, TestOptionsParser, TestOptionsRaw,
     };
-    use crate::sql::testing::{SqlTestCaseSet, TestCaseFailure, TestOptions};
+    use crate::sql::testing::runner::{SqlTestCaseSet, TestCaseFailure, TestOptions};
     use std::cell::RefCell;
     use std::collections::HashMap;
     use std::rc::Rc;
