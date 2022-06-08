@@ -1071,7 +1071,7 @@ impl From<ParserError> for OptimizerError {
 
 #[cfg(test)]
 mod test {
-    use crate::sql::testing::logical_plan::{run_sql_expression_tests, run_sql_tests};
+    use crate::sql::testing::{run_sql_expression_tests, run_sql_tests};
 
     fn run_test_cases(str: &str) {
         let catalog_str = r#"

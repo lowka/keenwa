@@ -6,7 +6,7 @@ use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::RelExpr;
 use crate::operators::OperatorExpr;
 use crate::sql::testing::parser::parse_test_cases;
-use crate::sql::testing::{
+use crate::sql::testing::runner::{
     DefaultTestOptionsParser, SqlTestCase, SqlTestCaseRunner, SqlTestCaseSet, TestCaseFailure, TestCaseRunResult,
     TestCaseRunner, TestCaseRunnerFactory, TestCatalog, TestOptions, TestRunnerError,
 };
@@ -26,6 +26,8 @@ use std::sync::Arc;
 ///  - table: B
 ///     columns: b1:int32,b2:bool, b3:string
 /// ```
+///
+/// Options can be set per test case or for all test cases in a file. See [SqlTestCaseRunner].
 ///
 pub fn run_sql_tests(sql_test_cases_str: &str, catalog_str: &str) {
     parse_and_run(sql_test_cases_str, catalog_str, RelExprTestCaseRunnerFactory)
