@@ -5,6 +5,7 @@ use std::ops::{Add, Div, Mul, Not, Rem, Sub};
 use itertools::Itertools;
 
 use crate::datatypes::DataType;
+use crate::error::OptimizerError;
 use crate::memo::MemoExprFormatter;
 use crate::meta::ColumnId;
 use crate::operators::scalar::aggregates::{AggregateFunction, WindowOrAggregateFunction};
@@ -443,31 +444,36 @@ where
     }
 
     /// Creates a new expressions that retains all properties of this expression but contains the given child expressions.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if the number of elements in `children` is not equal to the
+    /// This method returns an error if the number of elements in `children` is not equal to the
     /// number of child expressions of this expression.
-    pub fn with_children(&self, mut children: Vec<Expr<T>>) -> Self {
-        fn expect_children(expr: &str, actual: usize, expected: usize) {
-            assert_eq!(actual, expected, "{}: Unexpected number of child expressions", expr);
+    pub fn with_children(&self, mut children: Vec<Expr<T>>) -> Result<Self, OptimizerError> {
+        fn expect_children(expr: &str, actual: usize, expected: usize) -> Result<(), OptimizerError> {
+            if actual != expected {
+                let message = format!(
+                    "{}: Unexpected number of child expressions. Expected {} but got {}",
+                    expr, expected, actual
+                );
+                Err(OptimizerError::argument(message))
+            } else {
+                Ok(())
+            }
         }
 
-        match self {
+        let expr = match self {
             Expr::Column(id) => {
-                expect_children("Column", children.len(), 0);
+                expect_children("Column", children.len(), 0)?;
                 Expr::Column(*id)
             }
             Expr::ColumnName(name) => {
-                expect_children("ColumnName", children.len(), 0);
+                expect_children("ColumnName", children.len(), 0)?;
                 Expr::ColumnName(name.clone())
             }
             Expr::Scalar(value) => {
-                expect_children("Scalar", children.len(), 0);
+                expect_children("Scalar", children.len(), 0)?;
                 Expr::Scalar(value.clone())
             }
             Expr::BinaryExpr { op, .. } => {
-                expect_children("BinaryExpr", children.len(), 2);
+                expect_children("BinaryExpr", children.len(), 2)?;
                 Expr::BinaryExpr {
                     lhs: Box::new(children.swap_remove(0)),
                     op: op.clone(),
@@ -475,26 +481,26 @@ where
                 }
             }
             Expr::Cast { data_type, .. } => {
-                expect_children("Cast", children.len(), 1);
+                expect_children("Cast", children.len(), 1)?;
                 Expr::Cast {
                     expr: Box::new(children.swap_remove(0)),
                     data_type: data_type.clone(),
                 }
             }
             Expr::Not(_) => {
-                expect_children("Not", children.len(), 1);
+                expect_children("Not", children.len(), 1)?;
                 Expr::Not(Box::new(children.swap_remove(0)))
             }
             Expr::Negation(_) => {
-                expect_children("Negation", children.len(), 1);
+                expect_children("Negation", children.len(), 1)?;
                 Expr::Not(Box::new(children.swap_remove(0)))
             }
             Expr::Alias(_, name) => {
-                expect_children("Alias", children.len(), 1);
+                expect_children("Alias", children.len(), 1)?;
                 Expr::Alias(Box::new(children.swap_remove(0)), name.clone())
             }
             Expr::InList { not, exprs, .. } => {
-                expect_children("InList", children.len(), 1 + exprs.len());
+                expect_children("InList", children.len(), 1 + exprs.len())?;
                 Expr::InList {
                     not: *not,
                     expr: Box::new(children.swap_remove(0)),
@@ -502,14 +508,14 @@ where
                 }
             }
             Expr::IsNull { not, .. } => {
-                expect_children("IsNull", children.len(), 1);
+                expect_children("IsNull", children.len(), 1)?;
                 Expr::IsNull {
                     not: *not,
                     expr: Box::new(children.swap_remove(0)),
                 }
             }
             Expr::Between { not, .. } => {
-                expect_children("Between", children.len(), 3);
+                expect_children("Between", children.len(), 3)?;
                 Expr::Between {
                     not: *not,
                     expr: Box::new(children.swap_remove(0)),
@@ -524,7 +530,7 @@ where
             } => {
                 let opt_num =
                     expr.as_ref().map(|_| 1).unwrap_or_default() + else_expr.as_ref().map(|_| 1).unwrap_or_default();
-                expect_children("Case", children.len(), opt_num + when_then_exprs.len() * 2);
+                expect_children("Case", children.len(), opt_num + when_then_exprs.len() * 2)?;
 
                 let expr = if expr.is_some() {
                     let expr = Box::new(children.remove(0));
@@ -555,15 +561,15 @@ where
                 }
             }
             Expr::Tuple(exprs) => {
-                expect_children("Tuple", children.len(), exprs.len());
+                expect_children("Tuple", children.len(), exprs.len())?;
                 Expr::Tuple(children)
             }
             Expr::Array(exprs) => {
-                expect_children("Array", children.len(), exprs.len());
+                expect_children("Array", children.len(), exprs.len())?;
                 Expr::Array(children)
             }
             Expr::ScalarFunction { func, args } => {
-                expect_children("ScalarFunction", children.len(), args.len());
+                expect_children("ScalarFunction", children.len(), args.len())?;
                 Expr::ScalarFunction {
                     func: func.clone(),
                     args: children,
@@ -575,7 +581,7 @@ where
                 args,
                 filter,
             } => {
-                expect_children("Aggregate", children.len(), args.len() + filter.as_ref().map(|_| 1).unwrap_or(0));
+                expect_children("Aggregate", children.len(), args.len() + filter.as_ref().map(|_| 1).unwrap_or(0))?;
                 let (args, filter) = if filter.is_some() {
                     // filter is the last expression (see Expr::get_children)
                     let filter = children.remove(args.len() - 1);
@@ -598,7 +604,7 @@ where
                 partition_by,
                 order_by,
             } => {
-                expect_children("WindowFunction", children.len(), args.len() + partition_by.len() + order_by.len());
+                expect_children("WindowFunction", children.len(), args.len() + partition_by.len() + order_by.len())?;
                 let args: Vec<Expr<T>> = children.drain(0..args.len()).collect();
                 let partition_by: Vec<Expr<T>> = children.drain(0..partition_by.len()).collect();
                 let order_by: Vec<Expr<T>> = children.drain(0..order_by.len()).collect();
@@ -615,7 +621,7 @@ where
                 nulls_first,
                 ..
             } => {
-                expect_children("Ordering", children.len(), 1);
+                expect_children("Ordering", children.len(), 1)?;
                 Expr::Ordering {
                     expr: Box::new(children.swap_remove(0)),
                     descending: *descending,
@@ -623,18 +629,18 @@ where
                 }
             }
             Expr::SubQuery(node) => {
-                expect_children("SubQuery", children.len(), 0);
+                expect_children("SubQuery", children.len(), 0)?;
                 Expr::SubQuery(node.clone())
             }
             Expr::Exists { not, query } => {
-                expect_children("Exists", children.len(), 0);
+                expect_children("Exists", children.len(), 0)?;
                 Expr::Exists {
                     not: *not,
                     query: query.clone(),
                 }
             }
             Expr::InSubQuery { not, query, .. } => {
-                expect_children("InSubQuery", children.len(), 1);
+                expect_children("InSubQuery", children.len(), 1)?;
                 Expr::InSubQuery {
                     not: *not,
                     expr: Box::new(children.swap_remove(0)),
@@ -642,10 +648,11 @@ where
                 }
             }
             Expr::Wildcard(qualifier) => {
-                expect_children("Wildcard", children.len(), 0);
+                expect_children("Wildcard", children.len(), 0)?;
                 Expr::Wildcard(qualifier.clone())
             }
-        }
+        };
+        Ok(expr)
     }
 
     /// Returns `this_expr as name` expression.

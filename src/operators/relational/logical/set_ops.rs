@@ -27,15 +27,15 @@ impl LogicalUnion {
         visitor.visit_rel(expr_ctx, &self.right)
     }
 
-    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(self.num_children(), "LogicalUnion");
+    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Result<Self, OptimizerError> {
+        inputs.expect_len(self.num_children(), "LogicalUnion")?;
 
-        LogicalUnion {
-            left: inputs.rel_node(),
-            right: inputs.rel_node(),
+        Ok(LogicalUnion {
+            left: inputs.rel_node()?,
+            right: inputs.rel_node()?,
             all: self.all,
             columns: self.columns.clone(),
-        }
+        })
     }
 
     pub(super) fn num_children(&self) -> usize {
@@ -83,15 +83,15 @@ impl LogicalIntersect {
         visitor.visit_rel(expr_ctx, &self.right)
     }
 
-    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(self.num_children(), "LogicalIntersect");
+    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Result<Self, OptimizerError> {
+        inputs.expect_len(self.num_children(), "LogicalIntersect")?;
 
-        LogicalIntersect {
-            left: inputs.rel_node(),
-            right: inputs.rel_node(),
+        Ok(LogicalIntersect {
+            left: inputs.rel_node()?,
+            right: inputs.rel_node()?,
             all: self.all,
             columns: self.columns.clone(),
-        }
+        })
     }
 
     pub(super) fn num_children(&self) -> usize {
@@ -142,15 +142,15 @@ impl LogicalExcept {
         visitor.visit_rel(expr_ctx, &self.right)
     }
 
-    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(self.num_children(), "LogicalExcept");
+    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Result<Self, OptimizerError> {
+        inputs.expect_len(self.num_children(), "LogicalExcept")?;
 
-        LogicalExcept {
-            left: inputs.rel_node(),
-            right: inputs.rel_node(),
+        Ok(LogicalExcept {
+            left: inputs.rel_node()?,
+            right: inputs.rel_node()?,
             all: self.all,
             columns: self.columns.clone(),
-        }
+        })
     }
 
     pub(super) fn num_children(&self) -> usize {

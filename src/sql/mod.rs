@@ -550,7 +550,7 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
             ScalarExpr::InSubQuery {
                 not: negated,
                 expr: Box::new(expr),
-                query: RelNode::from(subquery),
+                query: RelNode::try_from(subquery)?,
             }
         }
         Expr::Between {
@@ -634,13 +634,13 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
             // if the parent operator is a [NOT] expression.
             ScalarExpr::Exists {
                 not: false,
-                query: RelNode::from(subquery),
+                query: RelNode::try_from(subquery)?,
             }
         }
         Expr::Subquery(query) => {
             let builder = build_query(builder.sub_query_builder(), *query)?;
             let subquery = builder.build()?;
-            ScalarExpr::SubQuery(RelNode::from(subquery))
+            ScalarExpr::SubQuery(RelNode::try_from(subquery)?)
         }
         Expr::ListAgg(_) => not_supported!("ListAgg expression"),
         Expr::GroupingSets(_) => not_supported!("GROUPING SETS expression"),
@@ -817,7 +817,7 @@ fn build_interval_literal(
             fields[1] = month?;
         }
 
-        Ok(Interval::from_year_month(sign, fields[0], fields[1]))
+        Interval::try_from_year_month(sign, fields[0], fields[1])
     }
 
     fn parse_day_second(
@@ -867,7 +867,7 @@ fn build_interval_literal(
             }
         }
 
-        Ok(Interval::from_days_seconds(sign, fields[0], fields[1], fields[2], fields[3]))
+        Interval::try_from_days_seconds(sign, fields[0], fields[1], fields[2], fields[3])
     }
 
     static SUPPORTED_INTERVALS: [(DateTimeField, Option<DateTimeField>, usize, usize); 7] = [

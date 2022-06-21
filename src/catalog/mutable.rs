@@ -288,11 +288,12 @@ mod test {
     use crate::catalog::mutable::{MutableCatalog, MutableSchema};
     use crate::catalog::{Catalog, IndexBuilder, Schema, TableBuilder};
     use crate::datatypes::DataType;
+    use crate::error::OptimizerError;
 
     #[test]
-    fn test_tables() {
+    fn test_tables() -> Result<(), OptimizerError> {
         let catalog = MutableCatalog::new();
-        let table = TableBuilder::new("A").add_column("a1", DataType::Int32).build();
+        let table = TableBuilder::new("A").add_column("a1", DataType::Int32).build()?;
 
         catalog.add_table("s", table);
 
@@ -303,14 +304,15 @@ mod test {
 
         let schema: &MutableSchema = schema.as_any().downcast_ref::<MutableSchema>().unwrap();
         schema.remove_table("A");
-        assert_eq!(schema.get_tables().len(), 0, "table has not been removed")
+        assert_eq!(schema.get_tables().len(), 0, "table has not been removed");
+        Ok(())
     }
 
     #[test]
-    fn test_indexes() {
+    fn test_indexes() -> Result<(), OptimizerError> {
         let catalog = MutableCatalog::new();
-        let table1 = TableBuilder::new("A").add_column("a1", DataType::Int32).build();
-        let table2 = TableBuilder::new("B").add_column("b1", DataType::Int32).build();
+        let table1 = TableBuilder::new("A").add_column("a1", DataType::Int32).build()?;
+        let table2 = TableBuilder::new("B").add_column("b1", DataType::Int32).build()?;
 
         catalog.add_table("s", table1);
         catalog.add_table("s", table2);
@@ -318,8 +320,8 @@ mod test {
         let table1 = catalog.get_schema_by_name("s").unwrap().get_table_by_name("A").unwrap();
         let table2 = catalog.get_schema_by_name("s").unwrap().get_table_by_name("B").unwrap();
 
-        let index1 = IndexBuilder::new(table1, "A_idx").add_column("a1").build();
-        let index2 = IndexBuilder::new(table2, "B_idx").add_column("b1").build();
+        let index1 = IndexBuilder::new(table1, "A_idx").add_column("a1").build()?;
+        let index2 = IndexBuilder::new(table2, "B_idx").add_column("b1").build()?;
 
         catalog.add_index("s", index1);
         catalog.add_index("s", index2);
@@ -337,5 +339,7 @@ mod test {
 
         schema.remove_table("B");
         assert_eq!(schema.get_indexes("B").len(), 0, "Table B has been removed but indexes are still available");
+
+        Ok(())
     }
 }

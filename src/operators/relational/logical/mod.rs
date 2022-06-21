@@ -90,23 +90,24 @@ impl LogicalExpr {
         }
     }
 
-    pub fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        match self {
-            LogicalExpr::Projection(expr) => LogicalExpr::Projection(expr.with_new_inputs(inputs)),
-            LogicalExpr::Select(expr) => LogicalExpr::Select(expr.with_new_inputs(inputs)),
-            LogicalExpr::Join(expr) => LogicalExpr::Join(expr.with_new_inputs(inputs)),
-            LogicalExpr::Get(expr) => LogicalExpr::Get(expr.with_new_inputs(inputs)),
-            LogicalExpr::Aggregate(expr) => LogicalExpr::Aggregate(expr.with_new_inputs(inputs)),
-            LogicalExpr::WindowAggregate(expr) => LogicalExpr::WindowAggregate(expr.with_new_inputs(inputs)),
-            LogicalExpr::Union(expr) => LogicalExpr::Union(expr.with_new_inputs(inputs)),
-            LogicalExpr::Intersect(expr) => LogicalExpr::Intersect(expr.with_new_inputs(inputs)),
-            LogicalExpr::Except(expr) => LogicalExpr::Except(expr.with_new_inputs(inputs)),
-            LogicalExpr::Distinct(expr) => LogicalExpr::Distinct(expr.with_new_inputs(inputs)),
-            LogicalExpr::Limit(expr) => LogicalExpr::Limit(expr.with_new_inputs(inputs)),
-            LogicalExpr::Offset(expr) => LogicalExpr::Offset(expr.with_new_inputs(inputs)),
-            LogicalExpr::Values(expr) => LogicalExpr::Values(expr.with_new_inputs(inputs)),
-            LogicalExpr::Empty(expr) => LogicalExpr::Empty(expr.with_new_inputs(inputs)),
-        }
+    pub fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Result<Self, OptimizerError> {
+        let expr = match self {
+            LogicalExpr::Projection(expr) => LogicalExpr::Projection(expr.with_new_inputs(inputs)?),
+            LogicalExpr::Select(expr) => LogicalExpr::Select(expr.with_new_inputs(inputs)?),
+            LogicalExpr::Join(expr) => LogicalExpr::Join(expr.with_new_inputs(inputs)?),
+            LogicalExpr::Get(expr) => LogicalExpr::Get(expr.with_new_inputs(inputs)?),
+            LogicalExpr::Aggregate(expr) => LogicalExpr::Aggregate(expr.with_new_inputs(inputs)?),
+            LogicalExpr::WindowAggregate(expr) => LogicalExpr::WindowAggregate(expr.with_new_inputs(inputs)?),
+            LogicalExpr::Union(expr) => LogicalExpr::Union(expr.with_new_inputs(inputs)?),
+            LogicalExpr::Intersect(expr) => LogicalExpr::Intersect(expr.with_new_inputs(inputs)?),
+            LogicalExpr::Except(expr) => LogicalExpr::Except(expr.with_new_inputs(inputs)?),
+            LogicalExpr::Distinct(expr) => LogicalExpr::Distinct(expr.with_new_inputs(inputs)?),
+            LogicalExpr::Limit(expr) => LogicalExpr::Limit(expr.with_new_inputs(inputs)?),
+            LogicalExpr::Offset(expr) => LogicalExpr::Offset(expr.with_new_inputs(inputs)?),
+            LogicalExpr::Values(expr) => LogicalExpr::Values(expr.with_new_inputs(inputs)?),
+            LogicalExpr::Empty(expr) => LogicalExpr::Empty(expr.with_new_inputs(inputs)?),
+        };
+        Ok(expr)
     }
 
     pub fn num_children(&self) -> usize {

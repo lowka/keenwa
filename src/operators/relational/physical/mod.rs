@@ -110,26 +110,27 @@ impl PhysicalExpr {
         }
     }
 
-    pub fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        match self {
-            PhysicalExpr::Projection(expr) => PhysicalExpr::Projection(expr.with_new_inputs(inputs)),
-            PhysicalExpr::Select(expr) => PhysicalExpr::Select(expr.with_new_inputs(inputs)),
-            PhysicalExpr::HashAggregate(expr) => PhysicalExpr::HashAggregate(expr.with_new_inputs(inputs)),
-            PhysicalExpr::HashJoin(expr) => PhysicalExpr::HashJoin(expr.with_new_inputs(inputs)),
-            PhysicalExpr::MergeSortJoin(expr) => PhysicalExpr::MergeSortJoin(expr.with_new_inputs(inputs)),
-            PhysicalExpr::NestedLoopJoin(expr) => PhysicalExpr::NestedLoopJoin(expr.with_new_inputs(inputs)),
-            PhysicalExpr::StreamingAggregate(expr) => PhysicalExpr::StreamingAggregate(expr.with_new_inputs(inputs)),
-            PhysicalExpr::Scan(expr) => PhysicalExpr::Scan(expr.with_new_inputs(inputs)),
-            PhysicalExpr::IndexScan(expr) => PhysicalExpr::IndexScan(expr.with_new_inputs(inputs)),
-            PhysicalExpr::Sort(expr) => PhysicalExpr::Sort(expr.with_new_inputs(inputs)),
-            PhysicalExpr::Unique(expr) => PhysicalExpr::Unique(expr.with_new_inputs(inputs)),
-            PhysicalExpr::Append(expr) => PhysicalExpr::Append(expr.with_new_inputs(inputs)),
-            PhysicalExpr::HashedSetOp(expr) => PhysicalExpr::HashedSetOp(expr.with_new_inputs(inputs)),
-            PhysicalExpr::Limit(expr) => PhysicalExpr::Limit(expr.with_new_inputs(inputs)),
-            PhysicalExpr::Offset(expr) => PhysicalExpr::Offset(expr.with_new_inputs(inputs)),
-            PhysicalExpr::Values(expr) => PhysicalExpr::Values(expr.with_new_inputs(inputs)),
-            PhysicalExpr::Empty(expr) => PhysicalExpr::Empty(expr.with_new_inputs(inputs)),
-        }
+    pub fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Result<Self, OptimizerError> {
+        let expr = match self {
+            PhysicalExpr::Projection(expr) => PhysicalExpr::Projection(expr.with_new_inputs(inputs)?),
+            PhysicalExpr::Select(expr) => PhysicalExpr::Select(expr.with_new_inputs(inputs)?),
+            PhysicalExpr::HashAggregate(expr) => PhysicalExpr::HashAggregate(expr.with_new_inputs(inputs)?),
+            PhysicalExpr::HashJoin(expr) => PhysicalExpr::HashJoin(expr.with_new_inputs(inputs)?),
+            PhysicalExpr::MergeSortJoin(expr) => PhysicalExpr::MergeSortJoin(expr.with_new_inputs(inputs)?),
+            PhysicalExpr::NestedLoopJoin(expr) => PhysicalExpr::NestedLoopJoin(expr.with_new_inputs(inputs)?),
+            PhysicalExpr::StreamingAggregate(expr) => PhysicalExpr::StreamingAggregate(expr.with_new_inputs(inputs)?),
+            PhysicalExpr::Scan(expr) => PhysicalExpr::Scan(expr.with_new_inputs(inputs)?),
+            PhysicalExpr::IndexScan(expr) => PhysicalExpr::IndexScan(expr.with_new_inputs(inputs)?),
+            PhysicalExpr::Sort(expr) => PhysicalExpr::Sort(expr.with_new_inputs(inputs)?),
+            PhysicalExpr::Unique(expr) => PhysicalExpr::Unique(expr.with_new_inputs(inputs)?),
+            PhysicalExpr::Append(expr) => PhysicalExpr::Append(expr.with_new_inputs(inputs)?),
+            PhysicalExpr::HashedSetOp(expr) => PhysicalExpr::HashedSetOp(expr.with_new_inputs(inputs)?),
+            PhysicalExpr::Limit(expr) => PhysicalExpr::Limit(expr.with_new_inputs(inputs)?),
+            PhysicalExpr::Offset(expr) => PhysicalExpr::Offset(expr.with_new_inputs(inputs)?),
+            PhysicalExpr::Values(expr) => PhysicalExpr::Values(expr.with_new_inputs(inputs)?),
+            PhysicalExpr::Empty(expr) => PhysicalExpr::Empty(expr.with_new_inputs(inputs)?),
+        };
+        Ok(expr)
     }
 
     pub fn num_children(&self) -> usize {

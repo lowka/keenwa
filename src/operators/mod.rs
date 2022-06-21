@@ -252,6 +252,13 @@ impl crate::memo::Expr for OperatorExpr {
         OperatorExpr::scalar(self)
     }
 
+    fn is_relational(&self) -> bool {
+        match self {
+            OperatorExpr::Relational(_) => true,
+            OperatorExpr::Scalar(_) => false,
+        }
+    }
+
     fn is_scalar(&self) -> bool {
         match self {
             OperatorExpr::Relational(_) => false,
@@ -286,14 +293,18 @@ impl MemoExpr for Operator {
         visitor.copy_in(self, expr_ctx)
     }
 
-    fn expr_with_new_children(expr: &Self::Expr, mut inputs: NewChildExprs<Self>) -> Self::Expr {
-        match expr {
+    fn expr_with_new_children(
+        expr: &Self::Expr,
+        mut inputs: NewChildExprs<Self>,
+    ) -> Result<Self::Expr, OptimizerError> {
+        let expr = match expr {
             OperatorExpr::Relational(expr) => match expr {
-                RelExpr::Logical(expr) => OperatorExpr::from(expr.with_new_inputs(&mut inputs)),
-                RelExpr::Physical(expr) => OperatorExpr::from(expr.with_new_inputs(&mut inputs)),
+                RelExpr::Logical(expr) => OperatorExpr::from(expr.with_new_inputs(&mut inputs)?),
+                RelExpr::Physical(expr) => OperatorExpr::from(expr.with_new_inputs(&mut inputs)?),
             },
-            OperatorExpr::Scalar(expr) => OperatorExpr::from(expr_with_new_inputs(expr, &mut inputs)),
-        }
+            OperatorExpr::Scalar(expr) => OperatorExpr::from(expr_with_new_inputs(expr, &mut inputs)?),
+        };
+        Ok(expr)
     }
 
     fn new_properties_with_nested_sub_queries(
@@ -482,6 +493,20 @@ impl From<LogicalExpr> for OperatorExpr {
     }
 }
 
+impl From<LogicalExpr> for RelNode {
+    fn from(expr: LogicalExpr) -> Self {
+        let expr = RelExpr::Logical(Box::new(expr));
+        RelNode::new_expr(expr)
+    }
+}
+
+impl From<PhysicalExpr> for Operator {
+    fn from(expr: PhysicalExpr) -> Self {
+        let expr = OperatorExpr::from(expr);
+        Operator::from(expr)
+    }
+}
+
 impl From<PhysicalExpr> for OperatorExpr {
     fn from(expr: PhysicalExpr) -> Self {
         let expr = RelExpr::Physical(Box::new(expr));
@@ -489,33 +514,22 @@ impl From<PhysicalExpr> for OperatorExpr {
     }
 }
 
-// For testing
-impl From<LogicalExpr> for RelNode {
-    fn from(expr: LogicalExpr) -> Self {
-        let expr = RelExpr::Logical(Box::new(expr));
-        let expr = OperatorExpr::Relational(expr);
-        RelNode::from_mexpr(Operator::from(expr))
-    }
-}
-
-// For testing
-impl From<Operator> for RelNode {
-    fn from(expr: Operator) -> Self {
-        RelNode::from_mexpr(expr)
-    }
-}
-
-// For testing
-impl From<ScalarExpr> for ScalarNode {
-    fn from(expr: ScalarExpr) -> Self {
-        let expr = OperatorExpr::Scalar(expr);
-        ScalarNode::from_mexpr(Operator::from(expr))
+impl From<PhysicalExpr> for RelNode {
+    fn from(expr: PhysicalExpr) -> Self {
+        let expr = RelExpr::Physical(Box::new(expr));
+        RelNode::new_expr(expr)
     }
 }
 
 impl From<ScalarExpr> for OperatorExpr {
     fn from(expr: ScalarExpr) -> Self {
         OperatorExpr::Scalar(expr)
+    }
+}
+
+impl From<ScalarExpr> for ScalarNode {
+    fn from(expr: ScalarExpr) -> Self {
+        ScalarNode::new_expr(expr)
     }
 }
 

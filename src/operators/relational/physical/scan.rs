@@ -22,13 +22,13 @@ impl Scan {
         Ok(())
     }
 
-    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(self.num_children(), "Scan");
+    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Result<Self, OptimizerError> {
+        inputs.expect_len(self.num_children(), "Scan")?;
 
-        Scan {
+        Ok(Scan {
             source: self.source.clone(),
             columns: self.columns.clone(),
-        }
+        })
     }
 
     pub(super) fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {

@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+use crate::error::OptimizerError;
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 
@@ -28,16 +29,17 @@ use crate::rules::rewrite::{rewrite_rel_inputs, with_new_rel_inputs};
 ///
 /// The implementation does not rely on logical properties because logical properties are not set
 /// for new expressions created by this rule.
-pub fn predicate_push_down(expr: &RelNode) -> Option<RelNode> {
+pub fn predicate_push_down(expr: &RelNode) -> Result<Option<RelNode>, OptimizerError> {
     if let LogicalExpr::Select(_) = expr.expr().logical() {
         let state = State { filters: Vec::new() };
-        Some(rewrite(state, expr))
+        let expr = rewrite(state, expr)?;
+        Ok(Some(expr))
     } else {
-        None
+        Ok(None)
     }
 }
 
-fn rewrite(mut state: State, expr: &RelNode) -> RelNode {
+fn rewrite(mut state: State, expr: &RelNode) -> Result<RelNode, OptimizerError> {
     match expr.expr().logical() {
         LogicalExpr::Select(LogicalSelect { input, filter }) => {
             if let Some(filter) = filter {
@@ -59,13 +61,14 @@ fn rewrite(mut state: State, expr: &RelNode) -> RelNode {
                 if constant_filters.is_empty() {
                     rewrite(state, input)
                 } else {
-                    let rel_node = rewrite(state, input);
+                    let rel_node = rewrite(state, input)?;
                     // Add select with `constant_filters` such node should be later removed by another rule.
-                    add_filter_node(&rel_node, constant_filters)
+                    let expr = add_filter_node(&rel_node, constant_filters);
+                    Ok(expr)
                 }
             } else {
                 // Keep select without filter it should be removed by another rule.
-                let result = rewrite(state, input);
+                let result = rewrite(state, input)?;
                 with_new_rel_inputs(expr, vec![result])
             }
         }
@@ -76,14 +79,14 @@ fn rewrite(mut state: State, expr: &RelNode) -> RelNode {
             let projections = prepare_projections(columns, exprs);
 
             for (filter, columns) in state.filters.iter_mut() {
-                let filter_expr = remove_projections(filter.expr(), &projections);
+                let filter_expr = remove_projections(filter.expr(), &projections)?;
                 let cols = exprs::collect_columns(&filter_expr);
 
                 *columns = cols.into_iter().collect();
                 *filter = ScalarNode::from(filter_expr);
             }
 
-            let result = rewrite(state, input);
+            let result = rewrite(state, input)?;
             with_new_rel_inputs(expr, vec![result])
         }
         LogicalExpr::Aggregate(LogicalAggregate {
@@ -184,7 +187,7 @@ fn add_filter_node(expr: &RelNode, mut filters: Vec<ScalarExpr>) -> RelNode {
     RelNode::from(LogicalExpr::Select(select))
 }
 
-fn add_filters(mut state: State, expr: &RelNode, used_columns: &[ColumnId]) -> RelNode {
+fn add_filters(mut state: State, expr: &RelNode, used_columns: &[ColumnId]) -> Result<RelNode, OptimizerError> {
     let applicable_filters = state.get_filters(used_columns);
 
     if applicable_filters.is_empty() {
@@ -219,8 +222,7 @@ fn prepare_projections(columns: &[ColumnId], exprs: &[ScalarNode]) -> HashMap<Co
     }
 
     let mut projections = HashMap::new();
-    for (i, expr) in exprs.iter().enumerate() {
-        let col_id = columns[i];
+    for (expr, col_id) in exprs.iter().zip(columns) {
         match expr.expr() {
             ScalarExpr::Alias(expr, _) => {
                 let expr = expr.as_ref().clone();
@@ -228,28 +230,32 @@ fn prepare_projections(columns: &[ColumnId], exprs: &[ScalarNode]) -> HashMap<Co
                     projections: &projections,
                 };
                 let expr = expr.rewrite(&mut rewriter).unwrap();
-                projections.insert(col_id, expr);
+                projections.insert(*col_id, expr);
             }
             _ => {
-                projections.insert(col_id, expr.expr().clone());
+                projections.insert(*col_id, expr.expr().clone());
             }
         }
     }
     projections
 }
 
-fn remove_projections(expr: &ScalarExpr, projection: &HashMap<ColumnId, ScalarExpr>) -> ScalarExpr {
+fn remove_projections(
+    expr: &ScalarExpr,
+    projection: &HashMap<ColumnId, ScalarExpr>,
+) -> Result<ScalarExpr, OptimizerError> {
     let child_exprs = expr.get_children();
-    let child_exprs = child_exprs.into_iter().map(|e| remove_projections(&e, projection)).collect();
+    let child_exprs: Result<Vec<ScalarExpr>, _> =
+        child_exprs.into_iter().map(|e| remove_projections(&e, projection)).collect();
 
     // Replace references to projection items with expressions that do not use other projection items.
     if let ScalarExpr::Column(id) = expr {
         if let Some(expr) = projection.get(id) {
-            return expr.clone();
+            return Ok(expr.clone());
         }
     }
 
-    expr.with_children(child_exprs)
+    expr.with_children(child_exprs?)
 }
 
 fn rewrite_join(
@@ -258,7 +264,7 @@ fn rewrite_join(
     left: &RelNode,
     right: &RelNode,
     condition: &JoinCondition,
-) -> RelNode {
+) -> Result<RelNode, OptimizerError> {
     let join_using = match condition {
         JoinCondition::Using(using) => using,
         JoinCondition::On(_) => {
@@ -277,15 +283,15 @@ fn rewrite_join(
 
     let (left_filters, right_filters, remaining_filters) = get_join_filters(&state, join_using);
     let left_state = State::from_filters(left_filters);
-    let new_left = rewrite(left_state, left);
+    let new_left = rewrite(left_state, left)?;
 
     let right_state = State::from_filters(right_filters);
-    let new_right = rewrite(right_state, right);
+    let new_right = rewrite(right_state, right)?;
 
-    let expr = with_new_rel_inputs(expr, vec![new_left, new_right]);
+    let expr = with_new_rel_inputs(expr, vec![new_left, new_right])?;
 
     if remaining_filters.is_empty() {
-        expr
+        Ok(expr)
     } else {
         let mut state = state.clone();
         state.filters = state.exclude_filters(&remaining_filters);
@@ -365,7 +371,7 @@ fn rewrite_set_op(
     left: &RelNode,
     right: &RelNode,
     columns: &[ColumnId],
-) -> RelNode {
+) -> Result<RelNode, OptimizerError> {
     let left_mapping: HashMap<ColumnId, ColumnId> = columns
         .iter()
         .zip(left.props().logical().output_columns().iter())
@@ -394,10 +400,10 @@ fn rewrite_set_op(
     }
 
     let left_state = State { filters: left_filters };
-    let left = rewrite(left_state, left);
+    let left = rewrite(left_state, left)?;
 
     let right_state = State { filters: right_filters };
-    let right = rewrite(right_state, right);
+    let right = rewrite(right_state, right)?;
     let columns = columns.to_vec();
 
     let expr = match set_op {
@@ -421,10 +427,10 @@ fn rewrite_set_op(
         }),
     };
 
-    RelNode::from(expr)
+    Ok(RelNode::from(expr))
 }
 
-fn rewrite_inputs(state: State, expr: &RelNode) -> RelNode {
+fn rewrite_inputs(state: State, expr: &RelNode) -> Result<RelNode, OptimizerError> {
     rewrite_rel_inputs(expr, |child_expr| rewrite(state.clone(), child_expr))
 }
 

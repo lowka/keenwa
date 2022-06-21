@@ -22,13 +22,13 @@ impl Limit {
         visitor.visit_rel(expr_ctx, &self.input)
     }
 
-    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(self.num_children(), "Limit");
+    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Result<Self, OptimizerError> {
+        inputs.expect_len(self.num_children(), "Limit")?;
 
-        Limit {
-            input: inputs.rel_node(),
+        Ok(Limit {
+            input: inputs.rel_node()?,
             rows: self.rows,
-        }
+        })
     }
 
     pub(super) fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {

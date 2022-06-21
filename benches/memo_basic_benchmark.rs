@@ -88,6 +88,10 @@ impl Expr for TestExpr {
         unreachable!()
     }
 
+    fn is_relational(&self) -> bool {
+        true
+    }
+
     fn is_scalar(&self) -> bool {
         false
     }
@@ -126,27 +130,31 @@ impl MemoExpr for TestOperator {
         ctx.copy_in(self, expr_ctx)
     }
 
-    fn expr_with_new_children(expr: &Self::Expr, mut inputs: NewChildExprs<Self>) -> Self::Expr {
-        match expr {
+    fn expr_with_new_children(
+        expr: &Self::Expr,
+        mut inputs: NewChildExprs<Self>,
+    ) -> Result<Self::Expr, OptimizerError> {
+        let expr = match expr {
             TestExpr::Scan { src } => {
-                inputs.expect_len(0, "Scan");
+                inputs.expect_len(0, "Scan")?;
                 TestExpr::Scan { src }
             }
             TestExpr::Filter { filter, .. } => {
-                inputs.expect_len(1, "Filter");
+                inputs.expect_len(1, "Filter")?;
                 TestExpr::Filter {
-                    input: inputs.rel_node(),
+                    input: inputs.rel_node()?,
                     filter: filter.clone(),
                 }
             }
             TestExpr::Join { .. } => {
-                inputs.expect_len(2, "Join");
+                inputs.expect_len(2, "Join")?;
                 TestExpr::Join {
-                    left: inputs.rel_node(),
-                    right: inputs.rel_node(),
+                    left: inputs.rel_node()?,
+                    right: inputs.rel_node()?,
                 }
             }
-        }
+        };
+        Ok(expr)
     }
 
     fn new_properties_with_nested_sub_queries(
@@ -206,12 +214,6 @@ impl From<TestExpr> for TestOperator {
     }
 }
 
-impl From<TestOperator> for RelNode {
-    fn from(expr: TestOperator) -> Self {
-        RelNode::from_mexpr(expr)
-    }
-}
-
 fn memo_bench(c: &mut Criterion) {
     let query = query1();
 
@@ -220,7 +222,7 @@ fn memo_bench(c: &mut Criterion) {
             let mut memo = MemoBuilder::new(()).build();
             let query = TestOperator::from(query.clone());
             let expr = memo.insert_group(query, &TestScope);
-            black_box(expr);
+            black_box(expr.unwrap());
         });
     });
 
@@ -231,7 +233,7 @@ fn memo_bench(c: &mut Criterion) {
             let mut memo = MemoBuilder::new(()).build();
             let query = TestOperator::from(query.clone());
             let expr = memo.insert_group(query, &TestScope);
-            black_box(expr);
+            black_box(expr.unwrap());
         });
     });
 }
@@ -240,12 +242,12 @@ fn query1() -> TestExpr {
     let scan_a = TestExpr::Scan { src: "A" };
     let scan_b = TestExpr::Scan { src: "B" };
     let join = TestExpr::Join {
-        left: TestOperator::from(scan_a).into(),
-        right: TestOperator::from(scan_b).into(),
+        left: RelNode::new_expr(scan_a),
+        right: RelNode::new_expr(scan_b),
     };
 
     TestExpr::Filter {
-        input: TestOperator::from(join).into(),
+        input: RelNode::new_expr(join),
         filter: TestScalarExpr::Value(111),
     }
 }
@@ -254,12 +256,12 @@ fn query2() -> TestExpr {
     let scan_a = query1();
     let scan_b = query1();
     let join = TestExpr::Join {
-        left: TestOperator::from(scan_a).into(),
-        right: TestOperator::from(scan_b).into(),
+        left: RelNode::new_expr(scan_a),
+        right: RelNode::new_expr(scan_b),
     };
 
     TestExpr::Filter {
-        input: TestOperator::from(join).into(),
+        input: RelNode::new_expr(join),
         filter: TestScalarExpr::Value(111),
     }
 }

@@ -28,18 +28,18 @@ impl LogicalJoin {
         visitor.visit_join_condition(expr_ctx, &self.condition)
     }
 
-    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(self.num_children(), "LogicalJoin");
+    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Result<Self, OptimizerError> {
+        inputs.expect_len(self.num_children(), "LogicalJoin")?;
 
-        LogicalJoin {
+        Ok(LogicalJoin {
             join_type: self.join_type.clone(),
-            left: inputs.rel_node(),
-            right: inputs.rel_node(),
+            left: inputs.rel_node()?,
+            right: inputs.rel_node()?,
             condition: match &self.condition {
                 JoinCondition::Using(_) => self.condition.clone(),
-                JoinCondition::On(_) => JoinCondition::On(JoinOn::new(inputs.scalar_node())),
+                JoinCondition::On(_) => JoinCondition::On(JoinOn::new(inputs.scalar_node()?)),
             },
-        }
+        })
     }
 
     pub(super) fn num_children(&self) -> usize {

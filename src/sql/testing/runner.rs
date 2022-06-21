@@ -638,7 +638,6 @@ mod test {
         DefaultTestOptionsParser, SqlTestCase, SqlTestCaseRunner, SqlTestCaseSet, TestCaseFailure, TestCaseRunResult,
         TestCaseRunner, TestCaseRunnerFactory, TestCatalog, TestOptions, TestRunnerError,
     };
-    use crate::sql::testing::*;
     use std::collections::HashMap;
 
     #[test]

@@ -21,7 +21,7 @@ fn main() -> Result<(), OptimizerError> {
     let metadata = Rc::new(MutableMetadata::new());
 
     // 1. Create a catalog
-    let catalog = create_catalog();
+    let catalog = create_catalog()?;
 
     // 2.  Create the optimizer.
     let optimizer = create_optimizer(catalog.clone());
@@ -65,7 +65,7 @@ fn create_memo(catalog: CatalogRef, metadata: Rc<MutableMetadata>) -> MemoizeOpe
     MemoizeOperators::new(memo)
 }
 
-fn create_catalog() -> CatalogRef {
+fn create_catalog() -> Result<CatalogRef, OptimizerError> {
     let catalog = Arc::new(MutableCatalog::new());
 
     let table_a = TableBuilder::new("a")
@@ -73,13 +73,13 @@ fn create_catalog() -> CatalogRef {
         .add_column("a2", DataType::Bool)
         .add_column("a3", DataType::String)
         .add_row_count(100)
-        .build();
+        .build()?;
 
-    let table_b = TableBuilder::new("b").add_column("b1", DataType::Int32).add_row_count(200).build();
+    let table_b = TableBuilder::new("b").add_column("b1", DataType::Int32).add_row_count(200).build()?;
 
     catalog.add_table(DEFAULT_SCHEMA, table_a);
     catalog.add_table(DEFAULT_SCHEMA, table_b);
-    catalog
+    Ok(catalog)
 }
 
 fn create_optimizer(catalog: CatalogRef) -> Optimizer<StaticRuleSet, SimpleCostEstimator> {

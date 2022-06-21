@@ -24,13 +24,13 @@ impl LogicalSelect {
         visitor.visit_opt_scalar(expr_ctx, self.filter.as_ref())
     }
 
-    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(self.num_children(), "LogicalSelect");
+    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Result<Self, OptimizerError> {
+        inputs.expect_len(self.num_children(), "LogicalSelect")?;
 
-        LogicalSelect {
-            input: inputs.rel_node(),
-            filter: self.filter.as_ref().map(|_| inputs.scalar_node()),
-        }
+        Ok(LogicalSelect {
+            input: inputs.rel_node()?,
+            filter: inputs.scalar_opt_node(self.filter.as_ref())?,
+        })
     }
 
     pub(super) fn num_children(&self) -> usize {

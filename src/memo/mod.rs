@@ -89,6 +89,7 @@ where
     /// Copies the given expression `expr` into this memo. if this memo does not contain the given expression
     /// a new memo group is created and this method returns a reference to it. Otherwise returns a reference
     /// to the already existing expression.
+    /// If the given token belong to another memo this method returns an error.
     pub fn insert_group(&mut self, expr: E, scope: &E::Scope) -> Result<E, OptimizerError> {
         let copy_in = CopyIn {
             scope,
@@ -100,10 +101,7 @@ where
 
     /// Copies the expression `expr` into this memo and adds it to the memo group that granted the given [membership token](MemoGroupToken).
     /// If an identical expression already exist this method simply returns a reference to that expression.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if group with the given id does not exist.
+    /// If the given token belong to another memo this method returns an error.
     pub fn insert_group_member(
         &mut self,
         token: MemoGroupToken<E>,
@@ -118,12 +116,8 @@ where
         copy_in.execute(&expr)
     }
 
-    /// Return a reference to a memo group with the given id or panics if it does not exists.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if group with the given id does not exist.
-    pub fn get_group(&self, group_id: &GroupId) -> MemoGroupRef<E, T> {
+    /// Return a reference to a memo group with the given id or an error if it does not exists.
+    pub fn get_group(&self, group_id: &GroupId) -> Result<MemoGroupRef<E, T>, OptimizerError> {
         self.memo_impl.get_group(group_id)
     }
 
@@ -228,7 +222,7 @@ pub trait MemoExpr: Clone {
 
     /// Creates a new expression from the given expression `expr` by replacing its child expressions
     /// with expressions provided by the given [NewChildExprs](self::NewChildExprs).
-    fn expr_with_new_children(expr: &Self::Expr, inputs: NewChildExprs<Self>) -> Self::Expr;
+    fn expr_with_new_children(expr: &Self::Expr, inputs: NewChildExprs<Self>) -> Result<Self::Expr, OptimizerError>;
 
     /// Called when a scalar expression with the given nested sub-queries should be added to a memo.
     /// Returns properties that contain the given child expressions.
@@ -283,6 +277,9 @@ pub trait Expr: Clone {
     ///
     /// This method panics if the underlying expression is not a scalar expression.
     fn scalar(&self) -> &Self::ScalarExpr;
+
+    /// Returns `true` if this is a relational expression.
+    fn is_relational(&self) -> bool;
 
     /// Returns `true` if this is a scalar expression.
     fn is_scalar(&self) -> bool;
@@ -547,108 +544,106 @@ where
     }
 
     /// Ensures that this container holds exactly `n` expressions.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if the number of expressions is not equal to the number of elements in the underling stack.
-    pub fn expect_len(&self, n: usize, operator: &str) {
-        assert_eq!(self.capacity, n, "{}: Unexpected number of child expressions", operator);
+    pub fn expect_len(&self, n: usize, operator: &str) -> Result<(), OptimizerError> {
+        if self.capacity != n {
+            let message = format!(
+                "{}: Unexpected number of child expressions. Expected {} but got {}",
+                operator, n, self.capacity
+            );
+            Err(OptimizerError::argument(message))
+        } else {
+            Ok(())
+        }
     }
 
     /// Retrieves the next relational expression.
     ///
-    /// # Panics
-    ///
-    /// This method panics if there is no relational expressions left or the retrieved expression is
+    /// This method return an error if there are no relational expressions left or the retrieved expression is
     /// not a relational expression.
-    pub fn rel_node(&mut self) -> RelNode<E> {
-        let expr = self.expr();
-        Self::expect_relational(&expr);
-        RelNode::from_mexpr(expr)
+    pub fn rel_node(&mut self) -> Result<RelNode<E>, OptimizerError> {
+        self.expr(&RelNode::try_from)
     }
 
     /// Retrieves the next `n` relational expressions.
     ///
-    /// # Panics
-    ///
-    /// This method panics if there is not enough expressions left or some of the retrieved expressions are
+    /// This method returns an error if there are not enough expressions left or some of the retrieved expressions are
     /// not relational expressions.
-    pub fn rel_nodes(&mut self, n: usize) -> Vec<RelNode<E>> {
-        self.exprs(n)
-            .into_iter()
-            .map(|i| {
-                Self::expect_relational(&i);
-                RelNode::from_mexpr(i)
-            })
-            .collect()
+    pub fn rel_nodes(&mut self, n: usize) -> Result<Vec<RelNode<E>>, OptimizerError> {
+        self.exprs(n, &RelNode::try_from)
+    }
+
+    /// Retrieves the next optional relational expression.
+    /// * If `expr` is [Some] returns the next relational expression.
+    /// * If `expr` is [None] returns [None].
+    ///
+    /// This method returns an error if there are no expressions left or the retrieved expression is
+    /// not a relational expression.
+    pub fn rel_opt_node(&mut self, expr: Option<&RelNode<E>>) -> Result<Option<RelNode<E>>, OptimizerError> {
+        self.expr_opt(expr, &RelNode::try_from)
     }
 
     /// Retrieves the next scalar expression.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if there is no expressions left or the retrieved expression is
+    /// This method returns an error if there are no expressions left or the retrieved expression is
     /// not a scalar expression.
-    pub fn scalar_node(&mut self) -> ScalarNode<E> {
-        let expr = self.expr();
-        Self::expect_scalar(&expr);
-        ScalarNode::from_mexpr(expr)
+    pub fn scalar_node(&mut self) -> Result<ScalarNode<E>, OptimizerError> {
+        self.expr(&ScalarNode::try_from)
     }
 
     /// Retrieves the next `n` scalar expressions.
     ///
-    /// # Panics
-    ///
-    /// This method panics if there is not enough expressions left or some of the retrieved expressions are
+    /// This method returns an error if there are not enough expressions left or some of the retrieved expressions are
     /// not scalar expressions.
-    pub fn scalar_nodes(&mut self, n: usize) -> Vec<ScalarNode<E>> {
-        self.exprs(n)
-            .into_iter()
-            .map(|i| {
-                Self::expect_scalar(&i);
-                ScalarNode::from_mexpr(i)
-            })
-            .collect()
+    pub fn scalar_nodes(&mut self, n: usize) -> Result<Vec<ScalarNode<E>>, OptimizerError> {
+        self.exprs(n, &ScalarNode::try_from)
     }
 
-    fn expr(&mut self) -> E {
-        self.ensure_available(1);
-        self.next_index()
+    /// Retrieves the next optional scalar expression.
+    /// * If `expr` is [Some] returns the next scalar expression.
+    /// * If `expr` is [None] returns [None].
+    ///
+    /// This method returns an error if there are no expressions left or the retrieved expression is
+    /// not a scalar expression.
+    pub fn scalar_opt_node(&mut self, expr: Option<&ScalarNode<E>>) -> Result<Option<ScalarNode<E>>, OptimizerError> {
+        self.expr_opt(expr, &ScalarNode::try_from)
     }
 
-    fn exprs(&mut self, n: usize) -> Vec<E> {
-        self.ensure_available(n);
-        let mut children = Vec::with_capacity(n);
-        for _ in 0..n {
-            children.push(self.next_index());
+    fn expr<F, T>(&mut self, f: &F) -> Result<T, OptimizerError>
+    where
+        F: Fn(E) -> Result<T, OptimizerError>,
+    {
+        match self.children.pop_front() {
+            Some(expr) => (f)(expr),
+            None => Err(OptimizerError::internal("Unable to retrieve an expression")),
         }
-        children
     }
 
-    fn next_index(&mut self) -> E {
-        // the assertion in ensure_available guarantees that `children` has enough elements.
-        self.children.pop_front().unwrap()
+    fn exprs<F, T>(&mut self, n: usize, f: &F) -> Result<Vec<T>, OptimizerError>
+    where
+        F: Fn(E) -> Result<T, OptimizerError>,
+    {
+        if self.children.len() < n {
+            let message = format!("Unable to retrieve {} expression(s). Total: {}", n, self.children.len());
+            Err(OptimizerError::internal(message))
+        } else {
+            let mut children = Vec::with_capacity(n);
+            for _ in 0..n {
+                // Unwrapping won't panic because we have at least n elements.
+                let expr = self.children.pop_front().unwrap();
+                let expr = (f)(expr)?;
+                children.push(expr);
+            }
+            Ok(children)
+        }
     }
 
-    fn ensure_available(&mut self, n: usize) {
-        let next_index = self.index + n;
-        assert!(
-            next_index <= self.capacity,
-            "Unable to retrieve {} expression(s). Next index: {}, current: {}, total exprs: {}",
-            n,
-            next_index,
-            self.index,
-            self.children.len()
-        );
-        self.index += n;
-    }
-
-    fn expect_relational(expr: &E) {
-        assert!(!expr.expr().is_scalar(), "expected a relational expression");
-    }
-
-    fn expect_scalar(expr: &E) {
-        assert!(expr.expr().is_scalar(), "expected a scalar expression");
+    fn expr_opt<F, T>(&mut self, expr: Option<&T>, f: &F) -> Result<Option<T>, OptimizerError>
+    where
+        F: Fn(E) -> Result<T, OptimizerError>,
+    {
+        match expr {
+            Some(_) => Ok(Some(self.expr(f)?)),
+            None => Ok(None),
+        }
     }
 }
 
@@ -681,30 +676,38 @@ where
         RelNode(expr)
     }
 
+    /// Creates a relational node of an expression tree from the given relational expression.
+    /// This method is a shorthand for `RelNode::new(expr, RelProps::default())`
+    /// if `RelProps` implements [Default].
+    pub fn new_expr(expr: RelExpr) -> Self
+    where
+        RelProps: Default,
+    {
+        RelNode::new(expr, RelProps::default())
+    }
+
     /// Creates a relational node of an expression tree from the given memo expression.
-    ///
-    /// # Note
-    ///
-    /// Caller must guarantee that the given expression is a relational expression.
-    pub fn from_mexpr(expr: E) -> Self {
-        RelNode(expr)
+    /// If the given expression is not relational expression this method returns an error.
+    pub fn try_from(expr: E) -> Result<Self, OptimizerError> {
+        if !expr.expr().is_relational() {
+            Err(OptimizerError::argument("Expected a relational expression"))
+        } else {
+            Ok(RelNode(expr))
+        }
     }
 
     /// Creates a relational node of an expression tree from the given memo group.
-    ///
-    /// # Note
-    ///
-    /// Caller must guarantee that the given group is a group of relational expressions.
-    pub fn from_group<M>(group: MemoGroupRef<'_, E, M>) -> Self {
+    /// If the given group does not contain relational expressions this method returns an error.
+    pub fn try_from_group<M>(group: MemoGroupRef<'_, E, M>) -> Result<Self, OptimizerError> {
         let expr = group.to_memo_expr();
-        RelNode(expr)
+        if !expr.expr().is_relational() {
+            Err(OptimizerError::argument("Expected a relational expression"))
+        } else {
+            Ok(RelNode(expr))
+        }
     }
 
     /// Returns a reference to the underlying expression.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if this node does not hold a relational expression.
     pub fn expr<'e>(&'e self) -> &'e T::RelExpr
     where
         T: 'e,
@@ -715,10 +718,6 @@ where
     /// Returns a reference to properties associated with this node:
     /// * if this node is an expression returns a reference to the properties of the underlying expression.
     /// * If this node is a memo group returns a reference to the properties of the first expression of this memo group.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if this node does not hold a relational expression.
     pub fn props<'e>(&'e self) -> &'e RelProps
     where
         T: 'e,
@@ -806,30 +805,38 @@ where
         ScalarNode(expr)
     }
 
+    /// Creates a scalar node of an expression tree from the given scalar expression and default properties.
+    /// This method is a shorthand for `ScalarNode::new(expr, ScalarProps::default())`
+    /// if `ScalarProps` implements [Default].
+    pub fn new_expr(expr: ScalarExpr) -> Self
+    where
+        ScalarProps: Default,
+    {
+        ScalarNode::new(expr, ScalarProps::default())
+    }
+
     /// Creates a scalar node of an expression tree from the given memo expression.
-    ///
-    /// # Note
-    ///
-    /// Caller must guarantee that the given expression is a scalar expression.
-    pub fn from_mexpr(expr: E) -> Self {
-        ScalarNode(expr)
+    /// if the given expression is not a scalar expression this method returns an error.
+    pub fn try_from(expr: E) -> Result<Self, OptimizerError> {
+        if expr.expr().is_scalar() {
+            Ok(ScalarNode(expr))
+        } else {
+            Err(OptimizerError::internal("Expected a scalar expression"))
+        }
     }
 
     /// Creates a relational node of an expression tree from the given memo group.
-    ///
-    /// # Note
-    ///
-    /// Caller must guarantee that the given group is a group of relational expressions.
-    pub fn from_group<M>(group: MemoGroupRef<'_, E, M>) -> Self {
+    /// If the given group does not contain scalar expressions this method returns an error.
+    pub fn try_from_group<M>(group: MemoGroupRef<'_, E, M>) -> Result<Self, OptimizerError> {
         let expr = group.to_memo_expr();
-        ScalarNode(expr)
+        if !expr.expr().is_scalar() {
+            Err(OptimizerError::argument("Expected a scalar expression"))
+        } else {
+            Ok(ScalarNode(expr))
+        }
     }
 
     /// Returns a reference to the underlying scalar expression.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if this not does not hold a scalar expression.
     pub fn expr<'e>(&'e self) -> &'e T::ScalarExpr
     where
         T: 'e,
@@ -958,7 +965,7 @@ where
                 };
                 copy_in.execute(input)?
             }
-            MemoExprState::Memo(state) => self.memo.get_first_memo_expr(state.group_id()),
+            MemoExprState::Memo(state) => self.memo.get_first_memo_expr(state.group_id())?,
         };
         expr_ctx.children.push_back(child_expr);
         Ok(())
@@ -985,12 +992,23 @@ where
 
     /// Copies the expression into the memo.
     pub fn copy_in(&mut self, expr: &E, expr_ctx: ExprContext<E>) -> Result<(), OptimizerError> {
+        match self.copy_in_internal(expr, expr_ctx) {
+            // Do not expose an added expression in public API.
+            Ok(expr) => {
+                self.result = Some(expr);
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    fn copy_in_internal(&mut self, expr: &E, expr_ctx: ExprContext<E>) -> Result<E, OptimizerError> {
         let expr_id = ExprId(self.memo.exprs.len());
 
         let ExprContext { children, parent } = expr_ctx;
         let props = create_group_properties(expr, &children);
 
-        let expr = E::expr_with_new_children(expr.expr(), NewChildExprs::new(children));
+        let expr = E::expr_with_new_children(expr.expr(), NewChildExprs::new(children))?;
         let digest = make_digest::<E>(&expr, &props);
 
         let (expr_id, added) = match self.memo.expr_cache.entry(digest) {
@@ -1001,31 +1019,20 @@ where
             }
         };
 
-        let expr = if added {
+        if added {
             if let Some(token) = parent {
-                let parent_id = token.group_id;
-                let (group_exprs, expr_group_data) =
-                    self.memo.groups.get_mut(parent_id.index()).expect("Unexpected group id");
-                let expr_group_data = expr_group_data.clone();
-                group_exprs.push(expr_id);
-
-                self.memo.add_expr(expr_id, expr, expr_group_data)
+                self.memo.add_expr_to_group(expr_id, expr, token.group_id)
             } else {
                 let props = if let Some(callback) = &self.memo.callback {
                     callback.new_group(&expr, self.scope, props, &self.memo.metadata)?
                 } else {
                     props
                 };
-
-                let group_data = self.memo.add_group(expr_id, props);
-                self.memo.add_expr(expr_id, expr, group_data)
+                self.memo.add_new_expr(expr_id, expr, props)
             }
         } else {
-            let expr = self.memo.exprs.get(expr_id.index()).expect("Unexpected expression id");
-            expr.clone()
-        };
-        self.result = Some(expr);
-        Ok(())
+            self.memo.get_expr(expr_id)
+        }
     }
 }
 
@@ -1127,7 +1134,7 @@ where
         (f)(expr, &mut self)?;
         // Visit collected nested expressions so that they will be added to the given expression as child expressions.
         for expr_node in self.nested_exprs {
-            let rel_node = RelNode::from_mexpr(expr_node);
+            let rel_node = RelNode::try_from(expr_node)?;
             self.ctx.visit_expr_node(self.expr_ctx, rel_node)?;
         }
         Ok(())
@@ -1145,7 +1152,7 @@ where
                 }
             }
             MemoExprState::Memo(state) => {
-                let child_expr = self.ctx.memo.get_first_memo_expr(state.group_id());
+                let child_expr = self.ctx.memo.get_first_memo_expr(state.group_id())?;
                 self.add_child_expr(child_expr)
             }
         }
@@ -1415,50 +1422,72 @@ where
         }
     }
 
-    pub(crate) fn get_group(&self, group_id: &GroupId) -> MemoGroupRef<E, T> {
-        let (group_exprs, group_data) = &self.groups[group_id.index()];
-        // A group always holds at least one expression.
-        let first_expr_id = group_exprs[0];
-        let expr = self.exprs[first_expr_id.index()].clone();
+    pub(crate) fn get_group(&self, group_id: &GroupId) -> Result<MemoGroupRef<E, T>, OptimizerError> {
+        match self.groups.get(group_id.index()).map(|(group_exprs, group_data)| {
+            // A group always contains at least one expression and that expression always exists.
+            let first_expr_id = group_exprs[0];
+            let expr = self.exprs[first_expr_id.index()].clone();
 
-        let first_expr = MemoExprRef {
-            id: first_expr_id,
-            expr,
-        };
-        MemoGroupRef {
-            group_id: *group_id,
-            data: group_data,
-            memo: self,
-            exprs: group_exprs,
-            expr: first_expr,
+            let first_expr = MemoExprRef {
+                id: first_expr_id,
+                expr,
+            };
+            MemoGroupRef {
+                group_id: *group_id,
+                data: group_data,
+                memo: self,
+                exprs: group_exprs,
+                expr: first_expr,
+            }
+        }) {
+            Some(group) => Ok(group),
+            None => Err(OptimizerError::internal("Unexpected group id")),
         }
     }
 
-    pub(crate) fn metadata(&self) -> &T {
+    fn metadata(&self) -> &T {
         &self.metadata
     }
 
-    pub(crate) fn num_groups(&self) -> usize {
+    fn num_groups(&self) -> usize {
         self.groups.len()
     }
 
-    pub(crate) fn num_exprs(&self) -> usize {
+    fn num_exprs(&self) -> usize {
         self.exprs.len()
     }
 
-    pub(crate) fn expr_to_group(&self) -> &HashMap<ExprId, GroupId> {
+    fn expr_to_group(&self) -> &HashMap<ExprId, GroupId> {
         &self.expr_to_group
     }
 
-    fn add_group(&mut self, expr_id: ExprId, props: E::Props) -> MemoArc<MemoGroupData<E>> {
+    fn add_expr_to_group(&mut self, expr_id: ExprId, expr: E::Expr, group_id: GroupId) -> Result<E, OptimizerError> {
+        match self.groups.get_mut(group_id.index()) {
+            Some((group_exprs, group_data)) => {
+                group_exprs.push(expr_id);
+                let group_data = group_data.clone();
+
+                self.add_expr_internal(expr_id, expr, group_data)
+            }
+            None => Err(OptimizerError::internal("Unexpected group id")),
+        }
+    }
+
+    fn add_new_expr(&mut self, expr_id: ExprId, expr: E::Expr, props: E::Props) -> Result<E, OptimizerError> {
         let group_id = GroupId(self.groups.len());
         let group_data = MemoGroupData { group_id, props };
         let group_data = MemoArc::new(group_data);
         self.groups.push((vec![expr_id], group_data.clone()));
-        group_data
+
+        self.add_expr_internal(expr_id, expr, group_data)
     }
 
-    fn add_expr(&mut self, expr_id: ExprId, expr: E::Expr, group_data: MemoArc<MemoGroupData<E>>) -> E {
+    fn add_expr_internal(
+        &mut self,
+        expr_id: ExprId,
+        expr: E::Expr,
+        group_data: MemoArc<MemoGroupData<E>>,
+    ) -> Result<E, OptimizerError> {
         let group_id = group_data.group_id;
         let expr_data = MemoExprData { expr_id, expr };
         let expr_data = MemoArc::new(expr_data);
@@ -1469,14 +1498,27 @@ where
         let expr = E::from_state(MemoExprState::Memo(memo_state));
         self.expr_to_group.insert(expr_id, group_id);
         self.exprs.push(expr.clone());
-        expr
+        Ok(expr)
     }
 
-    pub(crate) fn get_first_memo_expr(&self, group_id: GroupId) -> E {
-        let (group_exprs, _) = &self.groups[group_id.index()];
-        let first_expr_id = group_exprs[0];
+    fn get_expr(&self, expr_id: ExprId) -> Result<E, OptimizerError> {
+        if let Some(expr) = self.exprs.get(expr_id.index()) {
+            Ok(expr.clone())
+        } else {
+            Err(OptimizerError::internal("Unexpected expression id"))
+        }
+    }
 
-        self.exprs[first_expr_id.index()].clone()
+    fn get_first_memo_expr(&self, group_id: GroupId) -> Result<E, OptimizerError> {
+        match self.groups.get(group_id.index()) {
+            Some((group_exprs, _)) => {
+                // A group always contains at least one expression and that expression always exists.
+                let first_expr_id = group_exprs[0];
+                let expr = self.exprs[first_expr_id.index()].clone();
+                Ok(expr)
+            }
+            None => Err(OptimizerError::internal("Unexpected group id")),
+        }
     }
 }
 

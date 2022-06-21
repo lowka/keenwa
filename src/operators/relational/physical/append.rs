@@ -26,14 +26,14 @@ impl Append {
         visitor.visit_rel(expr_ctx, &self.right)
     }
 
-    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(self.num_children(), "Append");
+    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Result<Self, OptimizerError> {
+        inputs.expect_len(self.num_children(), "Append")?;
 
-        Append {
-            left: inputs.rel_node(),
-            right: inputs.rel_node(),
+        Ok(Append {
+            left: inputs.rel_node()?,
+            right: inputs.rel_node()?,
             columns: self.columns.clone(),
-        }
+        })
     }
 
     pub(super) fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {
