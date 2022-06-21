@@ -30,16 +30,16 @@ impl HashedSetOp {
         visitor.visit_rel(expr_ctx, &self.right)
     }
 
-    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(self.num_children(), "HashedSetOp");
+    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Result<Self, OptimizerError> {
+        inputs.expect_len(self.num_children(), "HashedSetOp")?;
 
-        HashedSetOp {
-            left: inputs.rel_node(),
-            right: inputs.rel_node(),
+        Ok(HashedSetOp {
+            left: inputs.rel_node()?,
+            right: inputs.rel_node()?,
             intersect: self.intersect,
             all: self.all,
             columns: self.columns.clone(),
-        }
+        })
     }
 
     pub(super) fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {

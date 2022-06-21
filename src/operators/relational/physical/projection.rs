@@ -30,14 +30,14 @@ impl Projection {
         Ok(())
     }
 
-    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(self.num_children(), "Projection");
+    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Result<Self, OptimizerError> {
+        inputs.expect_len(self.num_children(), "Projection")?;
 
-        Projection {
-            input: inputs.rel_node(),
-            exprs: inputs.scalar_nodes(self.exprs.len()),
+        Ok(Projection {
+            input: inputs.rel_node()?,
+            exprs: inputs.scalar_nodes(self.exprs.len())?,
             columns: self.columns.clone(),
-        }
+        })
     }
 
     pub(super) fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {

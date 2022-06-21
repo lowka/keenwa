@@ -9,7 +9,7 @@ pub mod macros;
 /// The error type used by the optimizer and its components.
 #[derive(Debug)]
 pub enum OptimizerError {
-    /// This error indicates that a function of the optimizer or its components has been called with an invalid argument.
+    /// This error indicates that a function of the optimizer or it's component has been called with an invalid argument.
     Argument(ArgumentError),
     /// This error indicates that one of internal invariants of the optimizer or its components has been violated.
     Internal(InternalError),

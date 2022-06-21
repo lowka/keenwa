@@ -182,12 +182,12 @@ impl AggregateBuilder<'_> {
             // original_projection should contain column ids of the columns
             // produced by an aggregate operator + window functions with replaced arguments
             // all at correct positions.
-            let original_projection = original_projection
+            let original_projection: Result<Vec<ScalarExpr>, _> = original_projection
                 .into_iter()
                 .map(|expr| match expr {
                     ProjectionItem::Positional(position) => {
                         let col_id = column_ids[position];
-                        ScalarExpr::Column(col_id)
+                        Ok(ScalarExpr::Column(col_id))
                     }
                     ProjectionItem::WindowExpr {
                         mut expr,
@@ -215,7 +215,7 @@ impl AggregateBuilder<'_> {
                 })
                 .collect();
 
-            builder.projection_with_window_functions(original_projection, true, false, true)
+            builder.projection_with_window_functions(original_projection?, true, false, true)
         } else {
             Ok(builder)
         }

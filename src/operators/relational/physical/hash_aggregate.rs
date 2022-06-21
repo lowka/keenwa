@@ -37,16 +37,16 @@ impl HashAggregate {
         visitor.visit_opt_scalar(expr_ctx, self.having.as_ref())
     }
 
-    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(self.num_children(), "HashAggregate");
+    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Result<Self, OptimizerError> {
+        inputs.expect_len(self.num_children(), "HashAggregate")?;
 
-        HashAggregate {
-            input: inputs.rel_node(),
-            aggr_exprs: inputs.scalar_nodes(self.aggr_exprs.len()),
-            group_exprs: inputs.scalar_nodes(self.group_exprs.len()),
-            having: self.having.as_ref().map(|_| inputs.scalar_node()),
+        Ok(HashAggregate {
+            input: inputs.rel_node()?,
+            aggr_exprs: inputs.scalar_nodes(self.aggr_exprs.len())?,
+            group_exprs: inputs.scalar_nodes(self.group_exprs.len())?,
+            having: inputs.scalar_opt_node(self.having.as_ref())?,
             columns: self.columns.clone(),
-        }
+        })
     }
 
     pub(super) fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {

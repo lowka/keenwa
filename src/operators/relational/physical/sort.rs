@@ -26,13 +26,13 @@ impl Sort {
         visitor.visit_rel(expr_ctx, &self.input)
     }
 
-    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(self.num_children(), "Sort");
+    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Result<Self, OptimizerError> {
+        inputs.expect_len(self.num_children(), "Sort")?;
 
-        Sort {
-            input: inputs.rel_node(),
+        Ok(Sort {
+            input: inputs.rel_node()?,
             ordering: self.ordering.clone(),
-        }
+        })
     }
 
     pub(super) fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {

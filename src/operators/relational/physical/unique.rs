@@ -60,15 +60,15 @@ impl Unique {
         visitor.visit_opt_scalar(expr_ctx, self.on_expr.as_ref())
     }
 
-    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(self.num_children(), "Unique");
+    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Result<Self, OptimizerError> {
+        inputs.expect_len(self.num_children(), "Unique")?;
 
-        Unique {
-            inputs: inputs.rel_nodes(self.inputs.len()),
-            on_expr: self.on_expr.as_ref().map(|_| inputs.scalar_node()),
+        Ok(Unique {
+            inputs: inputs.rel_nodes(self.inputs.len())?,
+            on_expr: inputs.scalar_opt_node(self.on_expr.as_ref())?,
             columns: self.columns.clone(),
             ordering: self.ordering.clone(),
-        }
+        })
     }
 
     pub(super) fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {

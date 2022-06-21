@@ -10,7 +10,6 @@ use keenwa::rules::implementation::{EmptyRule, GetToScanRule, HashJoinRule, Proj
 use keenwa::rules::{Rule, StaticRuleSet, StaticRuleSetBuilder};
 use keenwa::sql::OperatorFromSqlBuilder;
 use keenwa::statistics::simple::{DefaultSelectivityStatistics, SimpleCatalogStatisticsBuilder};
-use std::rc::Rc;
 use std::sync::Arc;
 
 fn main() -> Result<(), OptimizerError> {
@@ -20,7 +19,7 @@ JOIN b ON a1 = b1
 "#;
 
     // 1. create a catalog.
-    let catalog = create_catalog();
+    let catalog = create_catalog()?;
 
     // 2. setup statistics builder.
     let statistics = SimpleCatalogStatisticsBuilder::new(catalog.clone(), DefaultSelectivityStatistics);
@@ -49,7 +48,7 @@ Projection cols=[5, 6] exprs: [col:1 + 100, NOT col:2]
     Ok(())
 }
 
-fn create_catalog() -> CatalogRef {
+fn create_catalog() -> Result<CatalogRef, OptimizerError> {
     let catalog = Arc::new(MutableCatalog::new());
 
     let table_a = TableBuilder::new("a")
@@ -57,13 +56,13 @@ fn create_catalog() -> CatalogRef {
         .add_column("a2", DataType::Bool)
         .add_column("a3", DataType::String)
         .add_row_count(100)
-        .build();
+        .build()?;
 
-    let table_b = TableBuilder::new("b").add_column("b1", DataType::Int32).add_row_count(200).build();
+    let table_b = TableBuilder::new("b").add_column("b1", DataType::Int32).add_row_count(200).build()?;
 
     catalog.add_table(DEFAULT_SCHEMA, table_a);
     catalog.add_table(DEFAULT_SCHEMA, table_b);
-    catalog
+    Ok(catalog)
 }
 
 fn create_optimizer(catalog: CatalogRef) -> Optimizer<StaticRuleSet, SimpleCostEstimator> {

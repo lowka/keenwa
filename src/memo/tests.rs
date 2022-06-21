@@ -1,3 +1,4 @@
+use crate::error::OptimizerError;
 use crate::memo::{format_memo, GroupId, Memo, MemoBuilder, MemoExpr, MemoExprRef, MemoGroupRef};
 
 pub trait MemoExprScopeProvider: Sized {
@@ -13,39 +14,43 @@ where
     MemoBuilder::new(()).build()
 }
 
-pub fn insert_group<E, T, S>(memo: &mut Memo<E, T>, expr: E) -> (GroupId, MemoExprRef<E>)
+pub fn insert_group<E, T, S>(memo: &mut Memo<E, T>, expr: E) -> Result<(GroupId, MemoExprRef<E>), OptimizerError>
 where
     E: MemoExpr<Scope = S>,
     S: MemoExprScopeProvider<Expr = E>,
 {
     let scope = S::build_scope(&expr);
-    let expr = memo.insert_group(expr, &scope).expect("Failed to add an expression");
+    let expr = memo.insert_group(expr, &scope)?;
     let group_id = expr.state().memo_group_id();
     let expr_ref = expr.state().memo_expr();
 
-    (group_id, expr_ref)
+    Ok((group_id, expr_ref))
 }
 
-pub fn insert_group_member<E, T, S>(memo: &mut Memo<E, T>, group_id: GroupId, expr: E) -> (GroupId, MemoExprRef<E>)
+pub fn insert_group_member<E, T, S>(
+    memo: &mut Memo<E, T>,
+    group_id: GroupId,
+    expr: E,
+) -> Result<(GroupId, MemoExprRef<E>), OptimizerError>
 where
     E: MemoExpr<Scope = S>,
     S: MemoExprScopeProvider<Expr = E>,
 {
-    let group = memo.get_group(&group_id);
+    let group = memo.get_group(&group_id)?;
     let token = group.to_group_token();
     let scope = S::build_scope(&expr);
-    let expr = memo.insert_group_member(token, expr, &scope).expect("Failed to add an expression");
+    let expr = memo.insert_group_member(token, expr, &scope)?;
 
     let expr_ref = expr.state().memo_expr();
 
-    (group_id, expr_ref)
+    Ok((group_id, expr_ref))
 }
 
 pub fn expect_group_size<E, T>(memo: &Memo<E, T>, group_id: &GroupId, size: usize)
 where
     E: MemoExpr,
 {
-    let group = memo.get_group(group_id);
+    let group = memo.get_group(group_id).expect("Group does not exists");
     assert_eq!(group.mexprs().count(), size, "group#{}", group_id);
 }
 
@@ -96,6 +101,7 @@ mod test {
 
     type RelNode = crate::memo::RelNode<TestOperator>;
     type ScalarNode = crate::memo::ScalarNode<TestOperator>;
+    type TestResult = Result<(), OptimizerError>;
 
     #[derive(Debug, Clone)]
     enum TestExpr {
@@ -137,6 +143,13 @@ mod test {
             }
         }
 
+        fn is_relational(&self) -> bool {
+            match self {
+                TestExpr::Relational(_) => true,
+                TestExpr::Scalar(_) => false,
+            }
+        }
+
         fn is_scalar(&self) -> bool {
             match self {
                 TestExpr::Relational(_) => false,
@@ -145,15 +158,15 @@ mod test {
         }
     }
 
-    impl From<TestOperator> for RelNode {
-        fn from(expr: TestOperator) -> Self {
-            RelNode::from_mexpr(expr)
+    impl From<TestRelExpr> for RelNode {
+        fn from(expr: TestRelExpr) -> Self {
+            RelNode::new_expr(expr)
         }
     }
 
     impl From<TestScalarExpr> for ScalarNode {
         fn from(expr: TestScalarExpr) -> Self {
-            ScalarNode::new(expr, ScalarProps::default())
+            ScalarNode::new_expr(expr)
         }
     }
 
@@ -168,19 +181,20 @@ mod test {
     }
 
     impl TestScalarExpr {
-        fn with_new_inputs(&self, inputs: &mut NewChildExprs<TestOperator>) -> Self {
-            match self {
+        fn with_new_inputs(&self, inputs: &mut NewChildExprs<TestOperator>) -> Result<Self, OptimizerError> {
+            let expr = match self {
                 TestScalarExpr::Value(_) => self.clone(),
                 TestScalarExpr::Gt { lhs, rhs } => {
-                    let lhs = lhs.with_new_inputs(inputs);
-                    let rhs = rhs.with_new_inputs(inputs);
+                    let lhs = lhs.with_new_inputs(inputs)?;
+                    let rhs = rhs.with_new_inputs(inputs)?;
                     TestScalarExpr::Gt {
                         lhs: Box::new(lhs),
                         rhs: Box::new(rhs),
                     }
                 }
-                TestScalarExpr::SubQuery(_) => TestScalarExpr::SubQuery(inputs.rel_node()),
-            }
+                TestScalarExpr::SubQuery(_) => TestScalarExpr::SubQuery(inputs.rel_node()?),
+            };
+            Ok(expr)
         }
 
         fn copy_in_nested<D>(&self, collector: &mut CopyInNestedExprs<TestOperator, D>) -> Result<(), OptimizerError> {
@@ -340,6 +354,10 @@ mod test {
             };
             TestOperator { state }
         }
+
+        fn into_rel_node(self) -> Result<RelNode, OptimizerError> {
+            RelNode::try_from(self)
+        }
     }
 
     impl MemoExpr for TestOperator {
@@ -381,26 +399,30 @@ mod test {
             ctx.copy_in(self, expr_ctx)
         }
 
-        fn expr_with_new_children(expr: &Self::Expr, mut inputs: NewChildExprs<Self>) -> Self::Expr {
-            match expr {
+        fn expr_with_new_children(
+            expr: &Self::Expr,
+            mut inputs: NewChildExprs<Self>,
+        ) -> Result<Self::Expr, OptimizerError> {
+            let expr = match expr {
                 TestExpr::Relational(expr) => {
                     let expr = match expr {
                         TestRelExpr::Leaf(s) => TestRelExpr::Leaf(s.clone()),
                         TestRelExpr::Node { .. } => TestRelExpr::Node {
-                            input: inputs.rel_node(),
+                            input: inputs.rel_node()?,
                         },
                         TestRelExpr::Nodes { inputs: input_exprs } => TestRelExpr::Nodes {
-                            inputs: inputs.rel_nodes(input_exprs.len()),
+                            inputs: inputs.rel_nodes(input_exprs.len())?,
                         },
                         TestRelExpr::Filter { .. } => TestRelExpr::Filter {
-                            input: inputs.rel_node(),
-                            filter: inputs.scalar_node(),
+                            input: inputs.rel_node()?,
+                            filter: inputs.scalar_node()?,
                         },
                     };
                     TestExpr::Relational(expr)
                 }
-                TestExpr::Scalar(expr) => TestExpr::Scalar(expr.with_new_inputs(&mut inputs)),
-            }
+                TestExpr::Scalar(expr) => TestExpr::Scalar(expr.with_new_inputs(&mut inputs)?),
+            };
+            Ok(expr)
         }
 
         fn new_properties_with_nested_sub_queries(
@@ -481,23 +503,22 @@ mod test {
     }
 
     #[test]
-    fn test_basics() {
+    fn test_basics() -> TestResult {
         let mut memo = new_memo();
         let expr1 = TestOperator::from(TestRelExpr::Leaf("aaaa")).with_rel_props(100);
-        let (group_id, expr) = insert_group(&mut memo, expr1);
-        let group = memo.get_group(&group_id);
+        let (group_id, expr) = insert_group(&mut memo, expr1)?;
+        let group = memo.get_group(&group_id)?;
 
         assert_eq!(group.props().relational(), &RelProps { a: 100 }, "group properties");
         assert_eq!(expr.group_id(), group.id(), "expr group");
-
-        // let expr_by_id = memo.get_expr_ref(&expr.id());
-        // assert_eq!(expr, expr_by_id);
 
         assert_eq!(
             format!("{:#?}", group.props()),
             format!("{:#?}", expr.props()),
             "groups properties and expr properties must be equal"
         );
+
+        Ok(())
     }
 
     #[test]
@@ -570,10 +591,10 @@ mod test {
     fn test_properties() {
         let mut memo = new_memo();
 
-        let leaf = TestOperator::from(TestRelExpr::Leaf("a")).with_rel_props(10);
-        let inner = TestOperator::from(TestRelExpr::Node { input: leaf.into() }).with_rel_props(15);
-        let expr = TestOperator::from(TestRelExpr::Node { input: inner.into() });
-        let outer = TestOperator::from(TestRelExpr::Node { input: expr.into() }).with_rel_props(20);
+        let leaf = RelNode::new(TestRelExpr::Leaf("a"), RelProps { a: 10 });
+        let inner = RelNode::new(TestRelExpr::Node { input: leaf }, RelProps { a: 15 });
+        let expr = RelNode::from(TestRelExpr::Node { input: inner });
+        let outer = TestOperator::from(TestRelExpr::Node { input: expr }).with_rel_props(20);
 
         let _ = insert_group(&mut memo, outer);
 
@@ -589,14 +610,12 @@ mod test {
     }
 
     #[test]
-    fn test_child_expr() {
+    fn test_child_expr() -> TestResult {
         let mut memo = new_memo();
 
-        let leaf = TestOperator::from(TestRelExpr::Leaf("a")).with_rel_props(10);
-        let expr = TestOperator::from(TestRelExpr::Node {
-            input: leaf.clone().into(),
-        });
-        let (_, expr) = insert_group(&mut memo, expr);
+        let leaf = RelNode::new(TestRelExpr::Leaf("a"), RelProps { a: 10 });
+        let expr = TestOperator::from(TestRelExpr::Node { input: leaf.clone() });
+        let (_, expr) = insert_group(&mut memo, expr)?;
 
         match expr.expr().relational() {
             TestRelExpr::Node { input } => {
@@ -606,25 +625,27 @@ mod test {
                     format!("{:?}", children[0].expr().relational()),
                     "child expr"
                 );
-                assert_eq!(input.props(), leaf.props().relational(), "input props");
+                assert_eq!(input.props(), leaf.props(), "input props");
             }
             _ => panic!("Unexpected expression: {:?}", expr),
         }
+        Ok(())
     }
 
     #[test]
-    fn test_memo_trivial_expr() {
+    fn test_memo_trivial_expr() -> TestResult {
         let mut memo = new_memo();
 
         let expr = TestOperator::from(TestRelExpr::Leaf("a"));
-        let (group1, expr1) = insert_group(&mut memo, expr.clone());
-        let (group2, expr2) = insert_group(&mut memo, expr);
+        let (group1, expr1) = insert_group(&mut memo, expr.clone())?;
+        let (group2, expr2) = insert_group(&mut memo, expr)?;
 
         assert_eq!(group1, group2);
         assert_eq!(expr1, expr2);
 
         expect_group_size(&memo, &group1, 1);
-        let group = memo.get_group(&group1);
+
+        let group = memo.get_group(&group1)?;
         expect_group_exprs(&group, vec![expr1]);
 
         expect_memo(
@@ -632,19 +653,21 @@ mod test {
             r#"
 00 Leaf a
 "#,
-        )
+        );
+
+        Ok(())
     }
 
     #[test]
-    fn test_memo_node_leaf_expr() {
+    fn test_memo_node_leaf_expr() -> TestResult {
         let mut memo = new_memo();
 
         let expr = TestOperator::from(TestRelExpr::Node {
-            input: TestOperator::from(TestRelExpr::Leaf("a")).into(),
+            input: RelNode::from(TestRelExpr::Leaf("a")),
         });
 
-        let (group1, expr1) = insert_group(&mut memo, expr.clone());
-        let (group2, expr2) = insert_group(&mut memo, expr);
+        let (group1, expr1) = insert_group(&mut memo, expr.clone())?;
+        let (group2, expr2) = insert_group(&mut memo, expr)?;
 
         assert_eq!(group1, group2);
         assert_eq!(expr1, expr2);
@@ -656,21 +679,20 @@ mod test {
 00 Leaf a
 "#,
         );
+
+        Ok(())
     }
 
     #[test]
-    fn test_memo_node_multiple_leaves() {
+    fn test_memo_node_multiple_leaves() -> TestResult {
         let mut memo = new_memo();
 
         let expr = TestOperator::from(TestRelExpr::Nodes {
-            inputs: vec![
-                TestOperator::from(TestRelExpr::Leaf("a")).into(),
-                TestOperator::from(TestRelExpr::Leaf("b")).into(),
-            ],
+            inputs: vec![RelNode::from(TestRelExpr::Leaf("a")), RelNode::from(TestRelExpr::Leaf("b"))],
         });
 
-        let (group1, expr1) = insert_group(&mut memo, expr.clone());
-        let (group2, expr2) = insert_group(&mut memo, expr);
+        let (group1, expr1) = insert_group(&mut memo, expr.clone())?;
+        let (group2, expr2) = insert_group(&mut memo, expr)?;
 
         assert_eq!(group1, group2);
         assert_eq!(expr1, expr2);
@@ -685,28 +707,28 @@ mod test {
 00 Leaf a
 "#,
         );
+
+        Ok(())
     }
 
     #[test]
-    fn test_memo_node_nested_duplicates() {
+    fn test_memo_node_nested_duplicates() -> TestResult {
         let mut memo = new_memo();
 
         let expr = TestOperator::from(TestRelExpr::Nodes {
             inputs: vec![
-                TestOperator::from(TestRelExpr::Node {
-                    input: TestOperator::from(TestRelExpr::Leaf("a")).into(),
-                })
-                .into(),
-                TestOperator::from(TestRelExpr::Leaf("b")).into(),
-                TestOperator::from(TestRelExpr::Node {
-                    input: TestOperator::from(TestRelExpr::Leaf("a")).into(),
-                })
-                .into(),
+                RelNode::from(TestRelExpr::Node {
+                    input: RelNode::from(TestRelExpr::Leaf("a")),
+                }),
+                RelNode::from(TestRelExpr::Leaf("b")).into(),
+                RelNode::from(TestRelExpr::Node {
+                    input: RelNode::from(TestRelExpr::Leaf("a")).into(),
+                }),
             ],
         });
 
-        let (group1, expr1) = insert_group(&mut memo, expr.clone());
-        let (group2, expr2) = insert_group(&mut memo, expr);
+        let (group1, expr1) = insert_group(&mut memo, expr.clone())?;
+        let (group2, expr2) = insert_group(&mut memo, expr)?;
 
         assert_eq!(group1, group2);
         assert_eq!(expr1, expr2);
@@ -722,22 +744,24 @@ mod test {
 00 Leaf a
 "#,
         );
+
+        Ok(())
     }
 
     #[test]
-    fn test_memo_node_duplicate_leaves() {
+    fn test_memo_node_duplicate_leaves() -> TestResult {
         let mut memo = new_memo();
 
         let expr = TestOperator::from(TestRelExpr::Nodes {
             inputs: vec![
-                TestOperator::from(TestRelExpr::Leaf("a")).into(),
-                TestOperator::from(TestRelExpr::Leaf("b")).into(),
-                TestOperator::from(TestRelExpr::Leaf("a")).into(),
+                RelNode::from(TestRelExpr::Leaf("a")),
+                RelNode::from(TestRelExpr::Leaf("b")),
+                RelNode::from(TestRelExpr::Leaf("a")),
             ],
         });
 
-        let (group1, expr1) = insert_group(&mut memo, expr.clone());
-        let (group2, expr2) = insert_group(&mut memo, expr);
+        let (group1, expr1) = insert_group(&mut memo, expr.clone())?;
+        let (group2, expr2) = insert_group(&mut memo, expr)?;
 
         assert_eq!(group1, group2);
         assert_eq!(expr1, expr2);
@@ -752,15 +776,17 @@ mod test {
 00 Leaf a
 "#,
         );
+
+        Ok(())
     }
 
     #[test]
-    fn test_insert_member() {
+    fn test_insert_member() -> TestResult {
         let mut memo = new_memo();
 
         let expr = TestOperator::from(TestRelExpr::Leaf("a"));
 
-        let (group_id, _) = insert_group(&mut memo, expr);
+        let (group_id, _) = insert_group(&mut memo, expr)?;
         expect_memo(
             &memo,
             r#"
@@ -769,7 +795,7 @@ mod test {
         );
 
         let expr = TestOperator::from(TestRelExpr::Leaf("a0"));
-        let _ = insert_group_member(&mut memo, group_id, expr);
+        let _ = insert_group_member(&mut memo, group_id, expr)?;
 
         expect_memo(
             &memo,
@@ -778,17 +804,19 @@ mod test {
    Leaf a0
 "#,
         );
+
+        Ok(())
     }
 
     #[test]
-    fn test_insert_member_to_a_leaf_group() {
+    fn test_insert_member_to_a_leaf_group() -> TestResult {
         let mut memo = new_memo();
 
         let expr = TestOperator::from(TestRelExpr::Node {
-            input: TestOperator::from(TestRelExpr::Leaf("a")).into(),
+            input: RelNode::from(TestRelExpr::Leaf("a")),
         });
 
-        let (group_id, _) = insert_group(&mut memo, expr);
+        let (group_id, _) = insert_group(&mut memo, expr)?;
         expect_memo(
             &memo,
             r#"
@@ -797,11 +825,11 @@ mod test {
 "#,
         );
 
-        let group = memo.get_group(&group_id);
+        let group = memo.get_group(&group_id)?;
         let child_expr = group.mexpr().children().next().unwrap();
         let child_group_id = child_expr.group_id();
         let expr = TestOperator::from(TestRelExpr::Leaf("a0"));
-        let _ = insert_group_member(&mut memo, child_group_id, expr);
+        let _ = insert_group_member(&mut memo, child_group_id, expr)?;
 
         expect_memo(
             &memo,
@@ -811,17 +839,19 @@ mod test {
    Leaf a0
 "#,
         );
+
+        Ok(())
     }
 
     #[test]
-    fn test_insert_member_to_the_top_group() {
+    fn test_insert_member_to_the_top_group() -> TestResult {
         let mut memo = new_memo();
 
         let expr = TestOperator::from(TestRelExpr::Node {
-            input: TestOperator::from(TestRelExpr::Leaf("a")).into(),
+            input: RelNode::from(TestRelExpr::Leaf("a")),
         });
 
-        let (group_id, _) = insert_group(&mut memo, expr);
+        let (group_id, _) = insert_group(&mut memo, expr)?;
         expect_memo(
             &memo,
             r#"
@@ -831,9 +861,9 @@ mod test {
         );
 
         let expr = TestOperator::from(TestRelExpr::Node {
-            input: TestOperator::from(TestRelExpr::Leaf("a0")).into(),
+            input: RelNode::from(TestRelExpr::Leaf("a0")),
         });
-        let _ = insert_group_member(&mut memo, group_id, expr);
+        let _ = insert_group_member(&mut memo, group_id, expr)?;
 
         expect_memo(
             &memo,
@@ -844,15 +874,17 @@ mod test {
 00 Leaf a
 "#,
         );
+
+        Ok(())
     }
 
     #[test]
-    fn test_memo_debug_formatting() {
+    fn test_memo_debug_formatting() -> TestResult {
         let mut memo = MemoBuilder::new(123).build();
         assert_eq!(format!("{:?}", memo), "Memo { num_groups: 0, num_exprs: 0, expr_to_group: {}, metadata: 123 }");
 
         let expr = TestOperator::from(TestRelExpr::Leaf("a"));
-        let (group_id, expr) = insert_group(&mut memo, expr);
+        let (group_id, expr) = insert_group(&mut memo, expr)?;
 
         assert_eq!(
             format!("{:?}", memo),
@@ -860,31 +892,32 @@ mod test {
         );
         assert_eq!(format!("{:?}", expr), "MemoExprRef { id: ExprId(0) }");
 
-        let group = memo.get_group(&group_id);
+        let group = memo.get_group(&group_id)?;
         assert_eq!(format!("{:?}", group.mexprs()), "[MemoExprRef { id: ExprId(0) }]");
 
         let expr = TestOperator::from(TestRelExpr::Node {
-            input: RelNode::from(group.to_memo_expr()),
+            input: RelNode::try_from(group.to_memo_expr())?,
         });
         assert_eq!(
             format!("{:?}", expr.children()),
             "[TestOperator { state: Memo(MemoizedExpr { expr_id: ExprId(0), group_id: GroupId(0) }) }]"
         );
+        Ok(())
     }
 
     #[test]
-    fn test_trivial_nestable_expr() {
-        let sub_expr = TestOperator::from(TestRelExpr::Leaf("a"));
+    fn test_trivial_nestable_expr() -> TestResult {
+        let sub_expr = RelNode::from(TestRelExpr::Leaf("a"));
         let expr = TestScalarExpr::Gt {
             lhs: Box::new(TestScalarExpr::Value(100)),
-            rhs: Box::new(TestScalarExpr::SubQuery(sub_expr.into())),
+            rhs: Box::new(TestScalarExpr::SubQuery(sub_expr)),
         };
         let expr = TestOperator {
             state: MemoExprState::new(TestExpr::Scalar(expr), TestProps::Scalar(ScalarProps::default())),
         };
 
         let mut memo = new_memo();
-        let _ = insert_group(&mut memo, expr);
+        let _ = insert_group(&mut memo, expr)?;
 
         expect_memo(
             &memo,
@@ -893,33 +926,35 @@ mod test {
 00 Leaf a
 "#,
         );
+
+        Ok(())
     }
 
     #[test]
-    fn test_scalar_expr_complex_nested_exprs() {
-        let sub_expr = TestOperator::from(TestRelExpr::Filter {
-            input: TestOperator::from(TestRelExpr::Leaf("a")).into(),
+    fn test_scalar_expr_complex_nested_exprs() -> TestResult {
+        let sub_expr = RelNode::from(TestRelExpr::Filter {
+            input: RelNode::from(TestRelExpr::Leaf("a")),
             filter: TestScalarExpr::Value(111).into(),
         });
 
         let inner_filter = TestScalarExpr::Gt {
             lhs: Box::new(TestScalarExpr::Value(100)),
-            rhs: Box::new(TestScalarExpr::SubQuery(sub_expr.into())),
+            rhs: Box::new(TestScalarExpr::SubQuery(sub_expr)),
         };
 
-        let sub_expr2 = TestScalarExpr::SubQuery(TestOperator::from(TestRelExpr::Leaf("b")).into());
+        let sub_expr2 = TestScalarExpr::SubQuery(RelNode::from(TestRelExpr::Leaf("b")));
         let filter_expr = TestScalarExpr::Gt {
             lhs: Box::new(sub_expr2.clone()),
             rhs: Box::new(inner_filter.clone()),
         };
 
         let expr = TestOperator::from(TestRelExpr::Filter {
-            input: TestOperator::from(TestRelExpr::Leaf("a")).into(),
+            input: RelNode::from(TestRelExpr::Leaf("a")),
             filter: filter_expr.into(),
         });
 
         let mut memo = new_memo();
-        let (group_id, _) = insert_group(&mut memo, expr);
+        let (group_id, _) = insert_group(&mut memo, expr)?;
 
         expect_memo(
             &memo,
@@ -933,7 +968,7 @@ mod test {
 "#,
         );
 
-        let group = memo.get_group(&group_id);
+        let group = memo.get_group(&group_id)?;
         let children: Vec<_> = group.mexpr().children().collect();
         assert_eq!(
             children.len(),
@@ -951,12 +986,12 @@ mod test {
         };
 
         let expr = TestOperator::from(TestRelExpr::Filter {
-            input: TestOperator::from(TestRelExpr::Leaf("a")).into(),
+            input: RelNode::from(TestRelExpr::Leaf("a")),
             filter: filter_expr.into(),
         });
 
         let mut memo = new_memo();
-        let _ = insert_group(&mut memo, expr);
+        let _ = insert_group(&mut memo, expr)?;
 
         expect_memo(
             &memo,
@@ -969,10 +1004,12 @@ mod test {
 00 Leaf a
 "#,
         );
+
+        Ok(())
     }
 
     #[test]
-    fn test_callback() {
+    fn test_callback() -> TestResult {
         #[derive(Debug)]
         struct Callback {
             added: Rc<RefCell<Vec<String>>>,
@@ -1003,7 +1040,7 @@ mod test {
         let callback = Callback { added: added.clone() };
         let mut memo = MemoBuilder::new(()).set_callback(Rc::new(callback)).build();
 
-        insert_group(&mut memo, TestOperator::from(TestRelExpr::Leaf("A")));
+        insert_group(&mut memo, TestOperator::from(TestRelExpr::Leaf("A")))?;
 
         {
             let added = added.borrow();
@@ -1011,9 +1048,9 @@ mod test {
             assert_eq!(added.len(), 1);
         }
 
-        let leaf = TestOperator::from(TestRelExpr::Leaf("B"));
-        let expr = TestOperator::from(TestRelExpr::Node { input: leaf.into() });
-        insert_group(&mut memo, expr.clone());
+        let leaf = RelNode::from(TestRelExpr::Leaf("B"));
+        let expr = TestOperator::from(TestRelExpr::Node { input: leaf });
+        insert_group(&mut memo, expr.clone())?;
 
         {
             let added = added.borrow();
@@ -1022,29 +1059,30 @@ mod test {
             assert_eq!(added.len(), 3);
         }
 
-        insert_group(&mut memo, expr);
+        insert_group(&mut memo, expr)?;
         {
             let added = added.borrow();
             assert_eq!(added.len(), 3, "added duplicates. memo:\n{}", format_memo(&memo));
         }
+        Ok(())
     }
 
     #[test]
-    fn test_formatter() {
+    fn test_formatter() -> TestResult {
         let mut memo = new_memo();
 
         let node_a = TestOperator::from(TestRelExpr::Leaf("a"));
-        let node_a = memo.insert_group(node_a, &TestScope).unwrap();
+        let node_a = memo.insert_group(node_a, &TestScope)?;
 
         let node = TestOperator::from(TestRelExpr::Node {
-            input: TestOperator::from(TestRelExpr::Leaf("b")).into(),
+            input: RelNode::from(TestRelExpr::Leaf("b")),
         });
-        let node = memo.insert_group(node, &TestScope).unwrap();
+        let node = memo.insert_group(node, &TestScope)?;
 
         let nodes = TestOperator::from(TestRelExpr::Nodes {
-            inputs: vec![node_a.clone().into(), node.clone().into()],
+            inputs: vec![node_a.clone().into_rel_node()?, node.clone().into_rel_node()?],
         });
-        let nodes = memo.insert_group(nodes, &TestScope).unwrap();
+        let nodes = memo.insert_group(nodes, &TestScope)?;
 
         fn format_expr(expr: &TestOperator, expected: &str) {
             let mut buf = String::new();
@@ -1056,6 +1094,8 @@ mod test {
         format_expr(&node_a, "Leaf a");
         format_expr(&node, "Node 01");
         format_expr(&nodes, "Nodes [00, 02]");
+
+        Ok(())
     }
 
     #[test]

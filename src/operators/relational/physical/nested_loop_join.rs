@@ -31,15 +31,15 @@ impl NestedLoopJoin {
         visitor.visit_opt_scalar(expr_ctx, self.condition.as_ref())
     }
 
-    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(self.num_children(), "NestedLoopJoin");
+    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Result<Self, OptimizerError> {
+        inputs.expect_len(self.num_children(), "NestedLoopJoin")?;
 
-        NestedLoopJoin {
+        Ok(NestedLoopJoin {
             join_type: self.join_type.clone(),
-            left: inputs.rel_node(),
-            right: inputs.rel_node(),
-            condition: self.condition.as_ref().map(|_| inputs.scalar_node()),
-        }
+            left: inputs.rel_node()?,
+            right: inputs.rel_node()?,
+            condition: inputs.scalar_opt_node(self.condition.as_ref())?,
+        })
     }
 
     pub(super) fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {

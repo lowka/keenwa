@@ -35,7 +35,7 @@ pub struct OptimizerTester {
     row_count_per_table: HashMap<String, usize>,
     update_selectivity: Box<dyn Fn(&PrecomputedSelectivityStatistics)>,
     operator: Box<dyn Fn(OperatorBuilder) -> Result<Operator, OptimizerError>>,
-    update_catalog: Box<dyn Fn(&MutableCatalog)>,
+    update_catalog: Box<dyn Fn(&MutableCatalog) -> Result<(), OptimizerError>>,
 }
 
 impl OptimizerTester {
@@ -53,7 +53,7 @@ impl OptimizerTester {
             row_count_per_table: HashMap::new(),
             operator: Box::new(|_| panic!("operator has not been specified")),
             update_selectivity: Box::new(|_| {}),
-            update_catalog: Box::new(|_| {}),
+            update_catalog: Box::new(|_| Ok(())),
         }
     }
 
@@ -94,7 +94,7 @@ impl OptimizerTester {
     /// Sets a function that can modify a database catalog used by the optimizer.
     pub fn update_catalog<F>(&mut self, f: F)
     where
-        F: Fn(&MutableCatalog) + 'static,
+        F: Fn(&MutableCatalog) -> Result<(), OptimizerError> + 'static,
     {
         self.update_catalog = Box::new(f);
     }
@@ -139,7 +139,11 @@ impl OptimizerTester {
         let tables = TestTables::new();
         let _columns = tables.columns.clone();
 
-        tables.register(self.catalog.as_ref());
+        tables.register(self.catalog.as_ref(), &self.row_count_per_table);
+        // {
+        //     let mutable_catalog = self.catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();
+        //     tables.register_statistics(mutable_catalog, self.row_count_per_table.clone());
+        // }
 
         let selectivity_provider = Rc::new(PrecomputedSelectivityStatistics::new());
         let statistics_builder =
@@ -151,14 +155,12 @@ impl OptimizerTester {
 
         let mut memoization = MemoizeOperators::new(memo);
         let mutable_catalog = self.catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();
-        tables.register_statistics(mutable_catalog, self.row_count_per_table.clone());
 
-        (self.update_catalog)(mutable_catalog);
+        (self.update_catalog)(mutable_catalog).expect("Failed to update a catalog");
         (self.update_selectivity)(selectivity_provider.as_ref());
 
         let builder = OperatorBuilder::new(memoization.take_callback(), self.catalog.clone(), metadata);
-        let rs = (self.operator)(builder);
-        let operator = rs.unwrap();
+        let operator = (self.operator)(builder).expect("Failed to build an operator");
 
         let mut default_rules: Vec<Box<dyn Rule>> = vec![
             Box::new(GetToScanRule::new(self.catalog.clone())),
@@ -216,34 +218,18 @@ impl TestTables {
         }
     }
 
-    pub fn register(&self, catalog: &dyn Catalog) {
+    pub fn register(&self, catalog: &dyn Catalog, statistics: &HashMap<String, usize>) {
         let mutable_catalog = catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();
 
-        for table in self.columns.clone() {
-            let table_name = table.0;
-            let columns = table.1;
+        for (table_name, columns) in self.columns.iter() {
             let mut table_builder = TableBuilder::new(table_name.as_str());
             for (name, tpe) in columns {
-                table_builder = table_builder.add_column(name.as_str(), tpe);
+                table_builder = table_builder.add_column(name.as_str(), tpe.clone());
             }
-            let table = table_builder.build();
-            mutable_catalog.add_table(DEFAULT_SCHEMA, table);
-        }
-    }
-
-    fn register_statistics(&self, catalog: &dyn Catalog, statistics: HashMap<String, usize>) {
-        let mutable_catalog = catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();
-
-        for (name, cost) in statistics {
-            if name.starts_with("Index:") {
-                continue;
+            if let Some(rows) = statistics.get(table_name) {
+                table_builder = table_builder.add_row_count(*rows);
             }
-            let table = mutable_catalog
-                .get_table(name.as_str())
-                .unwrap_or_else(|| panic!("Unexpected table {}", name));
-            let table_builder = TableBuilder::from_table(table.as_ref());
-            let table = table_builder.add_row_count(cost).build();
-
+            let table = table_builder.build().expect("Test table");
             mutable_catalog.add_table(DEFAULT_SCHEMA, table);
         }
     }

@@ -342,11 +342,13 @@ mod test {
     use crate::catalog::mutable::MutableCatalog;
     use crate::catalog::TableBuilder;
     use crate::datatypes::DataType;
+    use crate::error::OptimizerError;
     use crate::meta::testing::TestMetadata;
     use crate::meta::{ColumnId, MutableMetadata};
     use crate::operators::relational::logical::{
         LogicalAggregate, LogicalEmpty, LogicalExpr, LogicalGet, LogicalUnion,
     };
+    use crate::operators::relational::RelNode;
     use crate::operators::scalar::aggregates::AggregateFunction;
     use crate::operators::scalar::{ScalarExpr, ScalarNode};
     use crate::operators::{Operator, OperatorExpr, Properties, RelationalProperties};
@@ -399,19 +401,20 @@ mod test {
     }
 
     #[test]
-    fn test_union_statistics() {
+    fn test_union_statistics() -> Result<(), OptimizerError> {
         let tester = StatisticsTester::new(vec![("A", 10), ("B", 5)]);
         let left = tester.new_operator("A", OperatorStatistics::FromTable("A"));
         let right = tester.new_operator("A", OperatorStatistics::FromTable("B"));
 
         let union = LogicalExpr::Union(LogicalUnion {
-            left: left.into(),
-            right: right.into(),
+            left: RelNode::try_from(left)?,
+            right: RelNode::try_from(right)?,
             all: false,
             columns: vec![],
         });
 
-        tester.expect_statistics(&union, Some(Statistics::from_row_count(15.0)))
+        tester.expect_statistics(&union, Some(Statistics::from_row_count(15.0)));
+        Ok(())
     }
 
     #[test]
@@ -443,7 +446,8 @@ mod test {
                     .add_column(format!("{}1", name).as_str(), DataType::Int32)
                     .add_column(format!("{}2", name).as_str(), DataType::Int32)
                     .add_row_count(row_count)
-                    .build();
+                    .build()
+                    .expect("Table must be valid");
 
                 catalog.add_table(crate::catalog::DEFAULT_SCHEMA, table);
             }

@@ -29,14 +29,14 @@ impl LogicalProjection {
         Ok(())
     }
 
-    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(self.num_children(), "LogicalProjection");
+    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Result<Self, OptimizerError> {
+        inputs.expect_len(self.num_children(), "LogicalProjection")?;
 
-        LogicalProjection {
-            input: inputs.rel_node(),
-            exprs: inputs.scalar_nodes(self.exprs.len()),
+        Ok(LogicalProjection {
+            input: inputs.rel_node()?,
+            exprs: inputs.scalar_nodes(self.exprs.len())?,
             columns: self.columns.clone(),
-        }
+        })
     }
 
     pub(super) fn num_children(&self) -> usize {

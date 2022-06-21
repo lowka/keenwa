@@ -306,24 +306,10 @@ impl MutableMetadata {
         inner.columns.to_vec()
     }
 
-    /// Returns column metadata for the given column.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if there is no metadata for the given column.
-    pub fn get_column_by_name(&self, table_name: &str, col_name: &str) -> ColumnMetadataRef {
+    /// Returns [ColumnId] of a column with name `col_name` of the table `table_name`.
+    pub fn get_column_id(&self, table_name: &str, col_name: &str) -> Option<ColumnId> {
         let inner = self.inner.borrow();
-        let r = Ref::map(inner, |inner| {
-            let column_id = inner
-                .table_columns
-                .get(&(table_name.into(), col_name.into()))
-                .unwrap_or_else(|| panic!("Column does not exists. Table: {}, column: {}", table_name, col_name));
-            inner
-                .columns
-                .get(column_id.0 - 1)
-                .unwrap_or_else(|| panic!("Unknown or unexpected column id: {}", column_id))
-        });
-        ColumnMetadataRef { inner: r }
+        inner.table_columns.get(&(table_name.into(), col_name.into())).cloned()
     }
 
     /// Returns a reference to a this metadata. A reference provides read-view into this metadata.
@@ -376,13 +362,9 @@ impl<'a> MetadataRef<'a> {
         self.metadata.get_column(column_id)
     }
 
-    /// Returns column metadata for the given column.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if there is no metadata for the given column.
-    pub fn get_column_by_name(&self, table_name: &str, column_name: &str) -> ColumnMetadataRef {
-        self.metadata.get_column_by_name(table_name, column_name)
+    /// Returns [ColumnId] of a column with name `col_name` of the table `table_name`.
+    pub fn get_column_id(&self, table_name: &str, col_name: &str) -> Option<ColumnId> {
+        self.metadata.get_column_id(table_name, col_name)
     }
 }
 

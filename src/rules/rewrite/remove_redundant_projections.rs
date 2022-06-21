@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 
+use crate::error::OptimizerError;
 use crate::operators::relational::logical::{
     LogicalAggregate, LogicalExcept, LogicalExpr, LogicalGet, LogicalIntersect, LogicalProjection, LogicalUnion,
 };
@@ -21,11 +22,12 @@ use crate::rules::rewrite::rewrite_rel_inputs;
 ///
 /// The implementation does not rely on logical properties because logical properties are not set
 /// for new expressions created by this rule.
-pub fn remove_redundant_projections(expr: &RelNode) -> Option<RelNode> {
-    Some(rewrite(expr, true))
+pub fn remove_redundant_projections(expr: &RelNode) -> Result<Option<RelNode>, OptimizerError> {
+    let expr = rewrite(expr, true)?;
+    Ok(Some(expr))
 }
 
-fn rewrite(expr: &RelNode, keep_projection: bool) -> RelNode {
+fn rewrite(expr: &RelNode, keep_projection: bool) -> Result<RelNode, OptimizerError> {
     if let LogicalExpr::Projection(projection) = expr.expr().logical() {
         // We exploit the fact that output columns of a projection ([col:1, col:2, col:2 as c3]) are [col:1, col:2, col:3]
         // Because of that we can simply compare output columns of a projection operator and its child operator
@@ -77,7 +79,7 @@ fn rewrite(expr: &RelNode, keep_projection: bool) -> RelNode {
             LogicalExpr::Get(LogicalGet { columns, .. }) => {
                 if columns == &projection.columns {
                     // Projection that only contains columns from the scan is redundant.
-                    input.clone()
+                    Ok(input.clone())
                 } else {
                     rewrite_inputs(expr)
                 }
@@ -104,8 +106,8 @@ fn rewrite(expr: &RelNode, keep_projection: bool) -> RelNode {
     }
 }
 
-fn rewrite_inputs(expr: &RelNode) -> RelNode {
-    fn rewrite_non_root(expr: &RelNode) -> RelNode {
+fn rewrite_inputs(expr: &RelNode) -> Result<RelNode, OptimizerError> {
+    fn rewrite_non_root(expr: &RelNode) -> Result<RelNode, OptimizerError> {
         rewrite(expr, false)
     }
     rewrite_rel_inputs(expr, rewrite_non_root)
@@ -287,7 +289,7 @@ LogicalProjection cols=[1, 2, 5] exprs: [col:1, col:2, col:4 AS c3]
 
                 let mut from_b = builder.sub_query_builder().get("B", vec!["b1"])?;
                 let count = from_b.aggregate_builder().add_func("count", "b1")?.build()?.build()?;
-                let count = ScalarExpr::SubQuery(RelNode::from(count));
+                let count = ScalarExpr::SubQuery(RelNode::try_from(count)?);
 
                 let project = from_a.project(vec![col("a1"), col("a2"), count.clone()])?;
                 let project = project.project(vec![col("a1"), col("a2"), count])?;

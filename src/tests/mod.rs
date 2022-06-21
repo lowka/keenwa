@@ -1,5 +1,4 @@
 use crate::catalog::{Catalog, IndexBuilder, OrderingBuilder, DEFAULT_SCHEMA};
-use crate::memo::Props;
 use crate::operators::builder::{OrderingOption, OrderingOptions};
 use crate::operators::relational::join::JoinType;
 use crate::operators::relational::RelNode;
@@ -95,7 +94,7 @@ fn test_select_with_a_nested_query() {
     tester.set_operator(|builder| {
         let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
         let sub_query = builder.new_query_builder().get("B", vec!["b2"])?.build()?;
-        let sub_query = ScalarExpr::SubQuery(RelNode::from(sub_query));
+        let sub_query = ScalarExpr::SubQuery(RelNode::try_from(sub_query)?);
         let filter = sub_query.gt(scalar(1));
         let select = from_a.select(Some(filter))?;
 
@@ -122,7 +121,7 @@ fn test_select_with_ordering_and_nested_query() {
     tester.set_operator(|builder| {
         let from_a = builder.clone().get("A", vec!["a1", "a2"])?;
         let sub_query = builder.new_query_builder().get("B", vec!["b2"])?.build()?;
-        let sub_query = ScalarExpr::SubQuery(RelNode::from(sub_query));
+        let sub_query = ScalarExpr::SubQuery(RelNode::try_from(sub_query)?);
         let filter = sub_query.gt(scalar(1));
         let select = from_a.select(Some(filter))?;
         let ordered = select.order_by(OrderingOption::by("a1", false))?;
@@ -156,14 +155,12 @@ fn test_select_with_ordering_in_nested_query() {
             .get("B", vec!["b2"])?
             .order_by(OrderingOption::by("b2", true))?
             .build()?;
-        println!(">>>>{:?}", ordered_sub_query.props().relational().physical());
-        let sub_query = ScalarExpr::SubQuery(RelNode::from(ordered_sub_query));
+
+        let sub_query = ScalarExpr::SubQuery(RelNode::try_from(ordered_sub_query)?);
 
         let filter = sub_query.gt(scalar(1));
         let select = from_a.select(Some(filter))?;
-        // let ordered = select.order_by(OrderingOption::by("a1", false))?;
 
-        // ordered.build()
         select.build()
     });
 
@@ -251,15 +248,16 @@ fn test_pass_ordering_through_ordering_preserving_operators() {
     tester.add_rules(|catalog| vec![Box::new(IndexOnlyScanRule::new(catalog))]);
     tester.update_catalog(|catalog| {
         let table = catalog.get_table("A").expect("Table does not exist");
-        let index_ordering = OrderingBuilder::new(table.clone()).add_asc("a1").add_asc("a2").build();
+        let index_ordering = OrderingBuilder::new(table.clone()).add_asc("a1").add_asc("a2").build()?;
 
         let index = IndexBuilder::new(table, "my_index")
             .add_column("a1")
             .add_column("a2")
             .ordering(index_ordering)
-            .build();
+            .build()?;
 
         catalog.add_index(DEFAULT_SCHEMA, index);
+        Ok(())
     });
 
     tester.update_statistics(|p| p.set_selectivity("col:a1 > 10", 0.1));
@@ -380,15 +378,16 @@ fn test_prefer_already_sorted_data() {
     tester.add_rules(|catalog| vec![Box::new(IndexOnlyScanRule::new(catalog))]);
     tester.update_catalog(|catalog| {
         let table = catalog.get_table("A").expect("Table does not exist");
-        let index_ordering = OrderingBuilder::new(table.clone()).add_asc("a1").add_asc("a2").build();
+        let index_ordering = OrderingBuilder::new(table.clone()).add_asc("a1").add_asc("a2").build()?;
 
         let index = IndexBuilder::new(table, "my_index")
             .add_column("a1")
             .add_column("a2")
             .ordering(index_ordering)
-            .build();
+            .build()?;
 
         catalog.add_index(DEFAULT_SCHEMA, index);
+        Ok(())
     });
 
     tester.set_table_row_count("A", 100);

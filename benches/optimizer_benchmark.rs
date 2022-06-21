@@ -39,7 +39,8 @@ fn memo_bench(c: &mut Criterion) {
                             .add_column("a1", DataType::Int32)
                             .add_column("a2", DataType::Int32)
                             .add_row_count(100)
-                            .build(),
+                            .build()
+                            .expect("Table A"),
                     );
 
                     catalog.add_table(
@@ -48,7 +49,8 @@ fn memo_bench(c: &mut Criterion) {
                             .add_column("b1", DataType::Int32)
                             .add_column("b2", DataType::Int32)
                             .add_row_count(100)
-                            .build(),
+                            .build()
+                            .expect("Table B"),
                     );
 
                     catalog.add_table(
@@ -57,7 +59,8 @@ fn memo_bench(c: &mut Criterion) {
                             .add_column("c1", DataType::Int32)
                             .add_column("c2", DataType::Int32)
                             .add_row_count(100)
-                            .build(),
+                            .build()
+                            .expect("Table C"),
                     );
 
                     let metadata = Rc::new(MutableMetadata::new());

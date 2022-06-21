@@ -1,5 +1,6 @@
 use crate::catalog::mutable::MutableCatalog;
 use crate::catalog::{TableBuilder, DEFAULT_SCHEMA};
+use crate::error::OptimizerError;
 use crate::operators::builder::OperatorBuilderConfig;
 use crate::operators::format::{AppendMemo, AppendMetadata, OperatorTreeFormatter, SubQueriesFormatter};
 use crate::operators::relational::logical::LogicalExpr;
@@ -107,10 +108,19 @@ impl TestCaseRunnerFactory for RelExprTestCaseRunnerFactory {
         catalog: &TestCatalog,
         options: &TestOptions,
     ) -> Result<Self::Runner, TestRunnerError> {
-        let builder = new_operator_builder(catalog, options);
+        let builder = new_operator_builder(catalog, options)?;
         Ok(RelExprTestCaseRunner {
             inner: InnerRunner::new(options, builder),
         })
+    }
+}
+
+impl From<OptimizerError> for TestRunnerError {
+    fn from(e: OptimizerError) -> Self {
+        TestRunnerError {
+            message: "Setup error".to_string(),
+            cause: Some(Box::new(e)),
+        }
     }
 }
 
@@ -129,7 +139,7 @@ impl TestCaseRunnerFactory for ScalarExprTestCaseRunnerFactory {
         catalog: &TestCatalog,
         options: &TestOptions,
     ) -> Result<Self::Runner, TestRunnerError> {
-        let builder = new_operator_builder(catalog, options);
+        let builder = new_operator_builder(catalog, options)?;
         Ok(ScalarExprTestCaseRunner {
             inner: InnerRunner::new(options, builder),
         })
@@ -206,7 +216,7 @@ where
 fn new_operator_builder(
     test_catalog: &TestCatalog,
     options: &TestOptions,
-) -> OperatorFromSqlBuilder<NoStatisticsBuilder> {
+) -> Result<OperatorFromSqlBuilder<NoStatisticsBuilder>, OptimizerError> {
     let catalog = Arc::new(MutableCatalog::new());
 
     for table in test_catalog.tables.iter() {
@@ -214,7 +224,7 @@ fn new_operator_builder(
         for (name, data_type) in table.columns.iter() {
             builder = builder.add_column(name, data_type.clone());
         }
-        catalog.add_table(DEFAULT_SCHEMA, builder.build());
+        catalog.add_table(DEFAULT_SCHEMA, builder.build()?);
     }
 
     let mut sql_builder = OperatorFromSqlBuilder::new(catalog, NoStatisticsBuilder);
@@ -222,5 +232,5 @@ fn new_operator_builder(
         decorrelate_subqueries: options.decorrelate_subqueries.expect("no default value for decorrelate_subqueries"),
     };
     sql_builder.operator_builder_config(operator_config);
-    sql_builder
+    Ok(sql_builder)
 }

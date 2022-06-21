@@ -21,12 +21,12 @@ impl LogicalEmpty {
         Ok(())
     }
 
-    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(self.num_children(), "LogicalEmpty");
+    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Result<Self, OptimizerError> {
+        inputs.expect_len(self.num_children(), "LogicalEmpty")?;
 
-        LogicalEmpty {
+        Ok(LogicalEmpty {
             return_one_row: self.return_one_row,
-        }
+        })
     }
 
     pub(super) fn num_children(&self) -> usize {

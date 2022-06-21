@@ -26,13 +26,13 @@ impl Values {
         Ok(())
     }
 
-    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(self.num_children(), "Values");
+    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Result<Self, OptimizerError> {
+        inputs.expect_len(self.num_children(), "Values")?;
 
-        Values {
-            values: inputs.scalar_nodes(self.values.len()),
+        Ok(Values {
+            values: inputs.scalar_nodes(self.values.len())?,
             columns: self.columns.clone(),
-        }
+        })
     }
 
     pub(super) fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {

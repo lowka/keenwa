@@ -1,10 +1,12 @@
 //! Database catalog.
 
 use std::any::Any;
+use std::collections::HashSet;
 use std::fmt::Debug;
 use std::sync::Arc;
 
 use crate::datatypes::DataType;
+use crate::error::OptimizerError;
 
 pub mod mutable;
 
@@ -156,13 +158,25 @@ impl TableBuilder {
     /// Creates an instance of a [table] with previously specified properties.
     ///
     /// [table]: crate::catalog::Table
-    pub fn build(self) -> Table {
-        // assert!(!self.columns.is_empty(), "No columns has been specified");
-        Table {
+    pub fn build(self) -> Result<Table, OptimizerError> {
+        if self.columns.is_empty() {
+            return Err(OptimizerError::argument("No columns has been specified"));
+        }
+
+        let mut names = HashSet::new();
+        for col in self.columns.iter() {
+            let col_name = col.name();
+            if !names.insert(col_name) {
+                let message = format!("Column already exists. Column: {} table: {}", col_name, self.name);
+                return Err(OptimizerError::argument(message));
+            }
+        }
+
+        Ok(Table {
             name: self.name,
             columns: self.columns,
             statistics: self.statistics,
-        }
+        })
     }
 }
 
@@ -235,37 +249,41 @@ impl IndexBuilder {
     /// Creates an instance of an [index] with previously specified properties.
     ///
     /// [index]: crate::catalog::Index
-    pub fn build(mut self) -> Index {
-        assert!(!self.columns.is_empty(), "No columns have been specified");
+    pub fn build(mut self) -> Result<Index, OptimizerError> {
+        if self.columns.is_empty() {
+            return Err(OptimizerError::argument("No columns have been specified"));
+        }
 
         if let Some(ordering) = self.ordering.as_ref() {
             for opt in ordering.options.iter() {
-                assert!(
-                    self.columns.iter().any(|c| c == &opt.column.name),
-                    "ordering option {:?} is not covered by index. Columns: {:?}",
-                    opt,
-                    self.columns
-                )
+                if !self.columns.iter().any(|c| c == &opt.column.name) {
+                    return Err(OptimizerError::argument(format!(
+                        "ordering option {:?} is not covered by index. Columns: {:?}",
+                        opt, self.columns
+                    )));
+                }
             }
         }
 
         let columns = std::mem::take(&mut self.columns);
 
-        let columns = columns
+        let columns: Result<Vec<ColumnRef>, _> = columns
             .into_iter()
-            .map(|name| {
-                self.table
-                    .get_column(name.as_str())
-                    .unwrap_or_else(|| panic!("Column does not exist. Table: {}, column: {}", &self.table.name, name))
+            .map(|name| match self.table.get_column(name.as_str()) {
+                Some(col) => Ok(col),
+                None => Err(OptimizerError::argument(format!(
+                    "Column does not exist. Table: {}, column: {}",
+                    &self.table.name, name
+                ))),
             })
             .collect();
 
-        Index {
+        Ok(Index {
             name: self.name,
             table: self.table.name.clone(),
-            columns,
+            columns: columns?,
             ordering: self.ordering,
-        }
+        })
     }
 }
 
@@ -308,19 +326,25 @@ impl OrderingBuilder {
     }
 
     /// Creates an instance of [Ordering].
-    pub fn build(self) -> Ordering {
+    pub fn build(self) -> Result<Ordering, OptimizerError> {
         let mut options = vec![];
         let table = self.table;
 
         for (name, descending) in self.columns {
-            let column = table
-                .get_column(name.as_str())
-                .unwrap_or_else(|| panic!("Column does not exist. Table: {}, column: {}", table.name, name));
-
-            options.push(OrderingOption { column, descending })
+            match table.get_column(name.as_str()) {
+                Some(column) => {
+                    options.push(OrderingOption { column, descending });
+                }
+                None => {
+                    return Err(OptimizerError::argument(format!(
+                        "Column does not exist. Table: {}, column: {}",
+                        table.name, name
+                    )))
+                }
+            }
         }
 
-        Ordering { options }
+        Ok(Ordering { options })
     }
 }
 

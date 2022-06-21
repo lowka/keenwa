@@ -587,7 +587,7 @@ LogicalProjection cols=[1] exprs: [col:1]
             columns: vec![col1, col2],
         });
         let aggr = LogicalExpr::Aggregate(LogicalAggregate {
-            input: Operator::from(OperatorExpr::from(from_a)).into(),
+            input: RelNode::from(from_a),
             aggr_exprs: vec![ScalarNode::from(ScalarExpr::Scalar(10.get_value()))],
             group_exprs: vec![ScalarNode::from(ScalarExpr::Column(col1))],
             having: None,

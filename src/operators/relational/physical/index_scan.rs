@@ -25,14 +25,14 @@ impl IndexScan {
         Ok(())
     }
 
-    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(self.num_children(), "IndexScan");
+    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Result<Self, OptimizerError> {
+        inputs.expect_len(self.num_children(), "IndexScan")?;
 
-        IndexScan {
+        Ok(IndexScan {
             source: self.source.clone(),
             columns: self.columns.clone(),
             ordering: self.ordering.clone(),
-        }
+        })
     }
 
     pub(super) fn get_required_input_properties(&self) -> Option<Vec<Option<RequiredProperties>>> {

@@ -53,30 +53,45 @@ const MINUTE_IN_HOUR: u32 = 60;
 
 impl Interval {
     /// Creates an instance of a YearMonth interval from the given values with the given sign.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if the provided values are out of their valid range and the sign is neither `1` nor `-1`.
-    pub fn from_year_month(sign: i32, years: u32, month: u32) -> Interval {
-        assert!(sign == -1 || sign == 1, "sign must be -1 or 1");
-        assert!(month < MONTHS_IN_YEAR, "months must be between 0 and 11 (inclusive): {}", month);
-
-        Interval::YearMonth(sign * years as i32, sign * month as i32)
+    pub fn try_from_year_month(sign: i32, years: u32, month: u32) -> Result<Self, OptimizerError> {
+        if !(sign == -1 || sign == 1) {
+            let message = format!("Interval: sign must be -1 or 1  but got {}", sign);
+            return Err(OptimizerError::argument(message));
+        }
+        if month > MONTHS_IN_YEAR {
+            let message = format!("Interval: months must be between 0 and 11 (inclusive): {}", month);
+            return Err(OptimizerError::argument(message));
+        }
+        Ok(Interval::YearMonth(sign * years as i32, sign * month as i32))
     }
 
     /// Creates an instance of a DaySecond interval from the given values with the given sign.
-    ///
-    /// # Panics
-    ///
-    /// This method panics if the provided values if are out of their range and the sign is neither `1` nor `-1`.
-    pub fn from_days_seconds(sign: i32, days: u32, hours: u32, minutes: u32, seconds: u32) -> Interval {
-        assert!(sign == -1 || sign == 1, "sign must be -1 or 1");
-        assert!(hours < HOURS_IN_DAY, "hours must be between  0 and 23 (inclusive): {}", hours);
-        assert!(minutes < MINUTE_IN_HOUR, "minutes must be between 0 and 59 (inclusive): {}", minutes);
-        assert!(seconds < SECONDS_IN_MINUTE, "seconds must be between 0 and 59 (inclusive): {}", seconds);
+    pub fn try_from_days_seconds(
+        sign: i32,
+        days: u32,
+        hours: u32,
+        minutes: u32,
+        seconds: u32,
+    ) -> Result<Self, OptimizerError> {
+        if !(sign == -1 || sign == 1) {
+            let message = format!("Interval: sign must be -1 or 1  but got {}", sign);
+            return Err(OptimizerError::argument(message));
+        }
+        if hours > HOURS_IN_DAY {
+            let message = format!("Interval: hours must be between  0 and 23 (inclusive): {}", hours);
+            return Err(OptimizerError::argument(message));
+        }
+        if minutes > MINUTE_IN_HOUR {
+            let message = format!("Interval: minutes must be between 0 and 59 (inclusive): {}", minutes);
+            return Err(OptimizerError::argument(message));
+        }
+        if seconds > SECONDS_IN_MINUTE {
+            let message = format!("Interval: seconds must be between 0 and 59 (inclusive): {}", seconds);
+            return Err(OptimizerError::argument(message));
+        }
 
         let time_in_seconds = hours * MINUTE_IN_HOUR * SECONDS_IN_MINUTE + minutes * SECONDS_IN_MINUTE + seconds;
-        Interval::DaySecond(sign * days as i32, sign * time_in_seconds as i32)
+        Ok(Interval::DaySecond(sign * days as i32, sign * time_in_seconds as i32))
     }
 }
 

@@ -123,17 +123,9 @@ impl From<OrderingOption> for OrderingOptions {
 /// Callback invoked when a new operator is added to an operator tree by a [operator builder](self::OperatorBuilder).
 pub trait OperatorCallback {
     /// Called when a new relational expression is added to an operator tree.
-    ///
-    /// # Panics
-    ///
-    /// This method can panic the given expression is not an instance of a relational operator.
     fn new_rel_expr(&self, expr: Operator, scope: &OperatorScope) -> Result<RelNode, OptimizerError>;
 
     /// Called when a new scalar expression is added to an operator tree.
-    ///
-    /// # Panics
-    ///
-    /// This method can panic the given expression is not an instance of a scalar operator.
     fn new_scalar_expr(&self, expr: Operator, scope: &OperatorScope) -> Result<ScalarNode, OptimizerError>;
 }
 
@@ -1331,13 +1323,11 @@ pub struct NoOpOperatorCallback;
 
 impl OperatorCallback for NoOpOperatorCallback {
     fn new_rel_expr(&self, expr: Operator, _scope: &OperatorScope) -> Result<RelNode, OptimizerError> {
-        assert!(expr.expr().is_relational(), "Not a relational expression");
-        Ok(RelNode::from(expr))
+        RelNode::try_from(expr)
     }
 
     fn new_scalar_expr(&self, expr: Operator, _scope: &OperatorScope) -> Result<ScalarNode, OptimizerError> {
-        assert!(expr.expr().is_scalar(), "Not a scalar expression");
-        Ok(ScalarNode::from_mexpr(expr))
+        ScalarNode::try_from(expr)
     }
 }
 
@@ -1415,23 +1405,21 @@ impl MemoizeOperators {
 
 impl OperatorCallback for OperatorCallbackImpl {
     fn new_rel_expr(&self, expr: Operator, scope: &OperatorScope) -> Result<RelNode, OptimizerError> {
-        assert!(expr.expr().is_relational(), "Expected a relational expression but got {:?}", expr);
         let mut memo = self.memo.borrow_mut();
         let scope = OuterScope {
             outer_columns: scope.outer_columns().to_vec(),
         };
         let expr = memo.insert_group(expr, &scope)?;
-        Ok(RelNode::from_mexpr(expr))
+        RelNode::try_from(expr)
     }
 
     fn new_scalar_expr(&self, expr: Operator, scope: &OperatorScope) -> Result<ScalarNode, OptimizerError> {
-        assert!(expr.expr().is_scalar(), "Expected a scalar expression but got {:?}", expr);
         let mut memo = self.memo.borrow_mut();
         let scope = OuterScope {
             outer_columns: scope.outer_columns().to_vec(),
         };
         let expr = memo.insert_group(expr, &scope)?;
-        Ok(ScalarNode::from_mexpr(expr))
+        ScalarNode::try_from(expr)
     }
 }
 
@@ -2014,7 +2002,8 @@ Memo:
                     .add_column("a2", DataType::Int32)
                     .add_column("a1", DataType::Int32)
                     .add_column("a22", DataType::Int32)
-                    .build(),
+                    .build()
+                    .expect("Table A2"),
             );
         });
 
@@ -2153,7 +2142,7 @@ Memo:
             let from_a = builder.get("A", vec!["a1", "a2"])?;
 
             let sub_query = from_a.new_query_builder().empty(true)?.project(vec![scalar(true)])?.build()?;
-            let sub_query = ScalarExpr::SubQuery(RelNode::from(sub_query));
+            let sub_query = ScalarExpr::SubQuery(RelNode::try_from(sub_query)?);
 
             let filter = sub_query.eq(scalar(true));
             let select = from_a.select(Some(filter))?;
@@ -2205,7 +2194,7 @@ Memo:
                 physical: PhysicalProperties::none(),
             });
             let subquery = Operator::new(state.expr().clone(), subquery_props);
-            let expr = ScalarExpr::SubQuery(RelNode::from(subquery));
+            let expr = ScalarExpr::SubQuery(RelNode::try_from(subquery)?);
 
             let filter = expr.eq(scalar(true));
 
@@ -2223,7 +2212,7 @@ Memo:
 
         tester.build_operator(|builder| {
             let from_b = builder.new_query_builder().get("B", vec!["b1", "b2"])?.build()?;
-            let subquery = ScalarExpr::SubQuery(RelNode::from(from_b));
+            let subquery = ScalarExpr::SubQuery(RelNode::try_from(from_b)?);
             let _projection = builder.empty(true)?.project(vec![subquery])?;
 
             unreachable!()
@@ -2404,7 +2393,7 @@ Memo:
             // SELECT a1, (SELECT b1 FROM B WHERE b1=a3) FROM A
             let from_a = builder.get("A", vec!["a1", "a2", "a3"])?;
             let b1 = from_a.sub_query_builder().get("B", vec!["b1"])?.select(Some(filter))?.build()?;
-            let b1 = ScalarExpr::SubQuery(RelNode::from(b1));
+            let b1 = ScalarExpr::SubQuery(RelNode::try_from(b1)?);
             let project = from_a.project(vec![col("a1"), b1])?;
 
             project.build()
@@ -2452,7 +2441,7 @@ Memo:
                 .join_on(from_c, JoinType::Inner, join_condition)?
                 .project(vec![col("b1")])?
                 .build()?;
-            let b1 = ScalarExpr::SubQuery(RelNode::from(b1));
+            let b1 = ScalarExpr::SubQuery(RelNode::try_from(b1)?);
             let project = from_a.project(vec![col("a1"), b1])?;
 
             project.build()
@@ -2945,7 +2934,7 @@ Memo:
                     .add_column("a2", DataType::Int32)
                     .add_column("a3", DataType::Int32)
                     .add_column("a4", DataType::Int32)
-                    .build(),
+                    .build()?,
             );
 
             catalog.add_table(
@@ -2954,7 +2943,7 @@ Memo:
                     .add_column("b1", DataType::Int32)
                     .add_column("b2", DataType::Int32)
                     .add_column("b3", DataType::Int32)
-                    .build(),
+                    .build()?,
             );
 
             catalog.add_table(
@@ -2963,7 +2952,7 @@ Memo:
                     .add_column("c1", DataType::Int32)
                     .add_column("c2", DataType::Int32)
                     .add_column("c3", DataType::Int32)
-                    .build(),
+                    .build()?,
             );
 
             (self.update_catalog)(catalog.as_ref());

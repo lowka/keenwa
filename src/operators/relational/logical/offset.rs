@@ -21,13 +21,13 @@ impl LogicalOffset {
         visitor.visit_rel(expr_ctx, &self.input)
     }
 
-    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(self.num_children(), "LogicalOffset");
+    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Result<Self, OptimizerError> {
+        inputs.expect_len(self.num_children(), "LogicalOffset")?;
 
-        LogicalOffset {
-            input: inputs.rel_node(),
+        Ok(LogicalOffset {
+            input: inputs.rel_node()?,
             rows: self.rows,
-        }
+        })
     }
 
     pub(super) fn num_children(&self) -> usize {

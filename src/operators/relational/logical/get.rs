@@ -21,13 +21,13 @@ impl LogicalGet {
         Ok(())
     }
 
-    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Self {
-        inputs.expect_len(self.num_children(), "LogicalGet");
+    pub(super) fn with_new_inputs(&self, inputs: &mut NewChildExprs<Operator>) -> Result<Self, OptimizerError> {
+        inputs.expect_len(self.num_children(), "LogicalGet")?;
 
-        LogicalGet {
+        Ok(LogicalGet {
             source: self.source.clone(),
             columns: self.columns.clone(),
-        }
+        })
     }
 
     pub(super) fn num_children(&self) -> usize {
