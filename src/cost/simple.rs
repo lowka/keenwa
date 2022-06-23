@@ -24,12 +24,13 @@ impl SimpleCostEstimator {
 impl CostEstimator for SimpleCostEstimator {
     fn estimate_cost(&self, expr: &PhysicalExpr, ctx: &CostEstimationContext, statistics: Option<&Statistics>) -> Cost {
         match expr {
-            PhysicalExpr::Projection(_) => 1,
+            PhysicalExpr::Projection(_) => 1.0,
             PhysicalExpr::Select(_) => {
                 let input_stats = ctx.child_statistics(0).unwrap();
                 let row_count = input_stats.row_count();
+                let selectivity = statistics.map(|s| s.selectivity()).unwrap_or(Statistics::DEFAULT_SELECTIVITY);
 
-                (row_count / 10.0) as usize
+                row_count * selectivity
             }
             PhysicalExpr::HashAggregate(HashAggregate {
                 aggr_exprs,
@@ -37,9 +38,9 @@ impl CostEstimator for SimpleCostEstimator {
                 ..
             }) => {
                 let input_stats = ctx.child_statistics(0).unwrap();
-                let row_count = input_stats.row_count() as usize;
+                let row_count = input_stats.row_count();
 
-                aggr_exprs.len() * row_count + group_exprs.len() * row_count
+                aggr_exprs.len() as f64 * row_count + group_exprs.len() as f64 * row_count
             }
             PhysicalExpr::HashJoin(_) => {
                 let left_stats = ctx.child_statistics(0).unwrap();
@@ -47,16 +48,16 @@ impl CostEstimator for SimpleCostEstimator {
 
                 let left_rows = left_stats.row_count();
                 let right_rows = right_stats.row_count();
-                let hashtable_access = (left_rows as f64 * 0.01) as usize;
+                let hashtable_access = left_rows * 0.01;
 
-                hashtable_access + (left_rows as usize) + (right_rows as usize)
+                hashtable_access + left_rows + right_rows
             }
             PhysicalExpr::MergeSortJoin(_) => {
                 let left_stats = ctx.child_statistics(0).unwrap();
                 let right_stats = ctx.child_statistics(1).unwrap();
 
-                let left_rows = left_stats.row_count() as usize;
-                let right_rows = right_stats.row_count() as usize;
+                let left_rows = left_stats.row_count();
+                let right_rows = right_stats.row_count();
 
                 left_rows + right_rows
             }
@@ -64,34 +65,31 @@ impl CostEstimator for SimpleCostEstimator {
                 let left_stats = ctx.child_statistics(0).unwrap();
                 let right_stats = ctx.child_statistics(1).unwrap();
 
-                let left_rows = left_stats.row_count() as usize;
-                let right_rows = right_stats.row_count() as usize;
+                let left_rows = left_stats.row_count();
+                let right_rows = right_stats.row_count();
 
                 left_rows * right_rows
             }
             PhysicalExpr::StreamingAggregate(StreamingAggregate { aggr_exprs, .. }) => {
                 let input_stats = ctx.child_statistics(0).unwrap();
-                let row_count = input_stats.row_count() as usize;
+                let row_count = input_stats.row_count();
 
-                aggr_exprs.len() * row_count
+                aggr_exprs.len() as f64 * row_count
             }
-            PhysicalExpr::Scan(_) => {
-                let row_count = statistics.unwrap().row_count();
-                row_count as usize
-            }
+            PhysicalExpr::Scan(_) => statistics.unwrap().row_count(),
             PhysicalExpr::IndexScan(_) => {
                 let row_count = statistics.unwrap().row_count();
-                (row_count / 2.0) as usize
+                row_count / 2.0
             }
             PhysicalExpr::Sort(_) => {
                 let input_stats = ctx.child_statistics(0).unwrap();
                 let row_count = input_stats.row_count();
 
-                (row_count.ln() * row_count) as usize
+                row_count.ln() * row_count
             }
             PhysicalExpr::Unique(Unique { inputs, .. }) => {
                 // Inputs are sorted
-                let row_count: f64 = inputs
+                let row_count = inputs
                     .iter()
                     .enumerate()
                     .map(|(i, _)| {
@@ -101,13 +99,13 @@ impl CostEstimator for SimpleCostEstimator {
                     .sum();
                 // TODO: Reduce the number of output rows by on_expr.
 
-                row_count as usize
+                row_count
             }
             PhysicalExpr::Append(_) => {
                 let left_stats = ctx.child_statistics(0).unwrap();
                 let right_stats = ctx.child_statistics(1).unwrap();
 
-                (left_stats.row_count() + right_stats.row_count()) as usize
+                left_stats.row_count() + right_stats.row_count()
             }
             PhysicalExpr::HashedSetOp(HashedSetOp { intersect, all, .. }) => {
                 let left_stats = ctx.child_statistics(0).unwrap();
@@ -137,22 +135,22 @@ impl CostEstimator for SimpleCostEstimator {
                     0.0
                 };
 
-                (rows + hashtable_cost + deduplication_cost) as usize
+                rows + hashtable_cost + deduplication_cost
             }
             PhysicalExpr::Limit(Limit { rows, .. }) => {
                 // Limit operator is executed at most `rows` times.
-                *rows
+                *rows as f64
             }
             PhysicalExpr::Offset(Offset { rows, .. }) => {
                 // The cost of an offset operator is equal to the number of rows it must skip
                 // after that it is just a passthrough operator.
-                *rows
+                *rows as f64
             }
             PhysicalExpr::Values(Values { values, .. }) => {
                 // Values returns exactly len values rows.
-                values.len()
+                values.len() as f64
             }
-            PhysicalExpr::Empty(_) => 0,
+            PhysicalExpr::Empty(_) => 0.0,
         }
     }
 }

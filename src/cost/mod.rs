@@ -6,13 +6,13 @@ use crate::statistics::Statistics;
 
 pub mod simple;
 
-//FIXME replace usize with f64
-//FIXME Wrap into struct to prevent overflows.
-pub type Cost = usize;
+/// The cost of a plan.
+//FIXME Wrap into struct to prevent overflows?
+pub type Cost = f64;
 
 /// Estimates a cost of a physical expression.
 pub trait CostEstimator {
-    /// Estimates the cost of the given physical expression.
+    /// Estimates the cost of the given physical expression excluding the cost of its inputs.
     fn estimate_cost(&self, expr: &PhysicalExpr, ctx: &CostEstimationContext, statistics: Option<&Statistics>) -> Cost;
 }
 
@@ -24,6 +24,8 @@ pub struct CostEstimationContext {
 
 impl CostEstimationContext {
     /// Returns statistics of the i-th child expression.
+    /// Because scalar expressions do not have independent statistics this method returns `None`
+    /// if the `i`-th expression is a scalar expression. See [Statistics].
     pub fn child_statistics(&self, i: usize) -> Option<&Statistics> {
         let best_expr = &self.inputs[i];
         match best_expr.props() {
