@@ -18,8 +18,8 @@ use crate::operators::relational::{RelNode, SetOperator};
 use crate::operators::scalar::expr::ExprRewriter;
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
 use crate::properties::logical::LogicalProperties;
-use crate::statistics::Statistics;
 use crate::statistics::StatisticsBuilder;
+use crate::statistics::{Selectivity, Statistics};
 
 /// A simple implementation of [StatisticsBuilder](super::StatisticsBuilder) that information available in a [database catalog].
 ///
@@ -143,7 +143,7 @@ where
         Ok(Some(Statistics::new(0f64, Statistics::DEFAULT_SELECTIVITY)))
     }
 
-    fn build_filter(&self, expr: &ScalarNode, metadata: MetadataRef) -> Result<Option<f64>, OptimizerError> {
+    fn build_filter(&self, expr: &ScalarNode, metadata: MetadataRef) -> Result<Option<Selectivity>, OptimizerError> {
         let selectivity = self.selectivity_provider.get_selectivity(expr.expr(), metadata);
 
         Ok(selectivity)
@@ -164,7 +164,6 @@ where
         let input_statistics = input.props().logical().statistics().unwrap();
         let input_rows = input_statistics.row_count();
         let rows = rows as f64;
-
         let rows = if rows > input_rows { input_rows } else { rows };
 
         Ok(Some(Statistics::from_row_count(rows as f64)))
@@ -174,7 +173,6 @@ where
         let input_statistics = input.props().logical().statistics().unwrap();
         let input_rows = input_statistics.row_count();
         let rows = rows as f64;
-
         let rows = if input_rows > rows { rows } else { rows - input_rows };
 
         Ok(Some(Statistics::from_row_count(rows)))
@@ -249,7 +247,7 @@ pub trait SelectivityProvider {
     fn as_any(&self) -> &dyn Any;
 
     /// Returns selectivity of the given predicate expression `filter` in a context of the relational expression `expr`.
-    fn get_selectivity(&self, filter: &ScalarExpr, metadata: MetadataRef) -> Option<f64>;
+    fn get_selectivity(&self, filter: &ScalarExpr, metadata: MetadataRef) -> Option<Selectivity>;
 }
 
 /// [SelectivityProvider](self::SelectivityProvider) that always returns selectivity of 1.0.
@@ -261,7 +259,7 @@ impl SelectivityProvider for DefaultSelectivityStatistics {
         self
     }
 
-    fn get_selectivity(&self, _filter: &ScalarExpr, _metadata: MetadataRef) -> Option<f64> {
+    fn get_selectivity(&self, _filter: &ScalarExpr, _metadata: MetadataRef) -> Option<Selectivity> {
         Some(Statistics::DEFAULT_SELECTIVITY)
     }
 }
@@ -293,7 +291,7 @@ impl SelectivityProvider for PrecomputedSelectivityStatistics {
         self
     }
 
-    fn get_selectivity(&self, filter: &ScalarExpr, metadata: MetadataRef) -> Option<f64> {
+    fn get_selectivity(&self, filter: &ScalarExpr, metadata: MetadataRef) -> Option<Selectivity> {
         struct ReplaceColumnIdsWithColumnNames<'a> {
             metadata: MetadataRef<'a>,
         }
@@ -330,7 +328,7 @@ where
         self.as_ref()
     }
 
-    fn get_selectivity(&self, filter: &ScalarExpr, metadata: MetadataRef) -> Option<f64> {
+    fn get_selectivity(&self, filter: &ScalarExpr, metadata: MetadataRef) -> Option<Selectivity> {
         self.as_ref().get_selectivity(filter, metadata)
     }
 }
@@ -423,8 +421,8 @@ mod test {
 
         tester.expect_statistics(
             &LogicalExpr::Empty(LogicalEmpty { return_one_row: true }),
-            Some(Statistics::new(0f64, Statistics::DEFAULT_SELECTIVITY)),
-        )
+            Some(Statistics::from_row_count(0.0)),
+        );
     }
 
     enum OperatorStatistics {

@@ -7,28 +7,31 @@ use crate::properties::logical::LogicalProperties;
 
 pub mod simple;
 
-/// The number of rows returned by an operator in case when no statistics is available.
-pub const UNKNOWN_ROW_COUNT: f64 = 1000f64;
+/// The estimated number of rows returned by an operator.
+pub type RowCount = f64;
+
+/// The portion of rows that match a predicate. The valid range of selectivity is `[0.0; 1.0]`.
+pub type Selectivity = f64;
 
 /// Statistics associated with an operator.
+///
+/// * Statistics for most relational operators should be created from [RowCount] via `From` conversion.
+///
+/// * Statistics for `Restriction`/`Select`/`Filter` operators must be created by
+/// providing both [RowCount] and [Selectivity] and the former must already include the latter.
+/// For example: If `SELECT FROM a WHERE a1 > 10` produces 100 rows and
+/// selectivity of `a1 > 10` is `0.1` then `Statistics` object is going have
+/// `row_count` of `10` (`100*0.1`) and `selectivity` of `0.1`.
+///
 #[derive(Debug, Clone)]
 pub struct Statistics {
-    row_count: f64,
-    selectivity: f64,
-}
-
-impl Default for Statistics {
-    fn default() -> Self {
-        Self {
-            row_count: UNKNOWN_ROW_COUNT,
-            selectivity: Statistics::DEFAULT_SELECTIVITY,
-        }
-    }
+    row_count: RowCount,
+    selectivity: Selectivity,
 }
 
 impl Statistics {
     /// The default value of selectivity statistics.
-    pub const DEFAULT_SELECTIVITY: f64 = 1.0;
+    pub const DEFAULT_SELECTIVITY: Selectivity = 1.0;
 
     /// Creates new statistics with the given row count and selectivity.
     ///
@@ -64,12 +67,12 @@ impl Statistics {
     }
 
     /// The estimated number of rows returned by an operator.
-    pub fn row_count(&self) -> f64 {
+    pub fn row_count(&self) -> RowCount {
         self.row_count
     }
 
     /// The selectivity of a predicate.
-    pub fn selectivity(&self) -> f64 {
+    pub fn selectivity(&self) -> Selectivity {
         self.selectivity
     }
 }

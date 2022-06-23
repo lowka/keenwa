@@ -364,7 +364,7 @@ where
         let expr = group.mexpr();
 
         if expr.children().len() == 0 {
-            let best_expr = BestExpr::new(expr.clone(), 0, vec![]);
+            let best_expr = BestExpr::new(expr.clone(), 0.0, vec![]);
             state.best_expr = Some(best_expr);
         } else {
             let task = get_optimize_scalar_inputs_task(&ctx, expr);
@@ -1121,7 +1121,7 @@ fn new_cost_estimation_ctx(
 ) -> Result<(CostEstimationContext, Cost), OptimizerError> {
     let capacity = inputs.inputs.len();
     let mut best_exprs = Vec::with_capacity(capacity);
-    let mut input_cost = 0;
+    let mut input_cost = 0.0;
 
     for ctx in inputs.inputs.iter() {
         let group_state = state.get_state(ctx)?;
