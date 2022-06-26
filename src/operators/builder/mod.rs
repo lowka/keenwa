@@ -1996,15 +1996,17 @@ Memo:
         let mut tester = OperatorBuilderTester::new();
 
         tester.update_catalog(|catalog| {
-            catalog.add_table(
-                DEFAULT_SCHEMA,
-                TableBuilder::new("A2")
-                    .add_column("a2", DataType::Int32)
-                    .add_column("a1", DataType::Int32)
-                    .add_column("a22", DataType::Int32)
-                    .build()
-                    .expect("Table A2"),
-            );
+            catalog
+                .add_table(
+                    DEFAULT_SCHEMA,
+                    TableBuilder::new("A2")
+                        .add_column("a2", DataType::Int32)
+                        .add_column("a1", DataType::Int32)
+                        .add_column("a22", DataType::Int32)
+                        .build()
+                        .expect("Table A2"),
+                )
+                .unwrap();
         });
 
         tester.build_operator(|builder| {
@@ -2927,33 +2929,39 @@ Memo:
 
         fn do_build_operator(&mut self) -> Result<Operator, OptimizerError> {
             let catalog = Arc::new(MutableCatalog::new());
-            catalog.add_table(
-                DEFAULT_SCHEMA,
-                TableBuilder::new("A")
-                    .add_column("a1", DataType::Int32)
-                    .add_column("a2", DataType::Int32)
-                    .add_column("a3", DataType::Int32)
-                    .add_column("a4", DataType::Int32)
-                    .build()?,
-            );
+            catalog
+                .add_table(
+                    DEFAULT_SCHEMA,
+                    TableBuilder::new("A")
+                        .add_column("a1", DataType::Int32)
+                        .add_column("a2", DataType::Int32)
+                        .add_column("a3", DataType::Int32)
+                        .add_column("a4", DataType::Int32)
+                        .build()?,
+                )
+                .unwrap();
 
-            catalog.add_table(
-                DEFAULT_SCHEMA,
-                TableBuilder::new("B")
-                    .add_column("b1", DataType::Int32)
-                    .add_column("b2", DataType::Int32)
-                    .add_column("b3", DataType::Int32)
-                    .build()?,
-            );
+            catalog
+                .add_table(
+                    DEFAULT_SCHEMA,
+                    TableBuilder::new("B")
+                        .add_column("b1", DataType::Int32)
+                        .add_column("b2", DataType::Int32)
+                        .add_column("b3", DataType::Int32)
+                        .build()?,
+                )
+                .unwrap();
 
-            catalog.add_table(
-                DEFAULT_SCHEMA,
-                TableBuilder::new("C")
-                    .add_column("c1", DataType::Int32)
-                    .add_column("c2", DataType::Int32)
-                    .add_column("c3", DataType::Int32)
-                    .build()?,
-            );
+            catalog
+                .add_table(
+                    DEFAULT_SCHEMA,
+                    TableBuilder::new("C")
+                        .add_column("c1", DataType::Int32)
+                        .add_column("c2", DataType::Int32)
+                        .add_column("c3", DataType::Int32)
+                        .build()?,
+                )
+                .unwrap();
 
             (self.update_catalog)(catalog.as_ref());
 

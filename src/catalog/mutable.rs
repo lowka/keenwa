@@ -6,9 +6,16 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, RwLock};
 
-use crate::catalog::{Catalog, Index, IndexRef, Schema, SchemaRef, Table, TableRef, DEFAULT_SCHEMA};
+use crate::catalog::{
+    Catalog, Index, IndexRef, Schema, SchemaRef, Table, TableRef, __ensure_type_is_sync_send, DEFAULT_SCHEMA,
+};
+use crate::error::OptimizerError;
 
 /// A [database catalog] that stores database objects in memory and provides operation to add/remove database objects.
+///
+/// # Error handling
+///
+/// Errors returned by methods of the `MutableCatalog` are recoverable.
 ///
 /// [database catalog]: crate::catalog::Catalog
 #[derive(Debug)]
@@ -17,57 +24,76 @@ pub struct MutableCatalog {
 }
 
 impl MutableCatalog {
+    /// Creates a instance of [MutableCatalog].
     pub fn new() -> Self {
         MutableCatalog {
             schemas: RwLock::new(HashMap::new()),
         }
     }
 
-    pub fn add_table(&self, schema: &str, table: Table) {
+    /// Adds the given table to the specified schema.
+    /// If such schema does not exists creates one.
+    /// If the table already exists this method returns an error.
+    pub fn add_table(&self, schema: &str, table: Table) -> Result<(), OptimizerError> {
         let mut schemas = self.schemas.write().unwrap();
         match schemas.entry(ObjectId::from(schema)) {
             Entry::Occupied(o) => {
                 let schema = o.get();
                 let schema = MutableSchema::from_ref(schema);
-                schema.add_table(table);
+                schema.add_table(table)
             }
             Entry::Vacant(v) => {
                 let schema = MutableSchema::new();
-                schema.add_table(table);
-                v.insert(Arc::new(schema));
+                let schema_ref = Arc::new(schema);
+                v.insert(schema_ref.clone());
+                let schema = schema_ref.as_ref();
+                schema.add_table(table)
             }
         }
     }
 
-    pub fn add_index(&self, schema: &str, index: Index) {
+    /// Adds the given index to the specified schema.
+    /// If such schema does not exists creates one.
+    /// If the index already exists this method returns an error.
+    pub fn add_index(&self, schema: &str, index: Index) -> Result<(), OptimizerError> {
         let mut schemas = self.schemas.write().unwrap();
         match schemas.entry(ObjectId::from(schema)) {
             Entry::Occupied(o) => {
                 let schema = o.get();
                 let schema = MutableSchema::from_ref(schema);
-                schema.add_index(index);
+                schema.add_index(index)
             }
             Entry::Vacant(v) => {
                 let schema = MutableSchema::new();
-                schema.add_index(index);
-                v.insert(Arc::new(schema));
+                let schema_ref = Arc::new(schema);
+                v.insert(schema_ref.clone());
+                let schema = schema_ref.as_ref();
+                schema.add_index(index)
             }
         }
     }
 
-    pub fn remove_table(&self, schema: &str, table: &str) {
+    /// Remove a database table with name `table` from the specified schema.
+    /// If the schema or the table do not exist this method returns an error.  
+    pub fn remove_table(&self, schema: &str, table: &str) -> Result<(), OptimizerError> {
         let mut schemas = self.schemas.write().unwrap();
         if let Some(schema) = schemas.get_mut(&ObjectId::from(schema)) {
             let schema = MutableSchema::from_ref(schema);
-            schema.remove_table(table);
+            schema.remove_table(table)
+        } else {
+            Err(OptimizerError::argument(format!("Schema does not exist. Schema: {}", schema)))
         }
     }
 
-    pub fn remove_index(&self, schema: &str, index: &str) {
+    /// Remove a database table with name `table` from the specified schema.
+    /// If the schema or the index do not exist this method returns an error.  
+    pub fn remove_index(&self, schema: &str, index: &str) -> Result<(), OptimizerError> {
         let mut schemas = self.schemas.write().unwrap();
         if let Some(schema) = schemas.get_mut(&ObjectId::from(schema)) {
             let schema = MutableSchema::from_ref(schema);
-            schema.remove_index(index);
+            schema.remove_index(index)
+        } else {
+            Err(OptimizerError::argument(format!("Schema does not exist. Schema: {}", schema)))
         }
     }
 }
@@ -109,6 +135,11 @@ impl Catalog for MutableCatalog {
     }
 }
 
+/// A [database schema](Schema) that stores object in memory and provides operation to add/remove database objects.
+///
+/// # Error handling
+///
+/// Errors returned by methods of the `MutableSchema` are recoverable.
 #[derive(Debug)]
 pub struct MutableSchema {
     inner: RwLock<Inner>,
@@ -128,34 +159,45 @@ impl MutableSchema {
             .unwrap_or_else(|| panic!("Unable to downcast to MutableSchema: {:?}", schema))
     }
 
-    pub fn add_table(&self, table: Table) {
+    /// Adds the given table to this schema. if a table with the same name already exists this method
+    /// return an error.
+    pub fn add_table(&self, table: Table) -> Result<(), OptimizerError> {
         let mut inner = self.inner.write().unwrap();
-        let table_name = ObjectId::from(table.name.clone());
-        inner.tables.insert(table_name, Arc::new(table));
+        let table_id = ObjectId::from(table.name.clone());
+        match inner.tables.entry(table_id) {
+            Entry::Occupied(_) => {
+                Err(OptimizerError::argument(format!("Add table: Table already exists. Table: {}", table.name())))
+            }
+            Entry::Vacant(v) => {
+                v.insert(Arc::new(table));
+                Ok(())
+            }
+        }
     }
 
-    pub fn add_index(&self, index: Index) {
+    /// Adds the given index to this schema. if an index with the same name already exists this method
+    /// returns an error.
+    pub fn add_index(&self, index: Index) -> Result<(), OptimizerError> {
         let mut inner = self.inner.write().unwrap();
-        let table_name = ObjectId::from(index.table.clone());
-        let _ = inner.tables.get(&table_name).unwrap_or_else(|| {
-            panic!("Unable to add index {:?} - table {:?} does not exist", index.name(), index.table())
-        });
 
-        let index_name = ObjectId::from(index.name.clone());
-        let existing = match inner.indexes.entry(index_name) {
-            Entry::Occupied(mut o) => {
-                let index = Arc::new(index);
-                let existing = o.get();
-                let name = existing.name().to_string();
-                let table = existing.table().to_string();
+        let table_id = ObjectId::from(index.table.clone());
+        if inner.tables.get(&table_id).is_none() {
+            let message = format!("Add index: table does not exist. Index: {}, table: {}", index.name(), index.table());
+            return Err(OptimizerError::argument(message));
+        }
 
-                o.insert(index);
-                Some((name, ObjectId::from(table)))
+        let index_id = ObjectId::from(index.name().to_string());
+        match inner.indexes.entry(index_id) {
+            Entry::Occupied(_) => {
+                return Err(OptimizerError::argument(format!(
+                    "Add index: Index already exists. Index: {}",
+                    index.name()
+                )))
             }
             Entry::Vacant(v) => {
                 let index = Arc::new(index);
                 v.insert(index.clone());
-                match inner.table_indexes.entry(table_name) {
+                match inner.table_indexes.entry(table_id) {
                     Entry::Occupied(mut o) => {
                         o.get_mut().push(index);
                     }
@@ -163,31 +205,42 @@ impl MutableSchema {
                         v.insert(vec![index]);
                     }
                 };
-                None
             }
         };
-        if let Some((name, table)) = existing {
-            let table_indexes = inner.table_indexes.get_mut(&table).unwrap();
-            table_indexes.retain(|i| !i.name().eq_ignore_ascii_case(&name));
-        }
+
+        Ok(())
     }
 
-    pub fn remove_table(&self, name: &str) {
+    /// Remove a table with the give name. If the table does not exist this method returns an error.
+    pub fn remove_table(&self, name: &str) -> Result<(), OptimizerError> {
         let mut inner = self.inner.write().unwrap();
         let table_name = ObjectId::from(name);
 
-        inner.tables.remove(&table_name);
-        inner.table_indexes.remove(&table_name);
+        if inner.tables.remove(&table_name).is_some() {
+            inner.table_indexes.remove(&table_name);
+            Ok(())
+        } else {
+            Err(OptimizerError::argument(format!("Remove table: Table does not exist. Table: {}", name)))
+        }
     }
 
-    pub fn remove_index(&self, index: &str) {
+    /// Removes an index with the given name. if either index or table it belongs to does not exist
+    /// this method returns an error.
+    pub fn remove_index(&self, index: &str) -> Result<(), OptimizerError> {
         let mut inner = self.inner.write().unwrap();
         let index_name = ObjectId::from(index);
 
         if let Some(index) = inner.indexes.remove(&index_name) {
             let table_name = ObjectId::from(index.table.as_str());
-            let table_index = inner.table_indexes.get_mut(&table_name).unwrap();
-            table_index.retain(|i| i.name() != index.name());
+            match inner.table_indexes.get_mut(&table_name) {
+                Some(table_indexes) => {
+                    table_indexes.retain(|i| i.name() != index.name());
+                    Ok(())
+                }
+                None => Err(OptimizerError::argument("Remove index: Table does not exist")),
+            }
+        } else {
+            Err(OptimizerError::argument("Remove index: Index does not exist"))
         }
     }
 }
@@ -272,15 +325,9 @@ impl Hash for CaseInsensitiveString {
 }
 
 #[allow(dead_code)]
-fn catalog_is_sync_and_send() {
-    fn ensure_sync_send<T>()
-    where
-        T: Sync + Send,
-    {
-    }
-
-    ensure_sync_send::<MutableCatalog>();
-    ensure_sync_send::<MutableSchema>();
+fn __type_system_guarantees() {
+    __ensure_type_is_sync_send::<MutableCatalog>();
+    __ensure_type_is_sync_send::<MutableSchema>();
 }
 
 #[cfg(test)]
@@ -295,7 +342,7 @@ mod test {
         let catalog = MutableCatalog::new();
         let table = TableBuilder::new("A").add_column("a1", DataType::Int32).build()?;
 
-        catalog.add_table("s", table);
+        catalog.add_table("s", table)?;
 
         let schema = catalog.get_schema_by_name("s").unwrap();
         let _ = schema
@@ -303,7 +350,7 @@ mod test {
             .unwrap_or_else(|| panic!("table A is missing from the schema s"));
 
         let schema: &MutableSchema = schema.as_any().downcast_ref::<MutableSchema>().unwrap();
-        schema.remove_table("A");
+        schema.remove_table("A")?;
         assert_eq!(schema.get_tables().len(), 0, "table has not been removed");
         Ok(())
     }
@@ -314,8 +361,8 @@ mod test {
         let table1 = TableBuilder::new("A").add_column("a1", DataType::Int32).build()?;
         let table2 = TableBuilder::new("B").add_column("b1", DataType::Int32).build()?;
 
-        catalog.add_table("s", table1);
-        catalog.add_table("s", table2);
+        catalog.add_table("s", table1)?;
+        catalog.add_table("s", table2)?;
 
         let table1 = catalog.get_schema_by_name("s").unwrap().get_table_by_name("A").unwrap();
         let table2 = catalog.get_schema_by_name("s").unwrap().get_table_by_name("B").unwrap();
@@ -323,8 +370,8 @@ mod test {
         let index1 = IndexBuilder::new(table1, "A_idx").add_column("a1").build()?;
         let index2 = IndexBuilder::new(table2, "B_idx").add_column("b1").build()?;
 
-        catalog.add_index("s", index1);
-        catalog.add_index("s", index2);
+        catalog.add_index("s", index1)?;
+        catalog.add_index("s", index2)?;
 
         let schema = catalog.get_schema_by_name("s").unwrap();
         let _ = schema
@@ -332,12 +379,12 @@ mod test {
             .unwrap_or_else(|| panic!("index A_idx is missing from the schema s"));
 
         let schema: &MutableSchema = schema.as_any().downcast_ref::<MutableSchema>().unwrap();
-        schema.remove_index("A_idx");
+        schema.remove_index("A_idx")?;
 
         assert_eq!(schema.get_indexes("A").len(), 0, "index has not been removed");
         assert_eq!(schema.get_indexes("B").len(), 1, "indexes from another table have been removed as well");
 
-        schema.remove_table("B");
+        schema.remove_table("B")?;
         assert_eq!(schema.get_indexes("B").len(), 0, "Table B has been removed but indexes are still available");
 
         Ok(())

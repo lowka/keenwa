@@ -224,7 +224,7 @@ fn new_operator_builder(
         for (name, data_type) in table.columns.iter() {
             builder = builder.add_column(name, data_type.clone());
         }
-        catalog.add_table(DEFAULT_SCHEMA, builder.build()?);
+        catalog.add_table(DEFAULT_SCHEMA, builder.build()?).expect("Failed to add a table");
     }
 
     let mut sql_builder = OperatorFromSqlBuilder::new(catalog, NoStatisticsBuilder);

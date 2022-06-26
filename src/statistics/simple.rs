@@ -447,7 +447,7 @@ mod test {
                     .build()
                     .expect("Table must be valid");
 
-                catalog.add_table(crate::catalog::DEFAULT_SCHEMA, table);
+                catalog.add_table(crate::catalog::DEFAULT_SCHEMA, table).expect("Failed to add a table");
             }
             let selectivity_provider = DefaultSelectivityStatistics;
 

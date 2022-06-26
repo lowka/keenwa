@@ -27,7 +27,6 @@ static INIT_LOG: Once = Once::new();
 ///
 /// [optimizer]: crate::optimizer::Optimizer
 pub struct OptimizerTester {
-    catalog: CatalogRef,
     rules: Box<dyn Fn(CatalogRef) -> Vec<Box<dyn Rule>>>,
     rules_filter: Box<dyn Fn(&Box<dyn Rule>) -> bool>,
     shuffle_rules: bool,
@@ -42,10 +41,7 @@ impl OptimizerTester {
     pub fn new() -> Self {
         INIT_LOG.call_once(pretty_env_logger::init);
 
-        let catalog = Arc::new(MutableCatalog::new());
-
         OptimizerTester {
-            catalog,
             rules: Box::new(|_| Vec::new()),
             rules_filter: Box::new(|_r| true),
             shuffle_rules: true,
@@ -136,41 +132,41 @@ impl OptimizerTester {
     ///     expr 2
     ///```
     pub fn optimize(&mut self, expected_plan: &str) {
+        let catalog = Arc::new(MutableCatalog::new());
         let tables = TestTables::new();
         let _columns = tables.columns.clone();
 
-        tables.register(self.catalog.as_ref(), &self.row_count_per_table);
+        tables.register(catalog.as_ref(), &self.row_count_per_table);
         // {
         //     let mutable_catalog = self.catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();
         //     tables.register_statistics(mutable_catalog, self.row_count_per_table.clone());
         // }
 
         let selectivity_provider = Rc::new(PrecomputedSelectivityStatistics::new());
-        let statistics_builder =
-            SimpleCatalogStatisticsBuilder::new(self.catalog.clone(), selectivity_provider.clone());
+        let statistics_builder = SimpleCatalogStatisticsBuilder::new(catalog.clone(), selectivity_provider.clone());
         let properties_builder = LogicalPropertiesBuilder::new(statistics_builder);
 
         let metadata = Rc::new(MutableMetadata::new());
         let memo = OperatorMemoBuilder::new(metadata.clone()).build_with_properties(properties_builder);
 
         let mut memoization = MemoizeOperators::new(memo);
-        let mutable_catalog = self.catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();
+        let mutable_catalog = catalog.as_any().downcast_ref::<MutableCatalog>().unwrap();
 
         (self.update_catalog)(mutable_catalog).expect("Failed to update a catalog");
         (self.update_selectivity)(selectivity_provider.as_ref());
 
-        let builder = OperatorBuilder::new(memoization.take_callback(), self.catalog.clone(), metadata);
+        let builder = OperatorBuilder::new(memoization.take_callback(), catalog.clone(), metadata);
         let operator = (self.operator)(builder).expect("Failed to build an operator");
 
         let mut default_rules: Vec<Box<dyn Rule>> = vec![
-            Box::new(GetToScanRule::new(self.catalog.clone())),
+            Box::new(GetToScanRule::new(catalog.clone())),
             Box::new(SelectRule),
             Box::new(ProjectionRule),
             Box::new(LimitOffsetRule),
             Box::new(ValuesRule),
             Box::new(EmptyRule),
         ];
-        default_rules.extend((self.rules)(self.catalog.clone()));
+        default_rules.extend((self.rules)(catalog.clone()));
 
         let rules = default_rules.into_iter().filter(|r| (self.rules_filter)(r));
         let rule_set = StaticRuleSetBuilder::new()
@@ -230,7 +226,7 @@ impl TestTables {
                 table_builder = table_builder.add_row_count(*rows);
             }
             let table = table_builder.build().expect("Test table");
-            mutable_catalog.add_table(DEFAULT_SCHEMA, table);
+            mutable_catalog.add_table(DEFAULT_SCHEMA, table).expect("Failed to add a table");
         }
     }
 }
