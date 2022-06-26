@@ -2,7 +2,7 @@
 
 use std::any::Any;
 use std::collections::HashSet;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 
 use crate::datatypes::DataType;
@@ -159,15 +159,12 @@ impl TableBuilder {
     ///
     /// [table]: crate::catalog::Table
     pub fn build(self) -> Result<Table, OptimizerError> {
-        if self.columns.is_empty() {
-            return Err(OptimizerError::argument("No columns has been specified"));
-        }
-
         let mut names = HashSet::new();
+
         for col in self.columns.iter() {
             let col_name = col.name();
             if !names.insert(col_name) {
-                let message = format!("Column already exists. Column: {} table: {}", col_name, self.name);
+                let message = format!("Table: column already exists. Column: {} table: {}", col_name, self.name);
                 return Err(OptimizerError::argument(message));
             }
         }
@@ -251,37 +248,45 @@ impl IndexBuilder {
     /// [index]: crate::catalog::Index
     pub fn build(mut self) -> Result<Index, OptimizerError> {
         if self.columns.is_empty() {
-            return Err(OptimizerError::argument("No columns have been specified"));
+            return Err(OptimizerError::argument("Index: no columns have been specified"));
         }
 
         if let Some(ordering) = self.ordering.as_ref() {
             for opt in ordering.options.iter() {
                 if !self.columns.iter().any(|c| c == &opt.column.name) {
                     return Err(OptimizerError::argument(format!(
-                        "ordering option {:?} is not covered by index. Columns: {:?}",
-                        opt, self.columns
+                        "Index: ordering option is not covered by index. Columns: {:?}. Ordering: {} {direction}",
+                        self.columns,
+                        opt.column.name(),
+                        direction = if opt.descending { "DESC" } else { "ASC" },
                     )));
                 }
             }
         }
 
-        let columns = std::mem::take(&mut self.columns);
+        let mut columns = Vec::with_capacity(self.columns.len());
 
-        let columns: Result<Vec<ColumnRef>, _> = columns
-            .into_iter()
-            .map(|name| match self.table.get_column(name.as_str()) {
-                Some(col) => Ok(col),
-                None => Err(OptimizerError::argument(format!(
-                    "Column does not exist. Table: {}, column: {}",
-                    &self.table.name, name
-                ))),
-            })
-            .collect();
+        for col_name in std::mem::take(&mut self.columns) {
+            let col = match self.table.get_column(col_name.as_str()) {
+                Some(col) if columns.contains(&col) => {
+                    let message = format!("Index: column has been specified more than once. Column: {}", col_name);
+                    return Err(OptimizerError::argument(message));
+                }
+                Some(col) => col,
+                None => {
+                    let message =
+                        format!("Index: column does not exist. Table: {}, column: {}", &self.table.name, col_name);
+                    return Err(OptimizerError::argument(message));
+                }
+            };
+
+            columns.push(col);
+        }
 
         Ok(Index {
             name: self.name,
             table: self.table.name.clone(),
-            columns: columns?,
+            columns,
             ordering: self.ordering,
         })
     }
@@ -326,18 +331,31 @@ impl OrderingBuilder {
     }
 
     /// Creates an instance of [Ordering].
+    ///
+    /// * If the table does not contain a column specified in the ordering the method returns an error.
+    /// * If some column has been specified more than once only the first ordering of that column
+    /// is added to the resulting ordering (this behaviour is consistent with sorting produced by
+    /// `ORDER BY` clause in `SQL`).
     pub fn build(self) -> Result<Ordering, OptimizerError> {
+        if self.columns.is_empty() {
+            return Err(OptimizerError::argument("Ordering: no columns have been specified"));
+        }
+
         let mut options = vec![];
+        let mut columns = HashSet::new();
         let table = self.table;
 
         for (name, descending) in self.columns {
+            if !columns.insert(name.clone()) {
+                continue;
+            }
             match table.get_column(name.as_str()) {
                 Some(column) => {
                     options.push(OrderingOption { column, descending });
                 }
                 None => {
                     return Err(OptimizerError::argument(format!(
-                        "Column does not exist. Table: {}, column: {}",
+                        "Ordering: column does not exist. Table: {}, column: {}",
                         table.name, name
                     )))
                 }
@@ -390,7 +408,7 @@ pub struct Column {
 }
 
 impl Column {
-    pub(crate) fn new(column_name: String, table_name: Option<String>, data_type: DataType) -> Self {
+    fn new(column_name: String, table_name: Option<String>, data_type: DataType) -> Self {
         Column {
             name: column_name,
             table: table_name,
@@ -405,8 +423,8 @@ impl Column {
 
     /// The name of the table this column belongs to.
     /// If table is not specified then this column is derived from some expression.
-    pub fn table(&self) -> Option<&String> {
-        self.table.as_ref()
+    pub fn table(&self) -> Option<&str> {
+        self.table.as_deref()
     }
 
     /// The data type of this column.
@@ -434,3 +452,254 @@ where
 }
 
 //
+
+#[cfg(test)]
+mod test {
+    use crate::catalog::{IndexBuilder, Ordering, OrderingBuilder, TableBuilder};
+    use crate::datatypes::DataType;
+    use crate::error::OptimizerError;
+    use std::fmt::Debug;
+    use std::sync::Arc;
+
+    // table
+
+    #[test]
+    fn test_table() -> Result<(), OptimizerError> {
+        let table = TableBuilder::new("A")
+            .add_column("a1", DataType::Int32)
+            .add_column("a2", DataType::String)
+            .build();
+
+        match table {
+            Ok(table) => {
+                assert_eq!(table.name(), "A", "name");
+                assert_eq!(table.columns().len(), 2, "num columns");
+
+                assert_eq!(table.columns()[0].name(), "a1", "column a1 name");
+                assert_eq!(table.columns()[0].table(), Some("A"), "column a1 table");
+                assert_eq!(table.columns()[0].data_type(), &DataType::Int32, "column a1 data type");
+
+                assert_eq!(table.columns()[1].name(), "a2", "column a2 name");
+                assert_eq!(table.columns()[1].table(), Some("A"), "column a2 table");
+                assert_eq!(table.columns()[1].data_type(), &DataType::String, "column a2 data type");
+
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    #[test]
+    fn test_table_get_column() -> Result<(), OptimizerError> {
+        let table = TableBuilder::new("A")
+            .add_column("a1", DataType::Int32)
+            .add_column("a2", DataType::String)
+            .add_column("a3", DataType::Bool)
+            .build()?;
+
+        assert_eq!(table.get_column("a1"), Some(table.columns[0].clone()));
+        assert_eq!(table.get_column("a2"), Some(table.columns[1].clone()));
+        assert_eq!(table.get_column("a3"), Some(table.columns[2].clone()));
+        assert_eq!(table.get_column("a4"), None, "not existing column");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_table_adding_multiple_columns_with_the_same_name_is_not_allowed() {
+        let res = TableBuilder::new("A")
+            .add_column("a1", DataType::Int32)
+            .add_column("a2", DataType::String)
+            .add_column("a1", DataType::Bool)
+            .build();
+
+        expect_error(res, "Table: column already exists")
+    }
+
+    #[test]
+    fn test_table_allow_tables_without_columns() -> Result<(), OptimizerError> {
+        let _ = TableBuilder::new("A").build()?;
+        Ok(())
+    }
+
+    // index
+
+    #[test]
+    fn test_index() -> Result<(), OptimizerError> {
+        let table = TableBuilder::new("A")
+            .add_column("a1", DataType::Int32)
+            .add_column("a2", DataType::String)
+            .build()?;
+        let index = IndexBuilder::new(Arc::new(table.clone()), "A_a1_index").add_column("a1").build()?;
+
+        assert_eq!(index.name(), "A_a1_index", "index name");
+        assert_eq!(index.table(), "A", "table name");
+        assert_eq!(index.columns().len(), 1, "columns num");
+
+        assert_eq!(index.columns()[0], table.columns[0]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_index_reject_index_that_uses_column_multiple_times() -> Result<(), OptimizerError> {
+        let table = TableBuilder::new("A")
+            .add_column("a1", DataType::Int32)
+            .add_column("a2", DataType::String)
+            .build()?;
+
+        let res = IndexBuilder::new(Arc::new(table.clone()), "A_a1_index")
+            .add_column("a1")
+            .add_column("a1")
+            .build();
+
+        expect_error(res, "Index: column has been specified more than once");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_index_reject_index_that_uses_unknown_column() -> Result<(), OptimizerError> {
+        let table = TableBuilder::new("A")
+            .add_column("a1", DataType::Int32)
+            .add_column("a2", DataType::String)
+            .build()?;
+
+        let res = IndexBuilder::new(Arc::new(table.clone()), "A_a1_index")
+            .add_column("a1")
+            .add_column("a4")
+            .build();
+
+        expect_error(res, "Index: column does not exist");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_index_reject_index_without_columns() -> Result<(), OptimizerError> {
+        let table = TableBuilder::new("A")
+            .add_column("a1", DataType::Int32)
+            .add_column("a2", DataType::String)
+            .add_column("a3", DataType::Bool)
+            .build()?;
+
+        let table = Arc::new(table);
+        let ordering = OrderingBuilder::new(table.clone()).add_asc("a1").add_desc("a3").build()?;
+        let res = IndexBuilder::new(table, "A_a1_a2_idx").build();
+
+        expect_error(res, "Index: no columns have been specified");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_index_reject_index_with_ordering_that_contains_unknown_fields() -> Result<(), OptimizerError> {
+        let table = TableBuilder::new("A")
+            .add_column("a1", DataType::Int32)
+            .add_column("a2", DataType::String)
+            .add_column("a3", DataType::Bool)
+            .build()?;
+
+        let table = Arc::new(table);
+        let ordering = OrderingBuilder::new(table.clone()).add_asc("a1").add_desc("a3").build()?;
+
+        let res = IndexBuilder::new(table, "A_a1_a2_idx")
+            .add_column("a1")
+            .add_column("a2")
+            .ordering(ordering)
+            .build();
+
+        expect_error(res, "Index: ordering option is not covered by index");
+
+        Ok(())
+    }
+
+    // ordering
+
+    #[test]
+    fn test_ordering() -> Result<(), OptimizerError> {
+        let table = TableBuilder::new("A")
+            .add_column("a1", DataType::Int32)
+            .add_column("a2", DataType::Int32)
+            .build()?;
+
+        let table = Arc::new(table);
+        {
+            let ordering = OrderingBuilder::new(table.clone()).add("a1", true).add("a2", false).build()?;
+
+            expect_col_ordering(&ordering, "a1", 0, true);
+            expect_col_ordering(&ordering, "a2", 1, false);
+        }
+
+        {
+            let ordering = OrderingBuilder::new(table.clone()).add_desc("a1").add_asc("a2").build()?;
+
+            expect_col_ordering(&ordering, "a1", 0, true);
+            expect_col_ordering(&ordering, "a2", 1, false);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_ordering_reject_ordering_containing_unknown_errors() -> Result<(), OptimizerError> {
+        let table = TableBuilder::new("A")
+            .add_column("a1", DataType::Int32)
+            .add_column("a2", DataType::Int32)
+            .build()?;
+        let table = Arc::new(table);
+
+        let res = OrderingBuilder::new(table.clone()).add("a1", true).add("a3", false).build();
+        expect_error(res, "Ordering: column does not exist");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_ordering_ignore_subsequent_ordering_of_the_same_column() -> Result<(), OptimizerError> {
+        let table = TableBuilder::new("A")
+            .add_column("a1", DataType::Int32)
+            .add_column("a2", DataType::Int32)
+            .build()?;
+        let table = Arc::new(table);
+
+        let ordering = OrderingBuilder::new(table).add_asc("a1").add_desc("a2").add_desc("a1").build()?;
+
+        assert_eq!(ordering.options().len(), 2, "Expected 2 columns");
+
+        expect_col_ordering(&ordering, "a1", 0, false);
+        expect_col_ordering(&ordering, "a2", 1, true);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_ordering_reject_ordering_without_columns() -> Result<(), OptimizerError> {
+        let table = TableBuilder::new("A").build()?;
+        let err = OrderingBuilder::new(Arc::new(table)).build().err();
+
+        assert!(matches!(err, Some(OptimizerError::Argument(_))), "error");
+
+        Ok(())
+    }
+
+    fn expect_col_ordering(ordering: &Ordering, col: &str, pos: usize, desc: bool) {
+        let options = ordering.options();
+        let actual_pos = options.iter().position(|ord| ord.column.name() == col).unwrap();
+        assert_eq!(actual_pos, pos, "Position does not match. Column: {}", col);
+        assert_eq!(options[pos].descending(), desc, "Direction does not match. Column: {}", col)
+    }
+
+    fn expect_error<T>(result: Result<T, OptimizerError>, message: &str)
+    where
+        T: Debug,
+    {
+        match result {
+            Ok(r) => assert!(false, "Unexpected result: {:?}", r),
+            Err(OptimizerError::Argument(err)) => {
+                assert!(err.message().contains(message), "Unexpected error: {}. Expected: {}", err.message(), message);
+            }
+            Err(err) => assert!(false, "Unexpected error: {}. Expected: {}", err, message),
+        }
+    }
+}
