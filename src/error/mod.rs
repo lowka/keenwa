@@ -92,6 +92,11 @@ impl ArgumentError {
             backtrace: Backtrace::new(),
         }
     }
+
+    /// The message that describes this error.
+    pub fn message(&self) -> &str {
+        &self.message
+    }
 }
 
 impl Display for ArgumentError {
