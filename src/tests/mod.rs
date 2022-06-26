@@ -256,7 +256,7 @@ fn test_pass_ordering_through_ordering_preserving_operators() {
             .ordering(index_ordering)
             .build()?;
 
-        catalog.add_index(DEFAULT_SCHEMA, index);
+        catalog.add_index(DEFAULT_SCHEMA, index)?;
         Ok(())
     });
 
@@ -386,7 +386,7 @@ fn test_prefer_already_sorted_data() {
             .ordering(index_ordering)
             .build()?;
 
-        catalog.add_index(DEFAULT_SCHEMA, index);
+        catalog.add_index(DEFAULT_SCHEMA, index).unwrap();
         Ok(())
     });
 

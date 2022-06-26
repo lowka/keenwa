@@ -121,12 +121,12 @@ mod test {
             .add_column("a2", DataType::Int32)
             .add_column("a3", DataType::Int32)
             .build()?;
-        catalog.add_table(DEFAULT_SCHEMA, table);
+        catalog.add_table(DEFAULT_SCHEMA, table)?;
 
         let table = catalog.get_table("a").unwrap();
 
         let index = IndexBuilder::new(table, "a_a1_a3_idx").add_column("a1").add_column("a3").build()?;
-        catalog.add_index(DEFAULT_SCHEMA, index);
+        catalog.add_index(DEFAULT_SCHEMA, index)?;
 
         let mut metadata = TestMetadata::with_tables(vec!["a"]);
         let col1 = metadata.column("a").named("a1").data_type(DataType::Int32).build();

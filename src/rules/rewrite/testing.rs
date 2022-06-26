@@ -25,28 +25,32 @@ where
     let memo = OperatorMemoBuilder::new(metadata.clone()).build_with_statistics(statistics_builder);
     let mut memoization = MemoizeOperators::new(memo);
 
-    catalog.add_table(
-        DEFAULT_SCHEMA,
-        TableBuilder::new("A")
-            .add_column("a1", DataType::Int32)
-            .add_column("a2", DataType::Int32)
-            .add_column("a3", DataType::Int32)
-            .add_column("a4", DataType::Int32)
-            .add_row_count(100)
-            .build()
-            .expect("A table"),
-    );
-    catalog.add_table(
-        DEFAULT_SCHEMA,
-        TableBuilder::new("B")
-            .add_column("b1", DataType::Int32)
-            .add_column("b2", DataType::Int32)
-            .add_column("b3", DataType::Int32)
-            .add_column("b4", DataType::Int32)
-            .add_row_count(50)
-            .build()
-            .expect("B table"),
-    );
+    catalog
+        .add_table(
+            DEFAULT_SCHEMA,
+            TableBuilder::new("A")
+                .add_column("a1", DataType::Int32)
+                .add_column("a2", DataType::Int32)
+                .add_column("a3", DataType::Int32)
+                .add_column("a4", DataType::Int32)
+                .add_row_count(100)
+                .build()
+                .expect("A table"),
+        )
+        .expect("A table");
+    catalog
+        .add_table(
+            DEFAULT_SCHEMA,
+            TableBuilder::new("B")
+                .add_column("b1", DataType::Int32)
+                .add_column("b2", DataType::Int32)
+                .add_column("b3", DataType::Int32)
+                .add_column("b4", DataType::Int32)
+                .add_row_count(50)
+                .build()
+                .expect("B table"),
+        )
+        .expect("B table");
 
     let builder = OperatorBuilder::new(memoization.take_callback(), catalog, metadata);
 

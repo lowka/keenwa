@@ -414,3 +414,23 @@ impl Column {
         &self.data_type
     }
 }
+
+//
+
+#[allow(dead_code)]
+fn __type_system_guarantees() {
+    __ensure_type_is_sync_send::<dyn Catalog>();
+    __ensure_type_is_sync_send::<dyn Schema>();
+
+    fn catalog_trait_is_object_safe(_arc: Arc<dyn Catalog>) {}
+    fn schema_trait_is_object_safe(_arc: Arc<dyn Schema>) {}
+}
+
+#[allow(dead_code)]
+fn __ensure_type_is_sync_send<T>()
+where
+    T: Sync + Send + ?Sized,
+{
+}
+
+//
