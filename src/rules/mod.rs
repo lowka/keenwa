@@ -14,6 +14,7 @@ use crate::rules::enforcers::BuiltinPhysicalPropertiesProvider;
 
 mod enforcers;
 pub mod implementation;
+pub mod pattern;
 mod rewrite;
 #[cfg(test)]
 pub mod testing;
