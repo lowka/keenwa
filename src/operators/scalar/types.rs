@@ -201,44 +201,114 @@ fn resolve_binary_expr_type<T>(
 where
     T: NestedExpr,
 {
-    match op {
-        BinaryOp::And | BinaryOp::Or => {
-            expect_type_or_null(&lhs, &DataType::Bool, expr)?;
-            expect_type_or_null(&rhs, &DataType::Bool, expr)?;
-            Ok(DataType::Bool)
-        }
-        BinaryOp::Eq | BinaryOp::NotEq => {
-            if lhs != rhs && lhs != DataType::Null && rhs != DataType::Null {
-                let message = format!("Expr: {} Types does not match. lhs: {}. rhs: {}", expr, lhs, rhs);
-                Err(type_error(message))
-            } else {
-                Ok(DataType::Bool)
+    use BinaryOp::*;
+    use DataType::*;
+
+    fn support_comparison_ops(lhs: &DataType, rhs: &DataType) -> bool {
+        fn is_comparable_type(tpe: &DataType) -> bool {
+            match tpe {
+                Null => true,
+                Bool => false,
+                Int32 => true,
+                String => false,
+                Date => true,
+                Time => true,
+                Timestamp(_) => true,
+                Interval => true,
+                Tuple(_) => false,
+                Array(_) => false,
             }
         }
-        // Comparison
-        BinaryOp::Lt | BinaryOp::LtEq | BinaryOp::Gt | BinaryOp::GtEq => {
-            expect_type_or_null(&lhs, &DataType::Int32, expr)?;
-            expect_type_or_null(&rhs, &DataType::Int32, expr)?;
-            Ok(DataType::Bool)
+
+        match (lhs, rhs) {
+            _ if is_comparable_type(lhs) && is_comparable_type(rhs) && lhs == rhs => true,
+            _ if is_comparable_type(lhs) && rhs == &Null => true,
+            _ if lhs == &Null && is_comparable_type(rhs) => true,
+            _ => false,
         }
+    }
+
+    fn support_arithmetic_ops(lhs: &DataType, rhs: &DataType) -> bool {
+        match (lhs, rhs) {
+            (Int32, Int32) => true,
+            (Int32, Null) => true,
+            (Null, Int32) => true,
+            _ => false,
+        }
+    }
+
+    fn support_string_ops(lhs: &DataType, rhs: &DataType) -> bool {
+        match (lhs, rhs) {
+            (String, String) => true,
+            (String, Null) => true,
+            (Null, String) => true,
+            _ => false,
+        }
+    }
+
+    match (&lhs, &op, &rhs) {
+        // Logical
+        (Bool, And, Bool) => Ok(Bool),
+        (Bool, Or, Bool) => Ok(Bool),
+        (Bool, And, Null) => Ok(Bool),
+        (Bool, Or, Null) => Ok(Bool),
+
+        (Null, And, Bool) => Ok(Bool),
+        (Null, Or, Bool) => Ok(Bool),
+        (Null, And, Null) => Ok(Bool),
+        (Null, Or, Null) => Ok(Bool),
+        // Logical
+
         // Arithmetic
-        BinaryOp::Plus | BinaryOp::Minus | BinaryOp::Multiply | BinaryOp::Divide | BinaryOp::Modulo => {
-            expect_type_or_null(&lhs, &DataType::Int32, expr)?;
-            expect_type_or_null(&rhs, &DataType::Int32, expr)?;
-            if lhs != DataType::Null {
-                Ok(lhs)
-            } else if rhs != DataType::Null {
-                Ok(rhs)
-            } else {
-                let message = format!("Expr: {} No operator for NULL {} NULL", expr, op);
-                Err(type_error(message))
-            }
-        }
-        // String operators
-        BinaryOp::Concat | BinaryOp::Like | BinaryOp::NotLike => {
-            expect_type_or_null(&lhs, &DataType::String, expr)?;
-            expect_type_or_null(&rhs, &DataType::String, expr)?;
-            Ok(DataType::String)
+        (lhs, Plus | Minus | Multiply | Divide | Modulo, rhs) if support_arithmetic_ops(lhs, rhs) => Ok(Int32),
+
+        // Comparison
+        (lhs, Lt | LtEq | Gt | GtEq, rhs) if support_comparison_ops(lhs, rhs) => Ok(Bool),
+
+        // Date
+        (Date, Plus | Minus, Interval) => Ok(Date),
+        (Date, Plus | Minus, Null) => Ok(Date),
+        (Null, Plus | Minus, Date) => Ok(Date),
+
+        // Time
+        (Time, Minus, Time) => Ok(Interval),
+        (Time, Plus | Minus, Interval) => Ok(Time),
+        (Time, Plus | Minus, Null) => Ok(Time),
+        (Null, Plus | Minus, Time) => Ok(Time),
+
+        // Timestamp
+        (Timestamp(tz), Plus | Minus, Interval) => Ok(Timestamp(*tz)),
+        (Timestamp(tz), Plus | Minus, Null) => Ok(Timestamp(*tz)),
+        (Null, Plus | Minus, Timestamp(tz)) => Ok(Timestamp(*tz)),
+
+        // Interval
+        (Interval, Plus | Minus, Interval) => Ok(Interval),
+        (Interval, Plus, Date) => Ok(Date),
+        (Interval, Plus, Time) => Ok(Time),
+        (Interval, Plus | Minus, Null) => Ok(Interval),
+        (Null, Plus | Minus, Interval) => Ok(Interval),
+
+        // <interval> mul/div <numb>
+        (Interval, Multiply | Divide, Int32) => Ok(Interval),
+        (Interval, Multiply | Divide, Null) => Ok(Interval),
+        (Int32, Multiply, Interval) => Ok(Interval),
+        (Null, Multiply, Interval) => Ok(Interval),
+
+        // String ops
+        (lhs, Like, rhs) if support_string_ops(lhs, rhs) => Ok(String),
+        (lhs, NotLike, rhs) if support_string_ops(lhs, rhs) => Ok(String),
+
+        // String Concat
+        (String, Concat, _) => Ok(String),
+        (_, Concat, String) => Ok(String),
+
+        // Equality
+        (lhs, Eq | NotEq, rhs) if lhs == rhs => Ok(Bool),
+        (lhs, Eq | NotEq, rhs) if lhs == &Null || rhs == &Null => Ok(Bool),
+        //
+        _ => {
+            let message = format!("Expr: {} No operator for {} {} {}", expr, lhs, op, rhs);
+            Err(type_error(message))
         }
     }
 }
@@ -609,7 +679,13 @@ mod test {
 
     #[test]
     fn string_concat() {
-        expect_string_expr_type(BinaryOp::Concat);
+        expect_type(&str_value().binary_expr(BinaryOp::Concat, str_value()), &DataType::String);
+        expect_type(&str_value().binary_expr(BinaryOp::Concat, int_value()), &DataType::String);
+        expect_type(&str_value().binary_expr(BinaryOp::Concat, bool_value()), &DataType::String);
+        expect_type(&int_value().binary_expr(BinaryOp::Concat, str_value()), &DataType::String);
+        expect_type(&bool_value().binary_expr(BinaryOp::Concat, str_value()), &DataType::String);
+
+        expect_not_resolved(&int_value().binary_expr(BinaryOp::Concat, bool_value()));
     }
 
     #[test]
