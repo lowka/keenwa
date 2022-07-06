@@ -10,7 +10,7 @@ use keenwa::operators::relational::join::JoinType;
 use keenwa::operators::scalar::{col, scalar};
 use keenwa::operators::{Operator, OperatorMemoBuilder};
 use keenwa::optimizer::Optimizer;
-use keenwa::rules::implementation::{EmptyRule, GetToScanRule, HashJoinRule, ProjectionRule, SelectRule, ValuesRule};
+use keenwa::rules::implementation::{EmptyRule, GetToScanRule, HashJoinRule, ProjectionRule, SelectRule};
 use keenwa::rules::{Rule, StaticRuleSet, StaticRuleSetBuilder};
 use keenwa::statistics::simple::{DefaultSelectivityStatistics, SimpleCatalogStatisticsBuilder};
 use std::ops::Not;
@@ -77,8 +77,8 @@ fn create_catalog() -> Result<CatalogRef, OptimizerError> {
 
     let table_b = TableBuilder::new("b").add_column("b1", DataType::Int32).add_row_count(200).build()?;
 
-    catalog.add_table(DEFAULT_SCHEMA, table_a);
-    catalog.add_table(DEFAULT_SCHEMA, table_b);
+    catalog.add_table(DEFAULT_SCHEMA, table_a)?;
+    catalog.add_table(DEFAULT_SCHEMA, table_b)?;
     Ok(catalog)
 }
 

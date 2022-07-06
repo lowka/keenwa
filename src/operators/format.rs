@@ -533,7 +533,7 @@ mod test {
         LogicalAggregate, LogicalEmpty, LogicalExpr, LogicalGet, LogicalProjection,
     };
     use crate::operators::relational::RelNode;
-    use crate::operators::scalar::value::{Scalar, ScalarValue};
+    use crate::operators::scalar::value::Scalar;
     use crate::operators::scalar::ScalarExpr;
     use crate::operators::{Operator, OperatorExpr, Properties, RelationalProperties};
     use crate::properties::logical::LogicalProperties;

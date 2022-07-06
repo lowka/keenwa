@@ -125,14 +125,14 @@ Cost-based query optimizer (WIP).
 #### Data types
 
 - [x] Basic data type (string, int32, bool).
-- [ ] Floating point types.
+- [x] Floating point types.
 - [ ] Decimal types.
 - [ ] Byte arrays.
 - [x] Date (Days), Time (Hours, Minutes, Seconds, Millis)
 - [x] Timestamp with timezone, Timestamp without time zone.
 - [x] Time intervals: Year, Year to Month, Month, Day, Day to Hour, Day to Minute, Day to Second.
-- [ ] Arrays.
-- [ ] Tuples.
+- [x] Arrays.
+- [x] Tuples.
 
 #### Functions
 
