@@ -11,6 +11,7 @@ Cost-based query optimizer (WIP).
 - [x] Basic cost-model.
 - [x] Basic statistics.
 - [x] Basic catalog API.
+- [ ] Basic constraints.
 
 ### Physical properties/Enforcers
 
@@ -141,6 +142,13 @@ Cost-based query optimizer (WIP).
 - [ ] Additional date/time functions.
 - [ ] Additional interval functions.
 - [ ] Additional array functions.
+
+#### Constraints
+
+- [ ] Unique.
+- [ ] Not null.
+- [ ] Default value.
+- [ ] Check expression.
 
 ---
 
