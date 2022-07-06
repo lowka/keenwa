@@ -47,7 +47,7 @@ mod test {
     use crate::meta::ColumnId;
     use crate::operators::scalar::expr::NestedExpr;
     use crate::operators::scalar::exprs::collect_columns;
-    use crate::operators::scalar::value::{Scalar, ScalarValue};
+    use crate::operators::scalar::value::Scalar;
 
     #[derive(Debug, Eq, PartialEq, Clone, Hash, Default)]
     struct DummyExpr {

@@ -733,9 +733,16 @@ fn build_value_expr(value: Value) -> Result<ScalarExpr, OptimizerError> {
     //because sqlparser's bigdecimal feature is not enabled.
     let value = match value {
         Value::Number(value, _) => {
-            let value = i32::from_str(value.as_str())
-                .map_err(|e| OptimizerError::argument(format!("Unable to parse a numeric literal: {}", e)))?;
-            ScalarValue::Int32(Some(value))
+            let value = if value.contains(".") {
+                f32::from_str(value.as_str())
+                    .map(|v| ScalarValue::Float32(Some(v)))
+                    .map_err(|e| e.to_string())
+            } else {
+                i32::from_str(value.as_str())
+                    .map(|v| ScalarValue::Int32(Some(v)))
+                    .map_err(|e| e.to_string())
+            };
+            value.map_err(|e| OptimizerError::argument(format!("Unable to parse a numeric literal: {}", e)))?
         }
         Value::SingleQuotedString(value) => ScalarValue::String(Some(value)),
         Value::NationalStringLiteral(_) => not_supported!("National string literal"),

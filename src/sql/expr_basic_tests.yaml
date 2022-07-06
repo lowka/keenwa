@@ -1,6 +1,9 @@
 query: 1
 ok: 1
 ---
+query: 1.2
+ok: 1.2
+---
 # negation
 query: -1
 ok: -1
@@ -8,6 +11,12 @@ ok: -1
 # not equals operator <> is replaced by != operator by the sql parser
 query: 1 <> 2
 ok: 1 != 2
+---
+query: 1.2 > 1
+ok: 1.2 > 1
+---
+query: 1 < 1.2
+ok: 1 < 1.2
 ---
 query: |
   1+2*3-4/2
