@@ -114,6 +114,7 @@ fn build_statement(builder: OperatorBuilder, stmt: Statement) -> Result<Operator
         Statement::AlterTable { .. } => not_implemented!("ALTER TABLE"),
         Statement::Drop { .. } => not_implemented!("DROP"),
         Statement::SetVariable { .. } => not_supported!("SET VARIABLE"),
+        Statement::SetRole { .. } => not_supported!("SET ROLE"),
         Statement::ShowVariable { .. } => not_supported!("SHOW VARIABLE"),
         Statement::ShowCreate { .. } => not_supported!("SHOW CREATE"),
         Statement::ShowColumns { .. } => not_supported!("SHOW COLUMNS"),
@@ -131,6 +132,7 @@ fn build_statement(builder: OperatorBuilder, stmt: Statement) -> Result<Operator
         Statement::Execute { .. } => not_supported!("EXECUTE"),
         Statement::Prepare { .. } => not_supported!("PREPARE"),
         Statement::ExplainTable { .. } => not_supported!("EXPLAIN TABLE"),
+        Statement::Kill { .. } => not_supported!("KILL"),
         Statement::Explain { .. } => not_implemented!("EXPLAIN"),
         Statement::Savepoint { .. } => not_implemented!("SAVEPOINT"),
         Statement::Merge { .. } => not_implemented!("MERGE"),
@@ -513,6 +515,8 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
         Expr::Identifier(ident) => ScalarExpr::ColumnName(ident.value),
         Expr::CompoundIdentifier(indents) if indents.len() > 2 => not_implemented!("compound identifier expression"),
         Expr::CompoundIdentifier(indents) => ScalarExpr::ColumnName(indents.into_iter().join(".")),
+        Expr::JsonAccess { .. } => not_implemented!("JSON access expression"),
+        Expr::CompositeAccess { .. } => not_implemented!("Composite access expression"),
         Expr::IsNull(expr) => {
             let expr = build_scalar_expr(*expr, builder)?;
             ScalarExpr::IsNull {
@@ -570,6 +574,8 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
             }
         }
         Expr::BinaryOp { op, left, right } => build_binary_expr(op, *left, *right, builder)?,
+        Expr::AnyOp(_) => not_implemented!("ANY expression"),
+        Expr::AllOp(_) => not_implemented!("ALL expression"),
         Expr::UnaryOp { op, expr } => build_unary_expr(op, *expr, builder)?,
         Expr::Cast { expr, data_type } => {
             let expr = build_scalar_expr(*expr, builder)?;
@@ -581,6 +587,7 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
         }
         Expr::TryCast { .. } => not_implemented!("TRY CAST expression"),
         Expr::Extract { .. } => not_supported!("EXTRACT expression"),
+        Expr::Position { .. } => not_supported!("POSITION expression"),
         Expr::Substring { .. } => not_implemented!("SUBSTRING expression"),
         Expr::Trim { .. } => not_implemented!("TRIM expression"),
         Expr::Collate { .. } => not_supported!("COLLATE expression"),
@@ -1028,6 +1035,7 @@ fn convert_data_type(input: SqlDataType) -> Result<DataType, OptimizerError> {
     match input {
         SqlDataType::Char(_) => not_implemented!("Data type: Char"),
         SqlDataType::Varchar(_) => not_implemented!("Data type: Varchar"),
+        SqlDataType::Nvarchar(_) => not_implemented!("Data type: NVarchar"),
         SqlDataType::Uuid => not_implemented!("Data type: Uuid"),
         SqlDataType::Clob(_) => not_implemented!("Data type: Clob"),
         SqlDataType::Binary(_) => not_implemented!("Data type: Binary"),
