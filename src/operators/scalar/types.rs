@@ -41,8 +41,14 @@ where
         }
         Expr::Negation(expr) => {
             let tpe = resolve_expr_type(expr, column_registry)?;
-            expect_type_or_null(&tpe, &DataType::Int32, expr)?;
-            Ok(tpe)
+            match tpe {
+                DataType::Int32 => Ok(tpe),
+                DataType::Float32 => Ok(tpe),
+                _ => {
+                    let message = format!("Expr: {}. No operator for type {}", expr, tpe);
+                    Err(type_error(message))
+                }
+            }
         }
         Expr::Alias(expr, _) => resolve_expr_type(expr, column_registry),
         Expr::InList { expr, exprs, .. } => {
@@ -244,6 +250,7 @@ where
             (String, String) => true,
             (String, Null) => true,
             (Null, String) => true,
+            (Null, Null) => true,
             _ => false,
         }
     }
@@ -308,19 +315,19 @@ where
         (Interval, Plus | Minus, Null) => Ok(Interval),
         (Null, Plus | Minus, Interval) => Ok(Interval),
 
-        // <interval> mul/div <numb>
+        // <interval> mul/div <num>
         (Interval, Multiply | Divide, Int32) => Ok(Interval),
         (Interval, Multiply | Divide, Null) => Ok(Interval),
         (Int32, Multiply, Interval) => Ok(Interval),
         (Null, Multiply, Interval) => Ok(Interval),
 
         // String ops
-        (lhs, Like, rhs) if support_string_ops(lhs, rhs) => Ok(String),
-        (lhs, NotLike, rhs) if support_string_ops(lhs, rhs) => Ok(String),
+        (lhs, Like | NotLike, rhs) if support_string_ops(lhs, rhs) => Ok(Bool),
 
         // String Concat
         (String, Concat, _) => Ok(String),
         (_, Concat, String) => Ok(String),
+        (Null, Concat, Null) => Ok(String),
 
         // Equality
         (lhs, Eq | NotEq, rhs) if support_equality(lhs, rhs) => Ok(Bool),
@@ -362,8 +369,9 @@ mod test {
     use crate::meta::ColumnId;
     use crate::operators::scalar::aggregates::AggregateFunction;
     use crate::operators::scalar::expr::{BinaryOp, NestedExpr};
-    use crate::operators::scalar::types::{resolve_expr_type, ColumnTypeRegistry};
-    use crate::operators::scalar::value::ScalarValue;
+    use crate::operators::scalar::types::{resolve_binary_expr_type, resolve_expr_type, ColumnTypeRegistry};
+    use crate::operators::scalar::value::{Array, Interval, ScalarValue};
+    use itertools::Itertools;
     use std::convert::TryFrom;
     use std::fmt::Formatter;
     use std::hash::{Hash, Hasher};
@@ -414,8 +422,34 @@ mod test {
         Expr::Scalar(ScalarValue::Int32(Some(1)))
     }
 
+    fn fp_value() -> Expr {
+        Expr::Scalar(ScalarValue::Float32(Some(1.0)))
+    }
+
     fn str_value() -> Expr {
         Expr::Scalar(ScalarValue::String(Some("s".to_string())))
+    }
+
+    fn date_value() -> Expr {
+        Expr::Scalar(ScalarValue::Date(Some(10000)))
+    }
+
+    fn time_value() -> Expr {
+        Expr::Scalar(ScalarValue::Time(Some((100, 0))))
+    }
+
+    fn timestamp_value(tz: bool) -> Expr {
+        let tz = if tz { Some(1000) } else { None };
+        Expr::Scalar(ScalarValue::Timestamp(Some(1000), tz))
+    }
+
+    fn interval_value(years: bool) -> Expr {
+        let interval = if years {
+            Interval::YearMonth(100, 1)
+        } else {
+            Interval::DaySecond(10, 0)
+        };
+        Expr::Scalar(ScalarValue::Interval(Some(interval)))
     }
 
     fn col_name(name: &str) -> Expr {
@@ -450,13 +484,13 @@ mod test {
     }
 
     #[test]
-    fn column_name_type_should_not_be_resolved() {
+    fn test_column_name_type_should_not_be_resolved() {
         let col = Expr::ColumnName("a".into());
         expect_not_resolved(&col)
     }
 
     #[test]
-    fn column_id_type() {
+    fn test_column_id_type() {
         fn expect_column_type(col_type: DataType) {
             let mut registry = MockColumnTypeRegistry::new();
             let id = registry.add_column(col_type.clone());
@@ -465,20 +499,21 @@ mod test {
             expect_resolved(&expr, &registry, &col_type);
         }
 
-        expect_column_type(DataType::Bool);
-        expect_column_type(DataType::Int32);
-        expect_column_type(DataType::String);
+        for tpe in get_data_types() {
+            expect_column_type(tpe);
+        }
     }
 
     #[test]
-    fn scalar_type() {
-        expect_type(&bool_value(), &DataType::Bool);
-        expect_type(&int_value(), &DataType::Int32);
-        expect_type(&str_value(), &DataType::String);
+    fn test_scalar_type() {
+        for tpe in get_data_types() {
+            let value = get_value_expr(tpe.clone());
+            expect_type(&value, &tpe);
+        }
     }
 
     #[test]
-    fn subquery_type() {
+    fn test_subquery_type() {
         fn expect_subquery_type(col_type: DataType) {
             let mut registry = MockColumnTypeRegistry::new();
             let subquery = new_subquery_from_column(&mut registry, col_type.clone());
@@ -493,7 +528,7 @@ mod test {
     }
 
     #[test]
-    fn exists_subquery() {
+    fn test_exists_subquery() {
         let mut registry = MockColumnTypeRegistry::new();
         let query = new_subquery_from_column(&mut registry, DataType::Int32);
         let expr = Expr::Exists { not: false, query };
@@ -502,7 +537,7 @@ mod test {
     }
 
     #[test]
-    fn in_subquery() {
+    fn test_in_subquery() {
         let mut registry = MockColumnTypeRegistry::new();
         let query = new_subquery_from_column(&mut registry, DataType::Int32);
         let expr = Expr::InSubQuery {
@@ -515,15 +550,18 @@ mod test {
     }
 
     #[test]
-    fn cast_type() {
-        expect_type(&int_value().cast(DataType::Bool), &DataType::Bool);
-        expect_type(&int_value().cast(DataType::Int32), &DataType::Int32);
-        expect_type(&int_value().cast(DataType::String), &DataType::String);
-        expect_type(&int_value().cast(DataType::Float32), &DataType::Float32);
+    fn test_cast_type() {
+        // cast any type to any other type.
+        for tpe in get_data_types() {
+            for another_type in get_data_types() {
+                let value = get_value_expr(tpe.clone());
+                expect_type(&value.cast(another_type.clone()), &another_type);
+            }
+        }
     }
 
     #[test]
-    fn not_type() {
+    fn test_not_type() {
         expect_type(&!bool_value(), &DataType::Bool);
 
         expect_not_resolved(&!int_value());
@@ -531,35 +569,43 @@ mod test {
     }
 
     #[test]
-    fn not_trait() {
+    fn test_not_trait() {
         let expr = !col_name("a");
         expect_expr(&expr, "NOT col:a")
     }
 
     #[test]
-    fn negation_type() {
-        expect_type(&int_value().negate(), &DataType::Int32);
-
-        expect_not_resolved(&bool_value().negate());
-        expect_not_resolved(&str_value().negate());
+    fn test_negation_type() {
+        for tpe in get_data_types().into_iter() {
+            let value_expr = get_value_expr(tpe.clone());
+            if DataType::NUMERIC_TYPES.contains(&tpe) {
+                expect_type(&value_expr.negate(), &tpe);
+            } else {
+                expect_not_resolved(&value_expr.negate());
+            }
+        }
     }
 
     #[test]
-    fn alias() {
-        expect_type(&bool_value().alias("a"), &DataType::Bool);
-        expect_type(&int_value().alias("a"), &DataType::Int32);
-        expect_type(&str_value().alias("a"), &DataType::String);
+    fn test_alias() {
+        for tpe in get_data_types() {
+            let value = get_value_expr(tpe.clone());
+            expect_type(&value.alias("a"), &tpe);
+        }
     }
 
     #[test]
-    fn is_null() {
-        expect_type(
-            &Expr::IsNull {
-                not: true,
-                expr: Box::new(str_value()),
-            },
-            &DataType::Bool,
-        );
+    fn test_is_null() {
+        for tpe in get_data_types() {
+            let value = get_value_expr(tpe.clone());
+            expect_type(
+                &Expr::IsNull {
+                    not: true,
+                    expr: Box::new(value),
+                },
+                &DataType::Bool,
+            );
+        }
     }
 
     #[test]
@@ -592,11 +638,16 @@ mod test {
             expect_not_resolved(&aggr("sum", vec![expr.clone()]));
         }
 
-        expect_type(&aggr("min", vec![int_value()]), &DataType::Int32);
-        expect_type(&aggr("max", vec![int_value()]), &DataType::Int32);
-        expect_type(&aggr("avg", vec![int_value()]), &DataType::Int32);
-        expect_type(&aggr("sum", vec![int_value()]), &DataType::Int32);
+        let types = vec![(int_value(), &DataType::Int32), (fp_value(), &DataType::Float32)];
+        for (val, tpe) in types {
+            expect_type(&aggr("min", vec![val.clone()]), tpe);
+            expect_type(&aggr("max", vec![val.clone()]), tpe);
+            expect_type(&aggr("avg", vec![val.clone()]), tpe);
+            expect_type(&aggr("sum", vec![val.clone()]), tpe);
+        }
+
         expect_type(&aggr("count", vec![int_value()]), &DataType::Int32);
+        expect_type(&aggr("count", vec![fp_value()]), &DataType::Int32);
 
         expect_aggr_invalid_args(str_value());
         expect_aggr_invalid_args(bool_value());
@@ -605,50 +656,237 @@ mod test {
     // binary expressions
 
     #[test]
-    fn and_type() {
-        expect_logical_expr_type(BinaryOp::And);
+    fn test_logical_exprs() {
+        use BinaryOp::*;
+        use DataType::*;
+
+        let ops = vec![And, Or];
+
+        // logical operators are supported for bools and nulls
+        for op in ops {
+            valid_bin_expr(Bool, op.clone(), Bool, Bool);
+            valid_bin_expr(Bool, op.clone(), Null, Bool);
+            valid_bin_expr(Null, op.clone(), Bool, Bool);
+            valid_bin_expr(Null, op.clone(), Null, Bool);
+        }
     }
 
     #[test]
-    fn or_type() {
-        expect_logical_expr_type(BinaryOp::Or);
+    fn test_arithmetic() {
+        use BinaryOp::*;
+        use DataType::*;
+
+        let arithmetic_ops = vec![Plus, Minus, Multiply, Divide];
+
+        // integer numeric types <op> another numeric type | null
+        for mut types in vec![Int32, Null].into_iter().combinations_with_replacement(2) {
+            let lhs = types.swap_remove(0);
+            let rhs = types.swap_remove(0);
+
+            for op in arithmetic_ops.clone().into_iter().chain(std::iter::once(Modulo)) {
+                if lhs != Null && rhs != Null {
+                    valid_bin_expr(lhs.clone(), op.clone(), rhs.clone(), Int32);
+                }
+            }
+        }
+
+        // floating point types <op> another floating point type | null
+        // floating point types do not support modulo operator
+        for mut types in vec![Float32, Null].into_iter().combinations_with_replacement(2) {
+            let lhs = types.swap_remove(0);
+            let rhs = types.swap_remove(0);
+            for op in arithmetic_ops.clone() {
+                if lhs != Null && rhs != Null {
+                    valid_bin_expr(lhs.clone(), op.clone(), rhs.clone(), Float32);
+                }
+            }
+        }
+
+        // integer types and floating point types can be used in arithmetic operators
+        // (except for the modulo operator)
+        for mut types in vec![Int32, Float32].into_iter().combinations_with_replacement(2) {
+            let lhs = types.swap_remove(0);
+            let rhs = types.swap_remove(0);
+            // ignore int32 <op> int32
+            if lhs == Int32 && rhs == Int32 {
+                continue;
+            }
+            for op in arithmetic_ops.clone().into_iter() {
+                valid_bin_expr(lhs.clone(), op.clone(), rhs.clone(), Float32);
+            }
+
+            invalid_bin_expr(lhs.clone(), Modulo, rhs.clone());
+        }
+
+        // no arithmetic operators when both operands are Null
+        for op in arithmetic_ops {
+            invalid_bin_expr(Null, op, Null);
+        }
+    }
+
+    // comparison
+
+    #[test]
+    fn test_comparison() {
+        use BinaryOp::*;
+        use DataType::*;
+
+        let comparable_types = vec![Int32, Float32, Date, Time, Interval, Timestamp(true), Timestamp(false)];
+        let ops = vec![Lt, Gt, LtEq, GtEq];
+
+        // comparable types can be compared with the same type or with null
+        for tpe in comparable_types.clone() {
+            for op in ops.clone() {
+                valid_bin_expr(tpe.clone(), op.clone(), tpe.clone(), Bool);
+                // rhs is NULL
+                valid_bin_expr(tpe.clone(), op.clone(), Null, Bool);
+                // lhs is NULL
+                valid_bin_expr(Null, op.clone(), tpe.clone(), Bool);
+                // NULL v NULL
+                valid_bin_expr(Null, op.clone(), Null, Bool);
+            }
+        }
+
+        // numeric types can be compared itself and with other numeric types
+        let numeric_types: Vec<_> = DataType::NUMERIC_TYPES.iter().clone().collect();
+        let num = DataType::NUMERIC_TYPES.len();
+
+        for mut vals in numeric_types.into_iter().combinations_with_replacement(num) {
+            let lhs = vals.swap_remove(0);
+            let rhs = vals.swap_remove(0);
+
+            for op in ops.clone() {
+                valid_bin_expr(lhs.clone(), op, rhs.clone(), Bool);
+            }
+        }
+
+        // not supported
+        for tpe in vec![DataType::Tuple(vec![String]), DataType::Array(Box::new(String))] {
+            for op in ops.clone() {
+                invalid_bin_expr(tpe.clone(), op, tpe.clone())
+            }
+        }
     }
 
     #[test]
-    fn eq_type() {
-        expect_equality_expr_type(BinaryOp::Eq);
+    fn test_date_time() {
+        use BinaryOp::*;
+        use DataType::*;
+
+        valid_bin_expr(Date, Plus, Interval, Date);
+        valid_bin_expr(Date, Minus, Interval, Date);
+        valid_bin_expr(Interval, Plus, Date, Date);
+
+        invalid_bin_expr(Date, Plus, Null);
+        invalid_bin_expr(Date, Minus, Null);
+        invalid_bin_expr(Null, Plus, Date);
+
+        valid_bin_expr(Time, Minus, Time, Interval);
+        valid_bin_expr(Time, Plus, Interval, Time);
+        valid_bin_expr(Time, Minus, Interval, Interval);
+
+        valid_bin_expr(Time, Minus, Null, Interval);
+        valid_bin_expr(Null, Minus, Time, Interval);
+
+        invalid_bin_expr(Time, Plus, Null);
+        invalid_bin_expr(Null, Plus, Time);
+
+        valid_bin_expr(Interval, Plus, Interval, Interval);
+        valid_bin_expr(Interval, Minus, Interval, Interval);
+
+        valid_bin_expr(Interval, Multiply, Int32, Interval);
+        valid_bin_expr(Interval, Divide, Int32, Interval);
+        valid_bin_expr(Interval, Multiply, Null, Interval);
+        valid_bin_expr(Interval, Divide, Null, Interval);
+
+        valid_bin_expr(Interval, Minus, Null, Interval);
+        valid_bin_expr(Interval, Plus, Null, Interval);
     }
 
     #[test]
-    fn ne_type() {
-        expect_equality_expr_type(BinaryOp::NotEq);
+    fn test_string_ops() {
+        use BinaryOp::*;
+        use DataType::*;
+
+        let ops = vec![Like, NotLike];
+        let str_tpes = vec![String];
+
+        // every type must be either string like or null
+        for tpe in str_tpes.clone() {
+            for op in ops.clone() {
+                valid_bin_expr(tpe.clone(), op.clone(), tpe.clone(), Bool);
+                valid_bin_expr(tpe.clone(), op.clone(), Null, Bool);
+                valid_bin_expr(Null, op.clone(), tpe.clone(), Bool);
+            }
+        }
+
+        // no operator for non string types
+        for tpe in get_data_types()
+            .into_iter()
+            .filter(|tpe| tpe != &Null)
+            .filter(|tpe| !str_tpes.contains(tpe))
+        {
+            for op in ops.clone() {
+                invalid_bin_expr(tpe.clone(), op, tpe.clone());
+            }
+        }
+
+        // operators are supported when both operands are null
+        for op in ops.clone() {
+            valid_bin_expr(Null, op, Null, Bool);
+        }
     }
 
-    // arithmetic
-
     #[test]
-    fn lt_type() {
-        expect_arithmetic_cmp_expr_type(BinaryOp::Lt);
+    fn test_concat() {
+        use BinaryOp::*;
+        use DataType::*;
+
+        // every type can be concatenated with a string
+        for tpe in get_data_types() {
+            valid_bin_expr(String, Concat, tpe.clone(), String);
+            valid_bin_expr(tpe.clone(), Concat, String, String);
+        }
+
+        // no concat operator for non-string types (except for the case when both types are null)
+        for mut types in get_data_types().into_iter().filter(|tpe| tpe != &String).combinations_with_replacement(2) {
+            let lhs = types.swap_remove(0);
+            let rhs = types.swap_remove(0);
+
+            if lhs == Null && rhs == Null {
+                valid_bin_expr(Null, Concat, Null, String);
+            } else {
+                invalid_bin_expr(lhs, Concat, rhs);
+            }
+        }
     }
 
     #[test]
-    fn lte_type() {
-        expect_arithmetic_cmp_expr_type(BinaryOp::LtEq);
-    }
+    fn test_equality() {
+        use BinaryOp::*;
+        use DataType::*;
 
-    #[test]
-    fn gt_type() {
-        expect_arithmetic_cmp_expr_type(BinaryOp::Gt);
-    }
+        let ops = vec![Eq, NotEq];
 
-    #[test]
-    fn gte_type() {
-        expect_arithmetic_cmp_expr_type(BinaryOp::GtEq);
-    }
+        // every type can be test for equality with itself
+        for tpe in get_data_types() {
+            for op in ops.clone() {
+                valid_bin_expr(tpe.clone(), op, tpe.clone(), Bool);
+            }
+        }
 
-    #[test]
-    fn add_type() {
-        expect_arithmetic_expr_type(BinaryOp::Plus);
+        // every type can be tested for equality with Null
+        for tpe in get_data_types() {
+            for op in ops.clone() {
+                valid_bin_expr(tpe.clone(), op.clone(), Null, Bool);
+                valid_bin_expr(Null, op, tpe.clone(), Bool);
+            }
+        }
+
+        // Nulls can be tested for equality
+        for op in ops.clone() {
+            valid_bin_expr(Null, op, Null, Bool);
+        }
     }
 
     #[test]
@@ -658,19 +896,9 @@ mod test {
     }
 
     #[test]
-    fn sub_type() {
-        expect_arithmetic_expr_type(BinaryOp::Minus);
-    }
-
-    #[test]
     fn sub_trait() {
         let expr = col_name("a").sub(col_name("b"));
         expect_expr(&expr, "col:a - col:b");
-    }
-
-    #[test]
-    fn mul_type() {
-        expect_arithmetic_expr_type(BinaryOp::Multiply);
     }
 
     #[test]
@@ -680,46 +908,15 @@ mod test {
     }
 
     #[test]
-    fn div_type() {
-        expect_arithmetic_expr_type(BinaryOp::Divide);
-    }
-
-    #[test]
     fn div_trait() {
         let expr = col_name("a").div(col_name("b"));
         expect_expr(&expr, "col:a / col:b");
     }
 
     #[test]
-    fn mod_type() {
-        expect_arithmetic_expr_type(BinaryOp::Modulo);
-    }
-
-    #[test]
     fn rem_trait() {
         let expr = col_name("a").rem(col_name("b"));
         expect_expr(&expr, "col:a % col:b");
-    }
-
-    #[test]
-    fn string_concat() {
-        expect_type(&str_value().binary_expr(BinaryOp::Concat, str_value()), &DataType::String);
-        expect_type(&str_value().binary_expr(BinaryOp::Concat, int_value()), &DataType::String);
-        expect_type(&str_value().binary_expr(BinaryOp::Concat, bool_value()), &DataType::String);
-        expect_type(&int_value().binary_expr(BinaryOp::Concat, str_value()), &DataType::String);
-        expect_type(&bool_value().binary_expr(BinaryOp::Concat, str_value()), &DataType::String);
-
-        expect_not_resolved(&int_value().binary_expr(BinaryOp::Concat, bool_value()));
-    }
-
-    #[test]
-    fn string_like() {
-        expect_string_expr_type(BinaryOp::Like);
-    }
-
-    #[test]
-    fn string_not_like() {
-        expect_string_expr_type(BinaryOp::NotLike);
     }
 
     #[test]
@@ -769,76 +966,6 @@ mod test {
         expect_type(&expr, &DataType::String);
     }
 
-    // =, !=
-    fn expect_equality_expr_type(op: BinaryOp) {
-        expect_type(&bool_value().binary_expr(op.clone(), bool_value()), &DataType::Bool);
-        expect_type(&int_value().binary_expr(op.clone(), int_value()), &DataType::Bool);
-        expect_type(&str_value().binary_expr(op.clone(), str_value()), &DataType::Bool);
-
-        expect_type(&null_value().binary_expr(op.clone(), null_value()), &DataType::Bool);
-        expect_type(&null_value().binary_expr(op.clone(), bool_value()), &DataType::Bool);
-        expect_type(&bool_value().binary_expr(op.clone(), null_value()), &DataType::Bool);
-
-        expect_not_resolved(&int_value().binary_expr(op, bool_value()));
-    }
-
-    // AND, OR
-    fn expect_logical_expr_type(op: BinaryOp) {
-        expect_type(&bool_value().binary_expr(op.clone(), bool_value()), &DataType::Bool);
-
-        expect_type(&null_value().binary_expr(op.clone(), null_value()), &DataType::Bool);
-        expect_type(&null_value().binary_expr(op.clone(), bool_value()), &DataType::Bool);
-        expect_type(&bool_value().binary_expr(op.clone(), null_value()), &DataType::Bool);
-
-        expect_not_resolved(&bool_value().binary_expr(op.clone(), int_value()));
-        expect_not_resolved(&int_value().binary_expr(op.clone(), bool_value()));
-
-        expect_not_resolved(&int_value().binary_expr(op.clone(), int_value()));
-        expect_not_resolved(&str_value().binary_expr(op, str_value()));
-    }
-
-    // Comparison operators: >, <=, etc.
-    fn expect_arithmetic_cmp_expr_type(op: BinaryOp) {
-        expect_type(&int_value().binary_expr(op.clone(), int_value()), &DataType::Bool);
-
-        expect_type(&null_value().binary_expr(op.clone(), null_value()), &DataType::Bool);
-        expect_type(&null_value().binary_expr(op.clone(), int_value()), &DataType::Bool);
-        expect_type(&int_value().binary_expr(op.clone(), null_value()), &DataType::Bool);
-
-        expect_not_resolved(&bool_value().binary_expr(op.clone(), bool_value()));
-        expect_not_resolved(&bool_value().binary_expr(op.clone(), int_value()));
-        expect_not_resolved(&int_value().binary_expr(op.clone(), bool_value()));
-
-        expect_not_resolved(&str_value().binary_expr(op.clone(), str_value()));
-        expect_not_resolved(&str_value().binary_expr(op.clone(), int_value()));
-        expect_not_resolved(&int_value().binary_expr(op, str_value()));
-    }
-
-    // Arithmetic operators
-    fn expect_arithmetic_expr_type(op: BinaryOp) {
-        expect_type(&int_value().binary_expr(op.clone(), int_value()), &DataType::Int32);
-
-        expect_not_resolved(&null_value().binary_expr(op.clone(), null_value()));
-        expect_type(&null_value().binary_expr(op.clone(), int_value()), &DataType::Int32);
-        expect_type(&int_value().binary_expr(op.clone(), null_value()), &DataType::Int32);
-
-        expect_not_resolved(&bool_value().binary_expr(op.clone(), bool_value()));
-        expect_not_resolved(&bool_value().binary_expr(op.clone(), int_value()));
-        expect_not_resolved(&int_value().binary_expr(op.clone(), bool_value()));
-
-        expect_not_resolved(&str_value().binary_expr(op.clone(), str_value()));
-        expect_not_resolved(&str_value().binary_expr(op.clone(), int_value()));
-        expect_not_resolved(&int_value().binary_expr(op, str_value()));
-    }
-
-    fn expect_string_expr_type(op: BinaryOp) {
-        expect_type(&str_value().binary_expr(op.clone(), str_value()), &DataType::String);
-
-        expect_not_resolved(&str_value().binary_expr(op.clone(), int_value()));
-        expect_not_resolved(&int_value().binary_expr(op.clone(), str_value()));
-        expect_not_resolved(&bool_value().binary_expr(op.clone(), int_value()));
-    }
-
     fn expect_type(expr: &Expr, expected_type: &DataType) {
         let registry = MockColumnTypeRegistry::new();
         expect_resolved(expr, &registry, expected_type)
@@ -860,5 +987,89 @@ mod test {
 
     fn expect_expr(expr: &Expr, expected_str: &str) {
         assert_eq!(expected_str, format!("{}", expr))
+    }
+
+    fn get_value_expr(tpe: DataType) -> Expr {
+        match tpe {
+            DataType::Null => null_value(),
+            DataType::Int32 => int_value(),
+            DataType::Bool => bool_value(),
+            DataType::Float32 => fp_value(),
+            DataType::String => str_value(),
+            DataType::Date => date_value(),
+            DataType::Time => time_value(),
+            DataType::Interval => {
+                interval_value(true /*years*/)
+            }
+            DataType::Timestamp(tz) => timestamp_value(tz),
+            DataType::Tuple(ref types) => {
+                let first_field = &types[0];
+                if let Expr::Scalar(value) = get_value_expr(first_field.clone()) {
+                    let tuple = ScalarValue::Tuple(Some(vec![value]), Box::new(tpe.clone()));
+                    Expr::Scalar(tuple)
+                } else {
+                    unreachable!()
+                }
+            }
+            DataType::Array(ref element_type) => {
+                let element_type = (&**element_type).clone();
+                if let Expr::Scalar(value) = get_value_expr(element_type.clone()) {
+                    let array_data_type = DataType::Array(Box::new(element_type));
+                    let array = ScalarValue::Array(Some(Array { elements: vec![value] }), Box::new(array_data_type));
+                    Expr::Scalar(array)
+                } else {
+                    unreachable!()
+                }
+            }
+        }
+    }
+
+    fn get_data_types() -> Vec<DataType> {
+        vec![
+            DataType::Null,
+            DataType::Bool,
+            DataType::Int32,
+            DataType::Float32,
+            DataType::String,
+            DataType::Date,
+            DataType::Time,
+            DataType::Timestamp(true),
+            DataType::Timestamp(false),
+            DataType::Tuple(vec![DataType::String]),
+            DataType::Array(Box::new(DataType::String)),
+        ]
+    }
+
+    fn valid_bin_expr(lhs_type: DataType, op: BinaryOp, rhs_type: DataType, expected_type: DataType) {
+        let lhs = get_value_expr(lhs_type.clone());
+        let rhs = get_value_expr(rhs_type.clone());
+        let bin_expr = lhs.binary_expr(op.clone(), rhs);
+        let expr_type = resolve_binary_expr_type(&bin_expr, &op, lhs_type, rhs_type);
+
+        match expr_type {
+            Ok(actual_type) => assert_eq!(actual_type, expected_type, "type does not match. Expr: {}", bin_expr),
+            Err(e) => panic!("Failed to resolve the type of a binary expression: {}. Error: {:?}", bin_expr, e),
+        }
+    }
+
+    fn invalid_bin_expr(lhs_type: DataType, op: BinaryOp, rhs_type: DataType) {
+        let lhs = get_value_expr(lhs_type.clone());
+        let rhs = get_value_expr(rhs_type.clone());
+        let bin_expr = lhs.binary_expr(op.clone(), rhs);
+        let expr_type = resolve_binary_expr_type(&bin_expr, &op, lhs_type.clone(), rhs_type.clone());
+
+        match expr_type {
+            Ok(actual_type) => {
+                panic!(
+                    "Should have failed to resolve the type of a binary expression: {}. Result: {:?}",
+                    bin_expr, actual_type
+                );
+            }
+            Err(err) => {
+                let err = err.to_string();
+                let message = format!("No operator for {} {} {}", lhs_type, op, rhs_type);
+                assert!(err.contains(&message), "Unexpected error message: {}", err);
+            }
+        }
     }
 }
