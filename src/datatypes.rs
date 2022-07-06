@@ -12,6 +12,8 @@ pub enum DataType {
     Bool,
     /// 32-bit signed integer.
     Int32,
+    /// 32-bit floating point number.
+    Float32,
     /// Utf-8 string.
     String,
     /// Date in days since January 1, year 1 in the Gregorian calendar.
@@ -22,6 +24,7 @@ pub enum DataType {
     /// The boolean argument indicates whether this timestamp type has a timezone or not.
     Timestamp(bool),
     /// Interval.
+    // include interval style ?
     Interval,
     /// Tuple data type.
     ///
@@ -39,6 +42,7 @@ impl Display for DataType {
             DataType::Null => write!(f, "Null"),
             DataType::Bool => write!(f, "Bool"),
             DataType::Int32 => write!(f, "Int32"),
+            DataType::Float32 => write!(f, "Float32"),
             DataType::String => write!(f, "String"),
             DataType::Date => write!(f, "Date"),
             DataType::Time => write!(f, "Time"),
@@ -48,4 +52,9 @@ impl Display for DataType {
             DataType::Array(element_type) => write!(f, "{}[]", element_type),
         }
     }
+}
+
+impl DataType {
+    /// The numeric data types.
+    pub(crate) const NUMERIC_TYPES: [DataType; 2] = [DataType::Int32, DataType::Float32];
 }

@@ -204,35 +204,37 @@ where
     use BinaryOp::*;
     use DataType::*;
 
-    fn support_comparison_ops(lhs: &DataType, rhs: &DataType) -> bool {
-        fn is_comparable_type(tpe: &DataType) -> bool {
-            match tpe {
-                Null => true,
-                Bool => false,
-                Int32 => true,
-                String => false,
-                Date => true,
-                Time => true,
-                Timestamp(_) => true,
-                Interval => true,
-                Tuple(_) => false,
-                Array(_) => false,
-            }
+    fn is_comparable_type(tpe: &DataType) -> bool {
+        match tpe {
+            Null => true,
+            Bool => false,
+            Int32 => true,
+            Float32 => true,
+            String => false,
+            Date => true,
+            Time => true,
+            Timestamp(_) => true,
+            Interval => true,
+            Tuple(_) => false,
+            Array(_) => false,
         }
+    }
 
+    fn support_comparison_ops(lhs: &DataType, rhs: &DataType) -> bool {
         match (lhs, rhs) {
             _ if is_comparable_type(lhs) && is_comparable_type(rhs) && lhs == rhs => true,
             _ if is_comparable_type(lhs) && rhs == &Null => true,
             _ if lhs == &Null && is_comparable_type(rhs) => true,
+            _ if are_numeric_types(lhs, rhs) => true,
             _ => false,
         }
     }
 
-    fn support_arithmetic_ops(lhs: &DataType, rhs: &DataType) -> bool {
+    fn support_arithmetic_ops(lhs: &DataType, rhs: &DataType, types: &[DataType]) -> bool {
         match (lhs, rhs) {
-            (Int32, Int32) => true,
-            (Int32, Null) => true,
-            (Null, Int32) => true,
+            (lhs, rhs) if types.contains(lhs) && types.contains(rhs) => true,
+            (lhs, Null) if types.contains(lhs) => true,
+            (Null, rhs) if types.contains(rhs) => true,
             _ => false,
         }
     }
@@ -242,6 +244,15 @@ where
             (String, String) => true,
             (String, Null) => true,
             (Null, String) => true,
+            _ => false,
+        }
+    }
+
+    fn support_equality(lhs: &DataType, rhs: &DataType) -> bool {
+        match (lhs, rhs) {
+            _ if lhs == rhs => true,
+            _ if lhs == &Null || rhs == &Null => true,
+            _ if are_numeric_types(lhs, rhs) => true,
             _ => false,
         }
     }
@@ -260,21 +271,30 @@ where
         // Logical
 
         // Arithmetic
-        (lhs, Plus | Minus | Multiply | Divide | Modulo, rhs) if support_arithmetic_ops(lhs, rhs) => Ok(Int32),
+        (lhs, Plus | Minus | Multiply | Divide | Modulo, rhs) if support_arithmetic_ops(lhs, rhs, &[Int32]) => {
+            Ok(Int32)
+        }
+        // int32 <op> float32 = float32
+        // float32 <op> int32 = float32
+        (lhs, Plus | Minus | Multiply | Divide, rhs) if support_arithmetic_ops(lhs, rhs, &[Int32, Float32]) => {
+            Ok(Float32)
+        }
 
         // Comparison
         (lhs, Lt | LtEq | Gt | GtEq, rhs) if support_comparison_ops(lhs, rhs) => Ok(Bool),
 
         // Date
-        (Date, Plus | Minus, Interval) => Ok(Date),
-        (Date, Plus | Minus, Null) => Ok(Date),
-        (Null, Plus | Minus, Date) => Ok(Date),
+        (Date, Minus, Date) => Ok(Interval),
+        (Date, Plus, Interval) => Ok(Date),
+        (Date, Minus, Interval) => Ok(Date),
 
         // Time
         (Time, Minus, Time) => Ok(Interval),
-        (Time, Plus | Minus, Interval) => Ok(Time),
-        (Time, Plus | Minus, Null) => Ok(Time),
-        (Null, Plus | Minus, Time) => Ok(Time),
+        (Time, Plus, Interval) => Ok(Time),
+        (Time, Minus, Interval) => Ok(Interval),
+        (Interval, Minus, Time) => Ok(Interval),
+        (Time, Minus, Null) => Ok(Interval),
+        (Null, Minus, Time) => Ok(Interval),
 
         // Timestamp
         (Timestamp(tz), Plus | Minus, Interval) => Ok(Timestamp(*tz)),
@@ -303,14 +323,17 @@ where
         (_, Concat, String) => Ok(String),
 
         // Equality
-        (lhs, Eq | NotEq, rhs) if lhs == rhs => Ok(Bool),
-        (lhs, Eq | NotEq, rhs) if lhs == &Null || rhs == &Null => Ok(Bool),
-        //
+        (lhs, Eq | NotEq, rhs) if support_equality(lhs, rhs) => Ok(Bool),
+
         _ => {
             let message = format!("Expr: {} No operator for {} {} {}", expr, lhs, op, rhs);
             Err(type_error(message))
         }
     }
+}
+
+fn are_numeric_types(lhs: &DataType, rhs: &DataType) -> bool {
+    DataType::NUMERIC_TYPES.contains(lhs) && DataType::NUMERIC_TYPES.contains(rhs)
 }
 
 fn expect_type_or_null<T>(tpe: &DataType, expected: &DataType, expr: &Expr<T>) -> Result<(), OptimizerError>
@@ -496,6 +519,7 @@ mod test {
         expect_type(&int_value().cast(DataType::Bool), &DataType::Bool);
         expect_type(&int_value().cast(DataType::Int32), &DataType::Int32);
         expect_type(&int_value().cast(DataType::String), &DataType::String);
+        expect_type(&int_value().cast(DataType::Float32), &DataType::Float32);
     }
 
     #[test]

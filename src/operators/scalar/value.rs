@@ -1,12 +1,14 @@
 use chrono::{DateTime, Datelike, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, Timelike, Utc};
 use itertools::Itertools;
+use ordered_float::OrderedFloat;
 use std::fmt::{Display, Formatter};
+use std::hash::{Hash, Hasher};
 
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
 
 /// Supported scalar values.
-#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Clone)]
 pub enum ScalarValue {
     /// Null.
     Null,
@@ -14,6 +16,8 @@ pub enum ScalarValue {
     Bool(Option<bool>),
     /// 32-bit signed integer.
     Int32(Option<i32>),
+    /// 32-bit floating point number.
+    Float32(Option<f32>),
     /// Utf-8 string.
     String(Option<String>),
     /// Date in days since January 1, year 1 in the Gregorian calendar.
@@ -110,6 +114,7 @@ impl ScalarValue {
             ScalarValue::Bool(Some(_)) => DataType::Bool,
             ScalarValue::Bool(None) => DataType::Null,
             ScalarValue::Int32(_) => DataType::Int32,
+            ScalarValue::Float32(_) => DataType::Float32,
             ScalarValue::String(_) => DataType::String,
             ScalarValue::Date(_) => DataType::Date,
             ScalarValue::Time(_) => DataType::Time,
@@ -121,12 +126,68 @@ impl ScalarValue {
     }
 }
 
+impl PartialEq for ScalarValue {
+    fn eq(&self, other: &Self) -> bool {
+        use ScalarValue::*;
+        match (self, other) {
+            (Null, Null) => true,
+            (Bool(lhs), Bool(rhs)) => lhs == rhs,
+            (Int32(lhs), Int32(rhs)) => lhs == rhs,
+            (Float32(lhs), Float32(rhs)) => {
+                let lhs = lhs.map(OrderedFloat::from);
+                let rhs = rhs.map(OrderedFloat::from);
+                lhs == rhs
+            }
+            (String(lhs), String(rhs)) => lhs == rhs,
+            (Date(lhs), Date(rhs)) => lhs == rhs,
+            (Time(lhs), Time(rhs)) => lhs == rhs,
+            (Timestamp(lhs, tz_lhs), Timestamp(rhs, tz_rhs)) => lhs == rhs && tz_lhs == tz_rhs,
+            (Interval(lhs), Interval(rhs)) => lhs == rhs,
+            (Tuple(lhs, tpe_lhs), Tuple(rhs, tpe_rhs)) => lhs == rhs && tpe_lhs == tpe_rhs,
+            (Array(lhs, tpe_lhs), Array(rhs, tpe_rhs)) => lhs == rhs && tpe_lhs == tpe_rhs,
+            _ => false,
+        }
+    }
+}
+
+impl Eq for ScalarValue {}
+
+impl Hash for ScalarValue {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            ScalarValue::Null => 0.hash(state),
+            ScalarValue::Bool(value) => value.hash(state),
+            ScalarValue::Int32(value) => value.hash(state),
+            ScalarValue::Float32(value) => value.map(OrderedFloat::from).hash(state),
+            ScalarValue::String(value) => value.hash(state),
+            ScalarValue::Date(value) => value.hash(state),
+            ScalarValue::Time(value) => value.hash(state),
+            ScalarValue::Timestamp(value, tz) => {
+                value.hash(state);
+                tz.hash(state);
+            }
+            ScalarValue::Interval(value) => {
+                value.hash(state);
+            }
+            ScalarValue::Tuple(value, tpe) => {
+                value.hash(state);
+                tpe.hash(state);
+            }
+            ScalarValue::Array(value, tpe) => {
+                value.hash(state);
+                tpe.hash(state);
+            }
+        }
+    }
+}
+
 impl Display for ScalarValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
             ScalarValue::Null => write!(f, "NULL"),
             ScalarValue::Bool(Some(value)) => write!(f, "{}", value),
             ScalarValue::Int32(Some(value)) => write!(f, "{}", value),
+            ScalarValue::Float32(Some(value)) => write!(f, "{}", value),
             ScalarValue::String(Some(value)) => write!(f, "{}", value),
             ScalarValue::Date(Some(value)) => match NaiveDate::from_num_days_from_ce_opt(*value) {
                 Some(date) => write!(f, "{}", date),
@@ -204,6 +265,7 @@ impl Display for ScalarValue {
             }
             ScalarValue::Bool(None) => write!(f, "NULL"),
             ScalarValue::Int32(None) => write!(f, "NULL"),
+            ScalarValue::Float32(None) => write!(f, "NULL"),
             ScalarValue::String(None) => write!(f, "NULL"),
             ScalarValue::Date(None) => write!(f, "NULL"),
             ScalarValue::Time(None) => write!(f, "NULL"),
@@ -270,6 +332,12 @@ impl Scalar for i32 {
     }
 }
 
+impl Scalar for f32 {
+    fn get_value(&self) -> ScalarValue {
+        ScalarValue::Float32(Some(*self))
+    }
+}
+
 impl Scalar for &str {
     fn get_value(&self) -> ScalarValue {
         ScalarValue::String(Some((*self).to_owned()))
@@ -292,6 +360,7 @@ mod test {
         assert_eq!(ScalarValue::Null.data_type(), DataType::Null, "null value");
         assert_eq!(true.get_value().data_type(), DataType::Bool, "bool value");
         assert_eq!(1.get_value().data_type(), DataType::Int32, "i32 value");
+        assert_eq!(1f32.get_value().data_type(), DataType::Float32, "f32 value");
         assert_eq!(ScalarValue::String(Some(String::from("abc"))).data_type(), DataType::String, "string value");
 
         assert_eq!(
