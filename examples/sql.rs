@@ -60,8 +60,8 @@ fn create_catalog() -> Result<CatalogRef, OptimizerError> {
 
     let table_b = TableBuilder::new("b").add_column("b1", DataType::Int32).add_row_count(200).build()?;
 
-    catalog.add_table(DEFAULT_SCHEMA, table_a);
-    catalog.add_table(DEFAULT_SCHEMA, table_b);
+    catalog.add_table(DEFAULT_SCHEMA, table_a)?;
+    catalog.add_table(DEFAULT_SCHEMA, table_b)?;
     Ok(catalog)
 }
 

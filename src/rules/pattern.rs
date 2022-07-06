@@ -1,13 +1,11 @@
 //! Patterns to match operator trees.
 
 use crate::memo::MemoExpr;
-use crate::operators::relational::logical::{LogicalExpr, LogicalGet, LogicalProjection, LogicalSelect};
+use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::physical::PhysicalExpr;
-use crate::operators::relational::{RelExpr, RelNode};
-use crate::operators::scalar::value::ScalarValue;
+use crate::operators::relational::RelExpr;
 use crate::operators::scalar::ScalarExpr;
 use crate::operators::{Operator, OperatorExpr};
-use std::num::FpCategory;
 
 /// A type alias for the function type that matches [operators](Operator).
 type Matcher = Box<dyn Fn(&Operator) -> bool>;
@@ -140,7 +138,7 @@ pub fn any() -> Pattern {
 /// Creates a [pattern builder](PatternBuilder) for a pattern that matches any expression.
 pub fn any_expr() -> PatternBuilder {
     PatternBuilder {
-        matcher: Box::new(|expr| true),
+        matcher: Box::new(|_| true),
         inputs: Vec::new(),
     }
 }
@@ -220,8 +218,10 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::operators::relational::logical::LogicalEmpty;
+    use crate::operators::relational::logical::{LogicalEmpty, LogicalGet, LogicalSelect};
     use crate::operators::relational::physical::{Projection, Scan, Select};
+    use crate::operators::relational::RelNode;
+    use crate::operators::scalar::value::ScalarValue;
     use crate::operators::scalar::{scalar, ScalarNode};
 
     #[test]

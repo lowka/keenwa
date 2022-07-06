@@ -1062,7 +1062,7 @@ LogicalExcept all=:all cols=[5, 6]
     fn test_push_past_window_aggregate() {
         rewrite_expr(
             |builder| {
-                let mut from_a = builder.get("A", vec!["a1", "a2"])?;
+                let from_a = builder.get("A", vec!["a1", "a2"])?;
                 let window_aggr = ScalarExpr::WindowAggregate {
                     func: WindowOrAggregateFunction::Aggregate(AggregateFunction::Count),
                     args: vec![col("a1")],

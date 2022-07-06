@@ -733,7 +733,7 @@ fn build_value_expr(value: Value) -> Result<ScalarExpr, OptimizerError> {
     //because sqlparser's bigdecimal feature is not enabled.
     let value = match value {
         Value::Number(value, _) => {
-            let value = if value.contains(".") {
+            let value = if value.contains('.') {
                 f32::from_str(value.as_str())
                     .map(|v| ScalarValue::Float32(Some(v)))
                     .map_err(|e| e.to_string())
@@ -948,7 +948,7 @@ fn build_function_expr(func: Function, builder: OperatorBuilder) -> Result<Scala
     }
 
     // Reject COUNT(*, a1), COUNT(DISTINCT *) and alike.
-    if count_all && args.len() > 1 || count_all && distinct {
+    if count_all && (args.len() > 1 || distinct) {
         return Err(OptimizerError::argument(format!("FUNCTION: function {} is called with invalid arguments", name)));
     }
 

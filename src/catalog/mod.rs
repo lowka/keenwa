@@ -2,7 +2,7 @@
 
 use std::any::Any;
 use std::collections::HashSet;
-use std::fmt::{Debug, Display, Formatter};
+use std::fmt::Debug;
 use std::sync::Arc;
 
 use crate::datatypes::DataType;
@@ -584,7 +584,6 @@ mod test {
             .build()?;
 
         let table = Arc::new(table);
-        let ordering = OrderingBuilder::new(table.clone()).add_asc("a1").add_desc("a3").build()?;
         let res = IndexBuilder::new(table, "A_a1_a2_idx").build();
 
         expect_error(res, "Index: no columns have been specified");

@@ -246,13 +246,7 @@ where
     }
 
     fn support_string_ops(lhs: &DataType, rhs: &DataType) -> bool {
-        match (lhs, rhs) {
-            (String, String) => true,
-            (String, Null) => true,
-            (Null, String) => true,
-            (Null, Null) => true,
-            _ => false,
-        }
+        matches!((lhs, rhs), (String, String) | (String, Null) | (Null, String) | (Null, Null))
     }
 
     fn support_equality(lhs: &DataType, rhs: &DataType) -> bool {
