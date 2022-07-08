@@ -113,7 +113,7 @@ Cost-based query optimizer (WIP).
 - [x] CASE expression.
 - [x] LIKE/NOT LIKE
 - [x] Tuples.
-- [ ] Array access.
+- [x] Array access.
 - [x] Window functions.
 - [ ] User-defined aggregate functions.
 - TODO
