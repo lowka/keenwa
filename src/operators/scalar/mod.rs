@@ -91,6 +91,7 @@ pub fn get_subquery(expr: &ScalarExpr) -> Option<&RelNode> {
         ScalarExpr::Not(_) => None,
         ScalarExpr::Negation(_) => None,
         ScalarExpr::InList { .. } => None,
+        ScalarExpr::ArrayIndex { .. } => None,
         ScalarExpr::IsNull { .. } => None,
         ScalarExpr::Between { .. } => None,
         ScalarExpr::Alias(_, _) => None,

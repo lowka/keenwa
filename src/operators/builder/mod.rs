@@ -15,7 +15,6 @@ use crate::catalog::CatalogRef;
 use crate::error::OptimizerError;
 use crate::memo::MemoExprState;
 use crate::meta::{ColumnId, ColumnMetadata, MetadataRef, MutableMetadata};
-use crate::not_implemented;
 use crate::operators::builder::aggregate::{add_window_aggregates, has_window_aggregates};
 use crate::operators::builder::scope::CteInScope;
 use crate::operators::builder::subqueries::{
@@ -34,6 +33,7 @@ use crate::operators::scalar::{get_subquery, scalar, ScalarExpr, ScalarNode};
 use crate::operators::{ExprMemo, Operator, OperatorExpr, OperatorMetadata, OuterScope, Properties, ScalarProperties};
 use crate::properties::physical::{PhysicalProperties, RequiredProperties};
 use crate::properties::{OrderingChoice, OrderingColumn};
+use crate::{not_implemented, not_supported};
 
 mod aggregate;
 mod projection;
@@ -1207,6 +1207,14 @@ where
                 not_implemented!(!is_root, "WINDOW FUNCTIONS: must be a root of an expression tree: {}", expr);
                 self.window_func_depth += 1
             }
+            // Do not allow ScalarValues of type Array and Tuple both of those are created
+            // via ScalarExprs of the same type.
+            ScalarExpr::Scalar(ScalarValue::Array(_, _)) => {
+                not_implemented!("ARRAYS: scalar value of type array")
+            }
+            ScalarExpr::Scalar(ScalarValue::Tuple(_, _)) => {
+                not_implemented!("TUPLES: scalar value of type tuple")
+            }
             _ => {}
         }
         if self.aggregate_depth > 1 {
@@ -1254,8 +1262,62 @@ where
 
                 self.window_func_depth -= 1;
             }
-            _ => {}
+            _ => {
+                self.validate_array_expr(expr)?;
+            }
         }
+        Ok(())
+    }
+
+    fn validate_array_expr(&self, expr: &ScalarExpr) -> Result<(), OptimizerError> {
+        #[derive(Debug, Eq, PartialEq, Clone)]
+        enum ArrayDimensions {
+            Value,
+            Array {
+                size: usize,
+                element_type: Box<ArrayDimensions>,
+            },
+        }
+
+        fn check_type(expr: &ScalarExpr) -> Result<ArrayDimensions, OptimizerError> {
+            if let ScalarExpr::Array(elements) = expr {
+                let mut first_element_type = None;
+
+                for element in elements.iter() {
+                    if let ScalarExpr::Scalar(ScalarValue::Null) = element {
+                        // Ignore NULLs because NULL can be both an array and a value.
+                    } else {
+                        match &first_element_type {
+                            None => {
+                                first_element_type = Some(check_type(element)?);
+                            }
+                            Some(element_type) => {
+                                let current_type = check_type(element)?;
+                                if element_type != &current_type {
+                                    return Err(OptimizerError::argument(
+                                        "Multidimensional arrays must have array expressions with matching dimensions",
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                match first_element_type {
+                    None => {
+                        not_supported!("Empty array expression");
+                    }
+                    Some(element_type) => Ok(ArrayDimensions::Array {
+                        size: elements.len(),
+                        element_type: Box::new(element_type),
+                    }),
+                }
+            } else {
+                Ok(ArrayDimensions::Value)
+            }
+        }
+
+        check_type(expr)?;
         Ok(())
     }
 }
@@ -1510,7 +1572,7 @@ mod test {
     use crate::operators::format::{AppendMemo, AppendMetadata, OperatorTreeFormatter, SubQueriesFormatter};
     use crate::operators::properties::LogicalPropertiesBuilder;
     use crate::operators::scalar::aggregates::{AggregateFunction, WindowFunction};
-    use crate::operators::scalar::value::Scalar;
+    use crate::operators::scalar::value::{Array, Scalar};
     use crate::operators::scalar::{col, qualified_wildcard, scalar, wildcard};
     use crate::operators::{OperatorMemoBuilder, Properties, RelationalProperties};
     use crate::properties::logical::LogicalProperties;
@@ -2855,6 +2917,43 @@ Memo:
   00 LogicalGet a cols=[1, 2, 3, 4]
 "#,
         );
+    }
+
+    #[test]
+    fn test_reject_scalar_array_values() {
+        let mut tester = OperatorBuilderTester::new();
+        tester.build_operator(|builder| {
+            let empty = builder.empty(true)?;
+            let element = 1.get_value();
+            let element_type = element.data_type();
+
+            let array = ScalarValue::Array(
+                Some(Array {
+                    elements: vec![element],
+                }),
+                Box::new(element_type),
+            );
+            let array = empty.project(vec![ScalarExpr::Scalar(array)])?;
+
+            array.build()
+        });
+        tester.expect_error("ARRAYS: scalar value of type array");
+    }
+
+    #[test]
+    fn test_reject_scalar_tuple_values() {
+        let mut tester = OperatorBuilderTester::new();
+        tester.build_operator(|builder| {
+            let empty = builder.empty(true)?;
+            let element = 1.get_value();
+            let element_type = element.data_type();
+
+            let tuple = ScalarValue::Tuple(Some(vec![element]), Box::new(DataType::Tuple(vec![element_type])));
+            let tuple = empty.project(vec![ScalarExpr::Scalar(tuple)])?;
+
+            tuple.build()
+        });
+        tester.expect_error("TUPLES: scalar value of type tuple");
     }
 
     struct OperatorBuilderTester {

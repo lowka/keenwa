@@ -81,6 +81,8 @@ where
     Tuple(Vec<Expr<T>>),
     /// An array expression.
     Array(Vec<Expr<T>>),
+    /// Array access expression. (eg. `arr[0]` ).
+    ArrayIndex { array: Box<Expr<T>>, indexes: Vec<Expr<T>> },
     /// A scalar function expression.
     ScalarFunction { func: ScalarFunction, args: Vec<Expr<T>> },
     /// An aggregate expression.
@@ -214,6 +216,12 @@ where
                     expr.accept(visitor)?
                 }
             }
+            Expr::ArrayIndex { array, indexes } => {
+                array.accept(visitor)?;
+                for expr in indexes {
+                    expr.accept(visitor)?;
+                }
+            }
             Expr::ScalarFunction { args, .. } => {
                 for arg in args {
                     arg.accept(visitor)?;
@@ -298,6 +306,11 @@ where
                 let expr = rewrite_boxed(*expr, rewriter)?;
                 let exprs = rewrite_vec(exprs, rewriter)?;
                 Expr::InList { not, expr, exprs }
+            }
+            Expr::ArrayIndex { array, indexes } => {
+                let array = rewrite_boxed(*array, rewriter)?;
+                let indexes = rewrite_vec(indexes, rewriter)?;
+                Expr::ArrayIndex { array, indexes }
             }
             Expr::IsNull { not, expr } => {
                 let expr = rewrite_boxed(*expr, rewriter)?;
@@ -416,6 +429,12 @@ where
             }
             Expr::Tuple(exprs) => exprs.clone(),
             Expr::Array(exprs) => exprs.clone(),
+            Expr::ArrayIndex { array, indexes } => {
+                let mut result = Vec::with_capacity(1 + indexes.len());
+                result.push(*array.clone());
+                result.extend(indexes.clone().into_iter());
+                result
+            }
             Expr::ScalarFunction { args, .. } => args.clone(),
             Expr::Aggregate { args, filter, .. } => {
                 let mut children: Vec<_> = args.to_vec();
@@ -567,6 +586,13 @@ where
             Expr::Array(exprs) => {
                 expect_children("Array", children.len(), exprs.len())?;
                 Expr::Array(children)
+            }
+            Expr::ArrayIndex { indexes, .. } => {
+                expect_children("ArrayIndex", children.len(), 1 + indexes.len())?;
+                Expr::ArrayIndex {
+                    array: Box::new(children.swap_remove(0)),
+                    indexes: children,
+                }
             }
             Expr::ScalarFunction { func, args } => {
                 expect_children("ScalarFunction", children.len(), args.len())?;
@@ -973,6 +999,13 @@ where
             }
             Expr::Array(exprs) => {
                 write!(f, "[{}]", exprs.iter().join(", "))
+            }
+            Expr::ArrayIndex { array, indexes } => {
+                write!(f, "{}", array)?;
+                for expr in indexes.iter() {
+                    write!(f, "[{}]", expr)?;
+                }
+                Ok(())
             }
             Expr::Ordering {
                 expr,
