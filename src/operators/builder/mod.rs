@@ -1110,7 +1110,7 @@ where
                 })
                 .collect();
 
-            OptimizerError::internal(format!(
+            OptimizerError::argument(format!(
                 "Unexpected column: {}. Input columns: {}, Outer columns: {}",
                 col_name,
                 DisplayColumns(scope.columns()),

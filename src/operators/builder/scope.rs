@@ -204,9 +204,9 @@ impl OperatorScope {
                     Ok(columns)
                 }
                 None if self.relations.find_relation_by_name(qualifier).is_some() => {
-                    Err(OptimizerError::internal(format!("Invalid reference to relation {}", qualifier)))
+                    Err(OptimizerError::argument(format!("Invalid reference to relation {}", qualifier)))
                 }
-                None => Err(OptimizerError::internal(format!("Unknown relation {}", qualifier))),
+                None => Err(OptimizerError::argument(format!("Unknown relation {}", qualifier))),
             }
         } else {
             Ok(self.relation.columns.to_vec())
