@@ -3,6 +3,7 @@ use crate::error::OptimizerError;
 use crate::meta::ColumnId;
 use crate::not_supported;
 use crate::operators::scalar::expr::{BinaryOp, Expr, NestedExpr};
+use itertools::Itertools;
 
 /// A helper trait that provides the type of the given column.
 pub trait ColumnTypeRegistry {
@@ -145,15 +146,43 @@ where
             let expr_types: Result<Vec<DataType>, _> =
                 exprs.iter().map(|expr| resolve_expr_type(expr, column_registry)).collect();
             let expr_types = expr_types?;
-            if let Some(expr_type) = expr_types.first() {
-                let same_type = expr_types[1..].iter().all(|tpe| expr_type == tpe);
-                if same_type {
-                    Ok(expr_type.clone())
-                } else {
-                    Err(type_error("Array with elements of different type"))
-                }
-            } else {
+
+            if expr_types.is_empty() {
+                //TODO: Untyped array case.
                 not_supported!("Empty array expression")
+            }
+
+            let mut element_type = None;
+            for expr_type in expr_types.iter() {
+                if expr_type != &DataType::Null {
+                    if element_type.is_none() {
+                        element_type = Some(expr_type.clone())
+                    } else if Some(expr_type) != element_type.as_ref() {
+                        return Err(type_error("Array with elements of different type"));
+                    }
+                }
+            }
+
+            match element_type {
+                Some(DataType::Array(element_type)) => Ok(DataType::Array(element_type)),
+                Some(element_type) => Ok(DataType::Array(Box::new(element_type))),
+                None => {
+                    Err(type_error(format!("Unable to resolve array element type: [{}]", expr_types.iter().join(", "))))
+                }
+            }
+        }
+        Expr::ArrayIndex { array, indexes } => {
+            let arr_type = resolve_expr_type(array, column_registry)?;
+            if let DataType::Array(element_type) = arr_type {
+                for expr in indexes {
+                    let index_type = resolve_expr_type(expr, column_registry)?;
+                    if index_type != DataType::Int32 {
+                        return Err(type_error(format!("Invalid array index type {}", index_type)));
+                    }
+                }
+                Ok(*element_type)
+            } else {
+                Err(type_error(format!("Expected array but got {}", arr_type)))
             }
         }
         Expr::ScalarFunction { func, args } => {
@@ -612,6 +641,68 @@ mod test {
             },
             &DataType::Bool,
         );
+    }
+
+    #[test]
+    fn test_array() {
+        let expr = Expr::Array(vec![int_value(), int_value()]);
+        expect_type(&expr, &DataType::Array(Box::new(DataType::Int32)));
+
+        let expr = Expr::Array(vec![int_value(), null_value()]);
+        expect_type(&expr, &DataType::Array(Box::new(DataType::Int32)));
+
+        let expr = Expr::Array(vec![null_value(), int_value()]);
+        expect_type(&expr, &DataType::Array(Box::new(DataType::Int32)));
+
+        // multidimensional array
+        let expr = Expr::Array(vec![Expr::Array(vec![int_value()]), Expr::Array(vec![int_value()])]);
+        expect_type(&expr, &DataType::Array(Box::new(DataType::Int32)));
+
+        let expr = Expr::Array(vec![
+            Expr::Array(vec![Expr::Array(vec![int_value()])]),
+            Expr::Array(vec![Expr::Array(vec![int_value()])]),
+        ]);
+        expect_type(&expr, &DataType::Array(Box::new(DataType::Int32)));
+
+        // array elements must be of the same type
+        let expr = Expr::Array(vec![int_value(), bool_value()]);
+        expect_not_resolved(&expr);
+
+        let expr = Expr::Array(vec![null_value(), int_value(), bool_value()]);
+        expect_not_resolved(&expr);
+
+        // FIXME: array with all elements of null type.
+        let expr = Expr::Array(vec![null_value(), null_value()]);
+        expect_not_resolved(&expr);
+
+        // multidimensional array
+        let expr = Expr::Array(vec![Expr::Array(vec![int_value()]), Expr::Array(vec![bool_value()])]);
+        expect_not_resolved(&expr);
+    }
+
+    #[test]
+    fn test_array_index() {
+        let arr_expr = Expr::Array(vec![bool_value(), bool_value()]);
+        let expr = Expr::ArrayIndex {
+            array: Box::new(arr_expr),
+            indexes: vec![int_value()],
+        };
+        expect_type(&expr, &DataType::Bool);
+
+        let arr_expr = Expr::Array(vec![Expr::Array(vec![bool_value()]), Expr::Array(vec![bool_value()])]);
+        let expr = Expr::ArrayIndex {
+            array: Box::new(arr_expr),
+            indexes: vec![int_value()],
+        };
+        expect_type(&expr, &DataType::Bool);
+
+        // invalid index type
+        let arr_expr = Expr::Array(vec![int_value(), int_value()]);
+        let expr = Expr::ArrayIndex {
+            array: Box::new(arr_expr),
+            indexes: vec![bool_value()],
+        };
+        expect_not_resolved(&expr)
     }
 
     #[test]

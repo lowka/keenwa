@@ -28,7 +28,7 @@ pub enum DataType {
     Interval,
     /// Tuple data type.
     ///
-    /// The arguments holds the types of each field of this tuple type.
+    /// The arguments hold the types of each field of this tuple type.
     Tuple(Vec<DataType>),
     /// Array data type.
     ///

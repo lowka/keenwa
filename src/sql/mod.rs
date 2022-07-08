@@ -659,7 +659,15 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
             ScalarExpr::Tuple(values?)
         }
         Expr::InUnnest { .. } => not_supported!("InUnnest expression"),
-        Expr::ArrayIndex { .. } => not_supported!("ArrayIndex expression"),
+        Expr::ArrayIndex { obj, indexs } => {
+            let expr = build_scalar_expr(*obj, builder.clone())?;
+            let indexes: Result<Vec<ScalarExpr>, OptimizerError> =
+                indexs.into_iter().map(|expr| build_scalar_expr(expr, builder.clone())).collect();
+            ScalarExpr::ArrayIndex {
+                array: Box::new(expr),
+                indexes: indexes?,
+            }
+        }
         Expr::Array(array) => {
             let values: Result<Vec<ScalarExpr>, OptimizerError> =
                 array.elem.into_iter().map(|expr| build_scalar_expr(expr, builder.clone())).collect();
