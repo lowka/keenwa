@@ -179,7 +179,7 @@ where
             FunctionReturnType::Expr(expr) => (expr)(arg_types),
         }
     } else {
-        Err(OptimizerError::internal(format!("No function {}({})", func, arg_types.iter().join(", "))))
+        Err(OptimizerError::argument(format!("No function {}({})", func, arg_types.iter().join(", "))))
     }
 }
 
@@ -277,7 +277,7 @@ mod test {
             .map_err(|e| format!("{}", e))
             .map(|r| format!("{}", r));
 
-        assert_eq!(result, Err(format!("Internal error: No function test_func(String)")));
+        assert_eq!(result, Err(format!("Argument error: No function test_func(String)")));
     }
 
     #[test]

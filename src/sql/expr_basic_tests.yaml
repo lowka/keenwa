@@ -76,11 +76,11 @@ catalog:
     columns: i:int32, b:bool, s:string
 query: lower(i) FROM test
 error: |
-  Internal error: No function lower(Int32)
+  Argument error: No function lower(Int32)
 ---
 query: lower(123)
 error: |
-  Internal error: No function lower(Int32)
+  Argument error: No function lower(Int32)
 ---
 query: concat('a', 1, true)
 ok: concat([a, 1, true])
@@ -111,9 +111,11 @@ ok: 11 NOT BETWEEN 0 AND 10
 #query: 5 BETWEEN ASYMMETRIC 0 AND 10
 #ok: 5 BETWEEN ASYMMETRIC 0 AND 10
 #---
+# Tuples
 query: (1, true, NOT false, 'abc')
 ok: (1, true, NOT false, abc)
 ---
+# Arrays
 query: |
   ARRAY[1, 2, 3]
 ok: |
@@ -149,11 +151,29 @@ queries:
 error: |
   Argument error: Multidimensional arrays must have array expressions with matching dimensions
 ---
+catalog:
+  - table: test
+    columns: i:int32, b:bool, s:string
+query:
+  ARRAY[i, 1] FROM test
+ok: |
+  [col:1, 1]
+---
+catalog:
+  - table: test
+    columns: i:int32, b:bool, s:string
+query: |
+  ARRAY[i, b] FROM test
+error: |
+  Argument error: Array with elements of different types
+---
+# Array access
 query: |
   ARRAY[[1,2,3], [4,5,6]][1][3]
 ok: |
   [[1, 2, 3], [4, 5, 6]][1][3]
 ---
+# Date/time types
 query: DATE '2000-12-03'
 ok: 2000-12-03
 ---

@@ -75,6 +75,6 @@ query: |
   JOIN b ON a1 = c1
   JOIN c ON c1 = a1
 error: |
-  Internal error: Unexpected column: c1. Input columns: [(a1, 1), (a2, 2), (a3, 3), (a4, 4), (b1, 5), (b2, 6), (b3, 7)], Outer columns: []
+  Argument error: Unexpected column: c1. Input columns: [(a1, 1), (a2, 2), (a3, 3), (a4, 4), (b1, 5), (b2, 6), (b3, 7)], Outer columns: []
 
 ---

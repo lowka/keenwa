@@ -47,19 +47,19 @@ ok: |
 query: |
   SELECT a1,b2 FROM A
 error: |
-  Internal error: Unexpected column: b2. Input columns: [(a1, 1), (a2, 2), (a3, 3), (a4, 4)], Outer columns: []
+  Argument error: Unexpected column: b2. Input columns: [(a1, 1), (a2, 2), (a3, 3), (a4, 4)], Outer columns: []
 
 ---
 query: |
   SELECT a.* FROM A as a1
 error: |
-  Internal error: Invalid reference to relation a
+  Argument error: Invalid reference to relation a
 
 ---
 query: |
   SELECT 1 as x, x FROM a
 error: |
-  Internal error: Unexpected column: x. Input columns: [(a1, 1), (a2, 2), (a3, 3), (a4, 4)], Outer columns: []
+  Argument error: Unexpected column: x. Input columns: [(a1, 1), (a2, 2), (a3, 3), (a4, 4)], Outer columns: []
 
 ---
 # wildcard
@@ -82,7 +82,7 @@ queries:
  - SELECT t.* FROM (SELECT * FROM (SELECT * FROM a t JOIN b ON true) t1) t2
  - SELECT t.* FROM (SELECT * FROM (SELECT * FROM a t0 JOIN b ON true) t) t2
 error: |
-  Internal error: Unknown relation t
+  Argument error: Unknown relation t
 
 ---
 # Ordering
@@ -119,7 +119,7 @@ ok: |
 query: |
   SELECT q.b1 FROM (SELECT a1 as x FROM a as t JOIN b as y on b1=a1 ORDER BY x, b1) q
 error: |
-  Internal error: Unexpected column: q.b1. Input columns: [(x, 8)], Outer columns: []
+  Argument error: Unexpected column: q.b1. Input columns: [(x, 8)], Outer columns: []
 
 ---
 # disallow forward references

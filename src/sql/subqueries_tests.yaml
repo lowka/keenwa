@@ -260,14 +260,14 @@ ok: |
 query: |
   SELECT a1 FROM a, (SELECT a1) tmp;
 error: |
-  Internal error: Unexpected column: a1. Input columns: [], Outer columns: [(a1, 1), (a2, 2), (a3, 3), (a4, 4)]
+  Argument error: Unexpected column: a1. Input columns: [], Outer columns: [(a1, 1), (a2, 2), (a3, 3), (a4, 4)]
 ---
 query: |
   SELECT a1 FROM a JOIN (SELECT b1 FROM b WHERE b1=a1) b ON true
 error: |
-  Internal error: Unexpected column: a1. Input columns: [(b1, 5), (b2, 6), (b3, 7)], Outer columns: []
+  Argument error: Unexpected column: a1. Input columns: [(b1, 5), (b2, 6), (b3, 7)], Outer columns: []
 ---
 query: |
   SELECT a1 FROM a LEFT JOIN b ON b2 = a2 LEFT JOIN (SELECT c1 FROM c WHERE c1=a2) bc ON true;
 error: |
-  Internal error: Unexpected column: a2. Input columns: [(c1, 8), (c2, 9), (c3, 10)], Outer columns: []
+  Argument error: Unexpected column: a2. Input columns: [(c1, 8), (c2, 9), (c3, 10)], Outer columns: []

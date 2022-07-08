@@ -173,5 +173,5 @@ query: |
   )
   SELECT a4 FROM a1_vals
 error: |
-  Internal error: Unexpected column: a4. Input columns: [(a1, 1), (a2, 2), (a3, 3)], Outer columns: []
+  Argument error: Unexpected column: a4. Input columns: [(a1, 1), (a2, 2), (a3, 3)], Outer columns: []
 ---
