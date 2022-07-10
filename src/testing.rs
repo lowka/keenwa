@@ -361,7 +361,7 @@ where
         self.fmt.write_value(name, value);
     }
 
-    fn write_values<'value, D: 'value>(&mut self, name: &str, values: impl ExactSizeIterator<Item = &'value D>)
+    fn write_values<D>(&mut self, name: &str, values: impl ExactSizeIterator<Item = D>)
     where
         D: Display,
     {

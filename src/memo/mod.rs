@@ -476,7 +476,7 @@ pub trait MemoExprFormatter {
         D: Display;
 
     /// Writes values of some attribute of a memo expression.
-    fn write_values<'value, D: 'value>(&mut self, name: &str, values: impl ExactSizeIterator<Item = &'value D>)
+    fn write_values<D>(&mut self, name: &str, values: impl ExactSizeIterator<Item = D>)
     where
         D: Display;
 
@@ -1262,7 +1262,7 @@ impl MemoExprFormatter for StringMemoFormatter<'_> {
         self.buf.push_str(value.to_string().as_str());
     }
 
-    fn write_values<'value, D: 'value>(&mut self, name: &str, mut values: impl ExactSizeIterator<Item = &'value D>)
+    fn write_values<D>(&mut self, name: &str, mut values: impl ExactSizeIterator<Item = D>)
     where
         D: Display,
     {
@@ -1323,7 +1323,7 @@ impl<'f, 'a> MemoExprFormatter for DisplayMemoExprFormatter<'f, 'a> {
         // Do not print value for Display trait
     }
 
-    fn write_values<'value, D: 'value>(&mut self, _name: &str, _values: impl ExactSizeIterator<Item = &'value D>)
+    fn write_values<D>(&mut self, _name: &str, _values: impl ExactSizeIterator<Item = D>)
     where
         D: Display,
     {

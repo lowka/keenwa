@@ -194,7 +194,7 @@ impl MemoExprFormatter for FormatHeader<'_> {
         self.fmt.write_value(name, value);
     }
 
-    fn write_values<'value, D: 'value>(&mut self, name: &str, values: impl ExactSizeIterator<Item = &'value D>)
+    fn write_values<D>(&mut self, name: &str, values: impl ExactSizeIterator<Item = D>)
     where
         D: Display,
     {
@@ -295,7 +295,7 @@ impl MemoExprFormatter for FormatExprs<'_> {
         // values are written by FormatHeader
     }
 
-    fn write_values<'value, D: 'value>(&mut self, _name: &str, _values: impl ExactSizeIterator<Item = &'value D>)
+    fn write_values<D>(&mut self, _name: &str, _values: impl ExactSizeIterator<Item = D>)
     where
         D: Display,
     {
@@ -448,6 +448,10 @@ where
         let required = physical.required.as_ref();
         if let Some(ordering) = required.and_then(|r| r.ordering()) {
             self.fmt.write_values("ordering", ordering.columns().iter());
+        }
+        if let Some(presentation) = physical.presentation.as_ref() {
+            self.fmt
+                .write_values("presentation", presentation.columns.iter().map(|(name, id)| format!("{}:{}", name, id)));
         }
     }
 }
