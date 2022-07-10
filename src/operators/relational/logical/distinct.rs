@@ -57,6 +57,6 @@ impl LogicalDistinct {
         f.write_name("LogicalDistinct");
         f.write_expr("input", &self.input);
         f.write_expr_if_present("on", self.on_expr.as_ref());
-        f.write_values("cols", &self.columns);
+        f.write_values("cols", self.columns.iter());
     }
 }

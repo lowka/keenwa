@@ -58,7 +58,7 @@ impl LogicalUnion {
         f.write_expr("left", &self.left);
         f.write_expr("right", &self.right);
         f.write_value("all", self.all);
-        f.write_values("cols", &self.columns);
+        f.write_values("cols", self.columns.iter());
     }
 }
 
@@ -114,7 +114,7 @@ impl LogicalIntersect {
         f.write_expr("left", &self.left);
         f.write_expr("right", &self.right);
         f.write_value("all", self.all);
-        f.write_values("cols", &self.columns);
+        f.write_values("cols", self.columns.iter());
     }
 }
 
@@ -173,6 +173,6 @@ impl LogicalExcept {
         f.write_expr("left", &self.left);
         f.write_expr("right", &self.right);
         f.write_value("all", self.all);
-        f.write_values("cols", &self.columns);
+        f.write_values("cols", self.columns.iter());
     }
 }

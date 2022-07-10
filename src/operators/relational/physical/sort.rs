@@ -57,6 +57,6 @@ impl Sort {
     {
         f.write_name("Sort");
         f.write_expr("input", &self.input);
-        f.write_values("ord", self.ordering.columns())
+        f.write_values("ord", self.ordering.columns().iter())
     }
 }

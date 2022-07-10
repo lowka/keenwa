@@ -67,6 +67,6 @@ impl HashedSetOp {
         f.write_expr("right", &self.right);
         f.write_value("intersect", &self.intersect);
         f.write_value("all", self.all);
-        f.write_values("cols", &self.columns)
+        f.write_values("cols", self.columns.iter())
     }
 }
