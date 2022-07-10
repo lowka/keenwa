@@ -49,6 +49,6 @@ impl Scan {
     {
         f.write_name("Scan");
         f.write_source(self.source.as_ref());
-        f.write_values("cols", self.columns.as_slice())
+        f.write_values("cols", self.columns.iter())
     }
 }

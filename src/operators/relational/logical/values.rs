@@ -48,6 +48,6 @@ impl LogicalValues {
     {
         f.write_name("LogicalValues");
         f.write_exprs("values", self.values.iter());
-        f.write_values("cols", &self.columns);
+        f.write_values("cols", self.columns.iter());
     }
 }

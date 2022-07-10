@@ -53,6 +53,6 @@ impl IndexScan {
     {
         f.write_name("IndexScan");
         f.write_source(self.source.as_ref());
-        f.write_values("cols", self.columns.as_slice())
+        f.write_values("cols", self.columns.iter())
     }
 }

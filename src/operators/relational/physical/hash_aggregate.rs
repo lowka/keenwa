@@ -84,6 +84,6 @@ impl HashAggregate {
         f.write_exprs("aggr_exprs", self.aggr_exprs.iter());
         f.write_exprs("group_exprs", self.group_exprs.iter());
         f.write_expr_if_present("having", self.having.as_ref());
-        f.write_values("cols", &self.columns);
+        f.write_values("cols", self.columns.iter());
     }
 }

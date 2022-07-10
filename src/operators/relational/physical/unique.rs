@@ -108,14 +108,14 @@ impl Unique {
             _ => f.write_exprs("inputs", self.inputs.iter()),
         }
         f.write_expr_if_present("on", self.on_expr.as_ref());
-        f.write_values("cols", &self.columns);
+        f.write_values("cols", self.columns.iter());
         match num_input {
             1 => f.write_value("ord", &self.ordering[0]),
             2 => {
                 f.write_value("left_ord", &self.ordering[0]);
                 f.write_value("right_ord", &self.ordering[1]);
             }
-            _ => f.write_values("ord", &self.ordering),
+            _ => f.write_values("ord", self.ordering.iter()),
         }
     }
 }

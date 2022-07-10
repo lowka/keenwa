@@ -44,6 +44,6 @@ impl LogicalGet {
     {
         f.write_name("LogicalGet");
         f.write_source(&self.source);
-        f.write_values("cols", &self.columns);
+        f.write_values("cols", self.columns.iter());
     }
 }

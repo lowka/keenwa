@@ -62,6 +62,6 @@ impl LogicalProjection {
         f.write_name("LogicalProjection");
         f.write_expr("input", &self.input);
         f.write_exprs("exprs", self.exprs.iter());
-        f.write_values("cols", &self.columns);
+        f.write_values("cols", self.columns.iter());
     }
 }

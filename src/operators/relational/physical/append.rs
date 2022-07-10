@@ -59,6 +59,6 @@ impl Append {
         f.write_name("Append");
         f.write_expr("left", &self.left);
         f.write_expr("right", &self.right);
-        f.write_values("cols", &self.columns);
+        f.write_values("cols", self.columns.iter());
     }
 }
