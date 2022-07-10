@@ -1,18 +1,16 @@
 use crate::error::OptimizerError;
 use crate::memo::{format_memo, Memo, MemoExpr, MemoExprFormatter, MemoFormatterFlags, StringMemoFormatter};
-use crate::meta::MutableMetadata;
 use crate::operators::relational::join::JoinCondition;
 use crate::operators::relational::logical::{
     LogicalAggregate, LogicalExpr, LogicalExprVisitor, LogicalJoin, LogicalSelect,
 };
 use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::get_subquery;
-use crate::operators::{Operator, OperatorExpr, Properties};
+use crate::operators::{Operator, OperatorExpr, OperatorMetadata, Properties};
 use crate::properties::logical::LogicalProperties;
 use crate::properties::physical::PhysicalProperties;
 use itertools::Itertools;
 use std::fmt::Display;
-use std::rc::Rc;
 
 /// Builds the following textual representation of the given operator tree:
 ///
@@ -309,12 +307,12 @@ impl MemoExprFormatter for FormatExprs<'_> {
 
 /// [OperatorFormatter] that writes plans of sub queries.
 pub struct SubQueriesFormatter {
-    metadata: Rc<MutableMetadata>,
+    metadata: OperatorMetadata,
 }
 
 impl SubQueriesFormatter {
     /// Creates an instance of [SubQueriesFormatter].
-    pub fn new(metadata: Rc<MutableMetadata>) -> Self {
+    pub fn new(metadata: OperatorMetadata) -> Self {
         Self { metadata }
     }
 }
@@ -458,12 +456,12 @@ where
 
 /// [OperatorFormatter] that writes metadata.
 pub struct AppendMetadata {
-    metadata: Rc<MutableMetadata>,
+    metadata: OperatorMetadata,
 }
 
 impl AppendMetadata {
     /// Creates a new instance of [AppendMetadata] formatter.
-    pub fn new(metadata: Rc<MutableMetadata>) -> Self {
+    pub fn new(metadata: OperatorMetadata) -> Self {
         AppendMetadata { metadata }
     }
 }
