@@ -1,7 +1,7 @@
 query: |
   SELECT a.* FROM a JOIN b on a2 = b2
 ok: |
-  LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:3, col:4]
+  LogicalProjection cols=[1, 2, 3, 4] presentation=[a1:1, a2:2, a3:3, a4:4] exprs: [col:1, col:2, col:3, col:4]
     input: LogicalJoin type=Inner on=col:2 = col:6
       left: LogicalGet a cols=[1, 2, 3, 4]
       right: LogicalGet b cols=[5, 6, 7]
@@ -10,7 +10,7 @@ ok: |
 query: |
   SELECT b.* FROM a JOIN b on a2 = b2
 ok: |
-  LogicalProjection cols=[5, 6, 7] exprs: [col:5, col:6, col:7]
+  LogicalProjection cols=[5, 6, 7] presentation=[b1:5, b2:6, b3:7] exprs: [col:5, col:6, col:7]
     input: LogicalJoin type=Inner on=col:2 = col:6
       left: LogicalGet a cols=[1, 2, 3, 4]
       right: LogicalGet b cols=[5, 6, 7]
@@ -21,7 +21,7 @@ ok: |
 query: |
   SELECT ab.* FROM a JOIN ab as ab USING (a1)
 ok: |
-  LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
+  LogicalProjection cols=[5, 6] presentation=[a1:5, b2:6] exprs: [col:5, col:6]
     input: LogicalJoin type=Inner using=[(1, 5)]
       left: LogicalGet a cols=[1, 2, 3, 4]
       right: LogicalGet ab cols=[5, 6]
@@ -32,7 +32,7 @@ ok: |
 query: | 
   SELECT a.* FROM a JOIN ab ab USING (a1)
 ok: |
-  LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:3, col:4]
+  LogicalProjection cols=[1, 2, 3, 4] presentation=[a1:1, a2:2, a3:3, a4:4] exprs: [col:1, col:2, col:3, col:4]
     input: LogicalJoin type=Inner using=[(1, 5)]
       left: LogicalGet a cols=[1, 2, 3, 4]
       right: LogicalGet ab cols=[5, 6]
@@ -44,7 +44,7 @@ query: |
   SELECT * FROM a JOIN b on a2 = b2 JOIN c on c2 = a3
 
 ok: |
-  LogicalProjection cols=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10] exprs: [col:1, col:2, col:3, col:4, col:5, col:6, col:7, col:8, col:9, col:10]
+  LogicalProjection cols=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10] presentation=[a1:1, a2:2, a3:3, a4:4, b1:5, b2:6, b3:7, c1:8, c2:9, c3:10] exprs: [col:1, col:2, col:3, col:4, col:5, col:6, col:7, col:8, col:9, col:10]
     input: LogicalJoin type=Inner on=col:9 = col:3
       left: LogicalJoin type=Inner on=col:2 = col:6
         left: LogicalGet a cols=[1, 2, 3, 4]
@@ -57,7 +57,7 @@ ok: |
 query: |
   SELECT * FROM (((SELECT 1 as a) UNION (SELECT 2 as a)) NATURAL JOIN (SELECT 1 as a))
 ok: |
-  LogicalProjection cols=[3, 4] exprs: [col:3, col:4]
+  LogicalProjection cols=[3, 4] presentation=[a:3, a:4] exprs: [col:3, col:4]
     input: LogicalJoin type=Inner using=[(3, 4)]
       left: LogicalUnion all=false cols=[3]
         left: LogicalProjection cols=[1] exprs: [1 AS a]

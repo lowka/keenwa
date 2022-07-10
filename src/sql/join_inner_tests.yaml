@@ -2,7 +2,7 @@ queries:
   - SELECT * FROM a JOIN b ON a1 = b1
   - SELECT * FROM a INNER JOIN b ON a1 = b1
 ok: |
-  LogicalProjection cols=[1, 2, 3, 4, 5, 6, 7] exprs: [col:1, col:2, col:3, col:4, col:5, col:6, col:7]
+  LogicalProjection cols=[1, 2, 3, 4, 5, 6, 7] presentation=[a1:1, a2:2, a3:3, a4:4, b1:5, b2:6, b3:7] exprs: [col:1, col:2, col:3, col:4, col:5, col:6, col:7]
     input: LogicalJoin type=Inner on=col:1 = col:5
       left: LogicalGet a cols=[1, 2, 3, 4]
       right: LogicalGet b cols=[5, 6, 7]
@@ -10,7 +10,7 @@ ok: |
 query: | 
   SELECT a1 FROM a JOIN ab USING (a1)
 ok: |
-  LogicalProjection cols=[1] exprs: [col:1]
+  LogicalProjection cols=[1] presentation=[a1:1] exprs: [col:1]
     input: LogicalJoin type=Inner using=[(1, 5)]
       left: LogicalGet a cols=[1, 2, 3, 4]
       right: LogicalGet ab cols=[5, 6]
@@ -19,7 +19,7 @@ ok: |
 query: |
   SELECT * FROM a JOIN ab USING (a1)
 ok: |
-  LogicalProjection cols=[1, 2, 3, 4, 5, 6] exprs: [col:1, col:2, col:3, col:4, col:5, col:6]
+  LogicalProjection cols=[1, 2, 3, 4, 5, 6] presentation=[a1:1, a2:2, a3:3, a4:4, a1:5, b2:6] exprs: [col:1, col:2, col:3, col:4, col:5, col:6]
     input: LogicalJoin type=Inner using=[(1, 5)]
       left: LogicalGet a cols=[1, 2, 3, 4]
       right: LogicalGet ab cols=[5, 6]
@@ -36,11 +36,11 @@ error: |
 query: |
   SELECT a1, (SELECT 1 FROM b JOIN c ON b1=c1 AND c1=a2) FROM a
 ok: |
-  LogicalProjection cols=[1, 12] exprs: [col:1, SubQuery 05]
+  LogicalProjection cols=[1, 12] presentation=[a1:1, ?column?:12] exprs: [col:1, SubQuery 05]
     input: LogicalGet a cols=[1, 2, 3, 4]
 
   Sub query from column 12:
-  LogicalProjection cols=[11] outer_cols=[2] exprs: [1]
+  LogicalProjection cols=[11] outer_cols=[2] presentation=[?column?:11] exprs: [1]
     input: LogicalJoin type=Inner on=col:5 = col:8 AND col:8 = col:2 outer_cols=[2]
       left: LogicalGet b cols=[5, 6, 7]
       right: LogicalGet c cols=[8, 9, 10]

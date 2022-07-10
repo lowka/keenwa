@@ -5,6 +5,8 @@ use crate::operators::builder::{OperatorBuilder, RewriteExprs, ValidateProjectio
 use crate::operators::scalar::types::resolve_expr_type;
 use crate::operators::scalar::{ScalarExpr, ScalarNode};
 
+static NOT_NAMED_COLUMN: &str = "?column?";
+
 pub(super) struct ProjectionListBuilder<'a> {
     builder: &'a mut OperatorBuilder,
     scope: &'a OperatorScope,
@@ -55,7 +57,18 @@ impl<'a> ProjectionListBuilder<'a> {
                     ScalarExpr::WindowAggregate { ref func, .. } => {
                         self.add_synthetic_column(expr.clone(), format!("{}", func), expr)?
                     }
-                    _ => self.add_synthetic_column(expr.clone(), "?column?".into(), expr)?,
+                    ScalarExpr::SubQuery(ref rel) => {
+                        // FIXME: presentation is absent for this subquery. Return an error?
+                        let col_name = rel
+                            .props()
+                            .physical
+                            .presentation
+                            .as_ref()
+                            .map(|p| p.columns[0].0.clone())
+                            .unwrap_or_else(|| String::from(NOT_NAMED_COLUMN));
+                        self.add_synthetic_column(expr.clone(), col_name, expr)?
+                    }
+                    _ => self.add_synthetic_column(expr.clone(), NOT_NAMED_COLUMN.into(), expr)?,
                 };
             }
         };

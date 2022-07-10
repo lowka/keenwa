@@ -91,6 +91,8 @@ fn build_from_sql(builder: OperatorBuilder, query_str: &str) -> Result<Operator,
     let mut builder = builder;
     for stmt in ast {
         builder = build_statement(builder, stmt)?;
+        // Add presentation property to the top level operator.
+        builder = builder.with_presentation()?;
     }
 
     builder.build()
@@ -646,6 +648,8 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
         }
         Expr::Subquery(query) => {
             let builder = build_query(builder.sub_query_builder(), *query)?;
+            // Add presentation to a subquery to preserve the names of its columns.
+            let builder = builder.with_presentation()?;
             let subquery = builder.build()?;
             ScalarExpr::SubQuery(RelNode::try_from(subquery)?)
         }

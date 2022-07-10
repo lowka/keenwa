@@ -1,21 +1,21 @@
 query: |
   SELECT count(a1) FROM a
 ok: |
-  LogicalAggregate cols=[5] aggr_exprs: [count(col:1)]
+  LogicalAggregate cols=[5] presentation=[count:5] aggr_exprs: [count(col:1)]
     input: LogicalGet a cols=[1, 2, 3, 4]
 
 ---
 query: |
   SELECT count(*) FROM a
 ok: |
-  LogicalAggregate cols=[5] aggr_exprs: [count(1)]
+  LogicalAggregate cols=[5] presentation=[count:5] aggr_exprs: [count(1)]
     input: LogicalGet a cols=[1, 2, 3, 4]
 
 ---
 query: |
   SELECT a1, count(a1) FROM a GROUP BY a1
 ok: |
-  LogicalAggregate cols=[1, 5]
+  LogicalAggregate cols=[1, 5] presentation=[a1:1, count:5]
     aggr_exprs: [col:1, count(col:1)]
     group_exprs: [col:1]
     input: LogicalGet a cols=[1, 2, 3, 4]
@@ -23,7 +23,7 @@ ok: |
 query: |
   SELECT 1 + (2 + count(a1) + 10*(4 + sum(a1))) FROM a GROUP BY a1
 ok: |
-  LogicalAggregate cols=[5]
+  LogicalAggregate cols=[5] presentation=[?column?:5]
     aggr_exprs: [1 + 2 + count(col:1) + 10 * 4 + sum(col:1)]
     group_exprs: [col:1]
     input: LogicalGet a cols=[1, 2, 3, 4]
@@ -31,7 +31,7 @@ ok: |
 query: |
   SELECT a1, count(distinct a1) FROM a GROUP BY a1
 ok: |
-  LogicalAggregate cols=[1, 5]
+  LogicalAggregate cols=[1, 5] presentation=[a1:1, count:5]
     aggr_exprs: [col:1, count(distinct col:1)]
     group_exprs: [col:1]
     input: LogicalGet a cols=[1, 2, 3, 4]
@@ -39,7 +39,7 @@ ok: |
 query: |
   SELECT count(a1) FROM a GROUP by a1
 ok: |
-  LogicalAggregate cols=[5]
+  LogicalAggregate cols=[5] presentation=[count:5]
     aggr_exprs: [count(col:1)]
     group_exprs: [col:1]
     input: LogicalGet a cols=[1, 2, 3, 4]
@@ -47,7 +47,7 @@ ok: |
 query: |
   SELECT a1, sum(a2) FROM a GROUP BY a1
 ok: |
-  LogicalAggregate cols=[1, 5]
+  LogicalAggregate cols=[1, 5] presentation=[a1:1, sum:5]
     aggr_exprs: [col:1, sum(col:2)]
     group_exprs: [col:1]
     input: LogicalGet a cols=[1, 2, 3, 4]
@@ -56,7 +56,7 @@ ok: |
 query: |
   SELECT a1_count FROM (SELECT count(a1) as a1_count FROM a GROUP by a1)
 ok: |
-  LogicalProjection cols=[5] exprs: [col:5]
+  LogicalProjection cols=[5] presentation=[a1_count:5] exprs: [col:5]
     input: LogicalAggregate cols=[5]
       aggr_exprs: [count(col:1) AS a1_count]
       group_exprs: [col:1]
@@ -66,7 +66,7 @@ ok: |
 query: |
   SELECT count(1)
 ok: |
-  LogicalAggregate cols=[1] aggr_exprs: [count(1)]
+  LogicalAggregate cols=[1] presentation=[count:1] aggr_exprs: [count(1)]
     input: LogicalEmpty return_one_row=true
 
 ---
@@ -83,7 +83,7 @@ error: |
 query: |
   SELECT sum(a1) FROM a GROUP BY a1 HAVING count(a1) > 0
 ok: |
-  LogicalAggregate cols=[5]
+  LogicalAggregate cols=[5] presentation=[sum:5]
     aggr_exprs: [sum(col:1)]
     group_exprs: [col:1]
     input: LogicalGet a cols=[1, 2, 3, 4]
@@ -93,7 +93,7 @@ ok: |
 query: |
   SELECT sum(a1) FROM a GROUP BY a2 HAVING count(a1) > 0 and a2 > 0
 ok: |
-  LogicalAggregate cols=[5]
+  LogicalAggregate cols=[5] presentation=[sum:5]
     aggr_exprs: [sum(col:1)]
     group_exprs: [col:2]
     input: LogicalGet a cols=[1, 2, 3, 4]
@@ -102,7 +102,7 @@ ok: |
 query: |
   SELECT a2, sum(a1) FROM a GROUP BY a2 HAVING count(a1) > 0 and a2 > 0
 ok: |
-  LogicalAggregate cols=[2, 5]
+  LogicalAggregate cols=[2, 5] presentation=[a2:2, sum:5]
     aggr_exprs: [col:2, sum(col:1)]
     group_exprs: [col:2]
     input: LogicalGet a cols=[1, 2, 3, 4]

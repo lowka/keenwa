@@ -1,7 +1,7 @@
 query: |
   SELECT row_number() OVER (PARTITION BY a1) FROM a
 ok: |
-  LogicalProjection cols=[5] exprs: [col:5]
+  LogicalProjection cols=[5] presentation=[row_number:5] exprs: [col:5]
     input: LogicalWindowAggregate cols=[5]
       input: LogicalGet a cols=[1, 2, 3, 4]
       window_expr: Expr row_number() OVER(PARTITION BY col:1)
@@ -9,7 +9,7 @@ ok: |
 query:
   SELECT row_number() OVER (PARTITION BY a1) as row_number FROM a
 ok: |
-  LogicalProjection cols=[5] exprs: [row_number() OVER(PARTITION BY col:1) AS row_number]
+  LogicalProjection cols=[5] presentation=[row_number:5] exprs: [row_number() OVER(PARTITION BY col:1) AS row_number]
     input: LogicalWindowAggregate cols=[5]
       input: LogicalGet a cols=[1, 2, 3, 4]
       window_expr: Expr row_number() OVER(PARTITION BY col:1)
@@ -17,7 +17,7 @@ ok: |
 query: |
   SELECT a2, rank() OVER (PARTITION BY a1) FROM a
 ok: |
-  LogicalProjection cols=[2, 5] exprs: [col:2, col:5]
+  LogicalProjection cols=[2, 5] presentation=[a2:2, rank:5] exprs: [col:2, col:5]
     input: LogicalWindowAggregate cols=[2, 5]
       input: LogicalGet a cols=[1, 2, 3, 4]
       window_expr: Expr rank() OVER(PARTITION BY col:1)
@@ -25,7 +25,7 @@ ok: |
 query: |
   SELECT row_number() OVER(), a2, rank() OVER (PARTITION BY a1) FROM a
 ok: |
-  LogicalProjection cols=[5, 2, 6] exprs: [col:5, col:2, col:6]
+  LogicalProjection cols=[5, 2, 6] presentation=[row_number:5, a2:2, rank:6] exprs: [col:5, col:2, col:6]
     input: LogicalWindowAggregate cols=[5, 2, 6]
       input: LogicalWindowAggregate cols=[5, 2]
         input: LogicalGet a cols=[1, 2, 3, 4]
@@ -35,7 +35,7 @@ ok: |
 query: |
   SELECT rank() OVER (PARTITION BY a1,a2), row_number() OVER(), a2, rank() OVER (PARTITION BY a1) FROM a
 ok: |
-  LogicalProjection cols=[5, 6, 2, 7] exprs: [col:5, col:6, col:2, col:7]
+  LogicalProjection cols=[5, 6, 2, 7] presentation=[rank:5, row_number:6, a2:2, rank:7] exprs: [col:5, col:6, col:2, col:7]
     input: LogicalWindowAggregate cols=[5, 6, 2, 7]
       input: LogicalWindowAggregate cols=[5, 6, 2]
         input: LogicalWindowAggregate cols=[5, 2]
@@ -47,7 +47,7 @@ ok: |
 query: |
   SELECT rank() OVER (), row_number() OVER (PARTITION BY a1), row_number() OVER (PARTITION BY a1) FROM a
 ok: |
-  LogicalProjection cols=[5, 6, 7] exprs: [col:5, col:6, col:7]
+  LogicalProjection cols=[5, 6, 7] presentation=[rank:5, row_number:6, row_number:7] exprs: [col:5, col:6, col:7]
     input: LogicalWindowAggregate cols=[5, 6]
       input: LogicalWindowAggregate cols=[5]
         input: LogicalGet a cols=[1, 2, 3, 4]
@@ -62,7 +62,7 @@ error: |
 query:
   SELECT count(1) OVER (PARTITION BY a1) FROM a
 ok: |
-  LogicalProjection cols=[5] exprs: [col:5]
+  LogicalProjection cols=[5] presentation=[count:5] exprs: [col:5]
     input: LogicalWindowAggregate cols=[5]
       input: LogicalGet a cols=[1, 2, 3, 4]
       window_expr: Expr count(1) OVER(PARTITION BY col:1)
@@ -70,7 +70,7 @@ ok: |
 query:
   SELECT sum(a2) OVER (PARTITION BY a1) FROM a
 ok: |
-  LogicalProjection cols=[5] exprs: [col:5]
+  LogicalProjection cols=[5] presentation=[sum:5] exprs: [col:5]
     input: LogicalWindowAggregate cols=[5]
       input: LogicalGet a cols=[1, 2, 3, 4]
       window_expr: Expr sum(col:2) OVER(PARTITION BY col:1)
@@ -82,7 +82,7 @@ options:
 query: |
   SELECT count(1), rank() OVER () FROM a
 ok: |
-  LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
+  LogicalProjection cols=[5, 6] presentation=[count:5, rank:6] exprs: [col:5, col:6]
     input: LogicalWindowAggregate cols=[5, 6]
       input: LogicalAggregate cols=[5] aggr_exprs: [count(1)]
         input: LogicalGet a cols=[1, 2, 3, 4]
@@ -110,7 +110,7 @@ options:
 query: |
   SELECT count(1), rank() OVER (PARTITION BY a1) FROM a GROUP BY a1;
 ok: |
-  LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
+  LogicalProjection cols=[5, 6] presentation=[count:5, rank:6] exprs: [col:5, col:6]
     input: LogicalWindowAggregate cols=[5, 6]
       input: LogicalAggregate cols=[5, 1]
         aggr_exprs: [count(1), col:1]
@@ -141,7 +141,7 @@ options:
 query:
   SELECT count(a1), rank() OVER () FROM a
 ok: |
-  LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
+  LogicalProjection cols=[5, 6] presentation=[count:5, rank:6] exprs: [col:5, col:6]
     input: LogicalWindowAggregate cols=[5, 6]
       input: LogicalAggregate cols=[5] aggr_exprs: [count(col:1)]
         input: LogicalGet a cols=[1, 2, 3, 4]
@@ -169,7 +169,7 @@ options:
 query: |
   select count(1), rank() OVER (PARTITION BY a1) from a group by a1;
 ok: |
-  LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
+  LogicalProjection cols=[5, 6] presentation=[count:5, rank:6] exprs: [col:5, col:6]
     input: LogicalWindowAggregate cols=[5, 6]
       input: LogicalAggregate cols=[5, 1]
         aggr_exprs: [count(1), col:1]
@@ -200,7 +200,7 @@ options:
 query: |
   SELECT first_value(count(a1)) OVER () FROM a;
 ok: |
-  LogicalProjection cols=[6] exprs: [col:6]
+  LogicalProjection cols=[6] presentation=[first_value:6] exprs: [col:6]
     input: LogicalWindowAggregate cols=[6]
       input: LogicalAggregate cols=[5] aggr_exprs: [count(col:1)]
         input: LogicalGet a cols=[1, 2, 3, 4]
@@ -227,7 +227,7 @@ options:
 query: |
   SELECT first_value(count(a2)) OVER (PARTITION BY a1) FROM a GROUP BY a1;
 ok: |
-  LogicalProjection cols=[6] exprs: [col:6]
+  LogicalProjection cols=[6] presentation=[first_value:6] exprs: [col:6]
     input: LogicalWindowAggregate cols=[6]
       input: LogicalAggregate cols=[5, 1]
         aggr_exprs: [count(col:2), col:1]

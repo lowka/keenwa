@@ -2,7 +2,7 @@ queries:
   - SELECT a1 FROM A
   - SELECT A1 FROM A
 ok: |
-  LogicalProjection cols=[1] exprs: [col:1]
+  LogicalProjection cols=[1] presentation=[a1:1] exprs: [col:1]
     input: LogicalGet A cols=[1, 2, 3, 4]
 
 ---
@@ -11,14 +11,14 @@ queries:
   - SELECT a.a1 FROM A
   - SELECT a.A1 FROM A
 ok: |
-  LogicalProjection cols=[1] exprs: [col:1]
+  LogicalProjection cols=[1] presentation=[a1:1] exprs: [col:1]
     input: LogicalGet A cols=[1, 2, 3, 4]
 ---
 
 query: |
   SELECT 1 as a1, * FROM a
 ok: |
-  LogicalProjection cols=[5, 1, 2, 3, 4] exprs: [1 AS a1, col:1, col:2, col:3, col:4]
+  LogicalProjection cols=[5, 1, 2, 3, 4] presentation=[a1:5, a1:1, a2:2, a3:3, a4:4] exprs: [1 AS a1, col:1, col:2, col:3, col:4]
     input: LogicalGet a cols=[1, 2, 3, 4]
 
 ---
@@ -26,21 +26,21 @@ ok: |
 query: |
   SELECT * FROM A
 ok: |
-  LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:3, col:4]
+  LogicalProjection cols=[1, 2, 3, 4] presentation=[a1:1, a2:2, a3:3, a4:4] exprs: [col:1, col:2, col:3, col:4]
     input: LogicalGet A cols=[1, 2, 3, 4]
 ---
 
 query: |
   SELECT a.* FROM A
 ok: |
-  LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:3, col:4]
+  LogicalProjection cols=[1, 2, 3, 4] presentation=[a1:1, a2:2, a3:3, a4:4] exprs: [col:1, col:2, col:3, col:4]
     input: LogicalGet A cols=[1, 2, 3, 4]
 
 ---
 query: |
   SELECT a1.* FROM A as a1
 ok: |
-  LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:3, col:4]
+  LogicalProjection cols=[1, 2, 3, 4] presentation=[a1:1, a2:2, a3:3, a4:4] exprs: [col:1, col:2, col:3, col:4]
     input: LogicalGet A cols=[1, 2, 3, 4]
 
 ---
@@ -69,7 +69,7 @@ queries:
   - SELECT t1.a1 + t1.b2 FROM (SELECT * FROM (SELECT * FROM a JOIN b ON true) t0) t1
   - SELECT t1.a1 + t1.b2 FROM (SELECT t0.* FROM (SELECT * FROM a tt JOIN b ON true) t0) t1
 ok: |
-  LogicalProjection cols=[8] exprs: [col:1 + col:6]
+  LogicalProjection cols=[8] presentation=[?column?:8] exprs: [col:1 + col:6]
     input: LogicalProjection cols=[1, 2, 3, 4, 5, 6, 7] exprs: [col:1, col:2, col:3, col:4, col:5, col:6, col:7]
       input: LogicalProjection cols=[1, 2, 3, 4, 5, 6, 7] exprs: [col:1, col:2, col:3, col:4, col:5, col:6, col:7]
         input: LogicalJoin type=Inner on=true
@@ -89,31 +89,31 @@ error: |
 query:
   SELECT a1 FROM a ORDER BY 1
 ok: |
-  LogicalProjection cols=[1] ordering=[+1] exprs: [col:1]
+  LogicalProjection cols=[1] ordering=[+1] presentation=[a1:1] exprs: [col:1]
     input: LogicalGet a cols=[1, 2, 3, 4]
 ---
 query: |
   SELECT a1 as x FROM a as t ORDER BY a1
 ok: |
-  LogicalProjection cols=[5] ordering=[+1] exprs: [col:1 AS x]
+  LogicalProjection cols=[5] ordering=[+1] presentation=[x:5] exprs: [col:1 AS x]
     input: LogicalGet a cols=[1, 2, 3, 4]
 ---
 query: |
   SELECT a1, a2 FROM a as t ORDER BY a1 ASC, a2 DESC
 ok: |
-  LogicalProjection cols=[1, 2] ordering=[+1, -2] exprs: [col:1, col:2]
+  LogicalProjection cols=[1, 2] ordering=[+1, -2] presentation=[a1:1, a2:2] exprs: [col:1, col:2]
     input: LogicalGet a cols=[1, 2, 3, 4]
 ---
 query: |
   SELECT a1 as x FROM a as t ORDER BY x
 ok: |
-  LogicalProjection cols=[5] ordering=[+5] exprs: [col:1 AS x]
+  LogicalProjection cols=[5] ordering=[+5] presentation=[x:5] exprs: [col:1 AS x]
     input: LogicalGet a cols=[1, 2, 3, 4]
 ---
 query: |
   SELECT a1 as x FROM a as t ORDER BY t.a1, a1, x
 ok: |
-  LogicalProjection cols=[5] ordering=[+1, +1, +5] exprs: [col:1 AS x]
+  LogicalProjection cols=[5] ordering=[+1, +1, +5] presentation=[x:5] exprs: [col:1 AS x]
     input: LogicalGet a cols=[1, 2, 3, 4]
 ---
 query: |
@@ -132,7 +132,7 @@ error: ~
 queries:
   - SELECT y, x FROM A as a1(x, y)
 ok: |
-  LogicalProjection cols=[2, 1] exprs: [col:2, col:1]
+  LogicalProjection cols=[2, 1] presentation=[y:2, x:1] exprs: [col:2, col:1]
     input: LogicalGet A cols=[1, 2, 3, 4]
 
 ---
@@ -140,7 +140,7 @@ ok: |
 query: |
   SELECT DISTINCT a1, a2 FROM a
 ok: |
-  LogicalDistinct cols=[1, 2]
+  LogicalDistinct cols=[1, 2] presentation=[a1:1, a2:2]
     input: LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
       input: LogicalGet a cols=[1, 2, 3, 4]
 
@@ -149,7 +149,7 @@ ok: |
 query: |
   SELECT DISTINCT ON (a1+a2) a1, a2, a3 FROM a
 ok: |
-  LogicalDistinct cols=[1, 2, 3]
+  LogicalDistinct cols=[1, 2, 3] presentation=[a1:1, a2:2, a3:3]
     input: LogicalProjection cols=[1, 2, 3] exprs: [col:1, col:2, col:3]
       input: LogicalGet a cols=[1, 2, 3, 4]
     on: Expr col:1 + col:2
@@ -160,7 +160,7 @@ queries:
   - SELECT DISTINCT ON (a1) a1, a2, a3 FROM a
   - SELECT DISTINCT on (a1) a1, a2, a3 FROM a
 ok: |
-  LogicalDistinct cols=[1, 2, 3]
+  LogicalDistinct cols=[1, 2, 3] presentation=[a1:1, a2:2, a3:3]
     input: LogicalProjection cols=[1, 2, 3] exprs: [col:1, col:2, col:3]
       input: LogicalGet a cols=[1, 2, 3, 4]
     on: Expr col:1
@@ -170,7 +170,7 @@ ok: |
 query: |
   SELECT a1, a2, a3 FROM a LIMIT 4
 ok: |
-  LogicalLimit rows=4
+  LogicalLimit rows=4 presentation=[a1:1, a2:2, a3:3]
     input: LogicalProjection cols=[1, 2, 3] exprs: [col:1, col:2, col:3]
       input: LogicalGet a cols=[1, 2, 3, 4]
 
@@ -179,7 +179,7 @@ ok: |
 query: |
   SELECT a1, a2, a3 FROM a OFFSET 10
 ok: |
-  LogicalOffset rows=10
+  LogicalOffset rows=10 presentation=[a1:1, a2:2, a3:3]
     input: LogicalProjection cols=[1, 2, 3] exprs: [col:1, col:2, col:3]
       input: LogicalGet a cols=[1, 2, 3, 4]
 
@@ -187,7 +187,7 @@ ok: |
 query: |
   SELECT a1, a2, a3 FROM a LIMIT 4 OFFSET 10
 ok: |
-  LogicalLimit rows=4
+  LogicalLimit rows=4 presentation=[a1:1, a2:2, a3:3]
     input: LogicalOffset rows=10
       input: LogicalProjection cols=[1, 2, 3] exprs: [col:1, col:2, col:3]
         input: LogicalGet a cols=[1, 2, 3, 4]
@@ -195,19 +195,19 @@ ok: |
 query: |
   SELECT * FROM (VALUES(1, 2 + 2, 3)) t
 ok: |
-  LogicalProjection cols=[1, 2, 3] exprs: [col:1, col:2, col:3]
+  LogicalProjection cols=[1, 2, 3] presentation=[column1:1, column2:2, column3:3] exprs: [col:1, col:2, col:3]
     input: LogicalValues cols=[1, 2, 3] values: [(1, 2 + 2, 3)]
 ---
 query: |
   SELECT column1, t.column2 FROM (VALUES (1, 2 + 2, 3)) t
 ok: |
-  LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
+  LogicalProjection cols=[1, 2] presentation=[column1:1, column2:2] exprs: [col:1, col:2]
     input: LogicalValues cols=[1, 2, 3] values: [(1, 2 + 2, 3)]
 ---
 query: |
   SELECT column1, t.column2 FROM (VALUES (1, 2, 3), (4, 5, 6) ) t
 ok: |
-  LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
+  LogicalProjection cols=[1, 2] presentation=[column1:1, column2:2] exprs: [col:1, col:2]
     input: LogicalValues cols=[1, 2, 3] values: [(1, 2, 3), (4, 5, 6)]
 ---
 query: |
@@ -218,9 +218,9 @@ error: |
 query: |
   SELECT (SELECT t.column1 FROM (VALUES (a.a1, 2, 3)) t) FROM a;
 ok: |
-  LogicalProjection cols=[8] exprs: [SubQuery 03]
+  LogicalProjection cols=[8] presentation=[column1:8] exprs: [SubQuery 03]
     input: LogicalGet a cols=[1, 2, 3, 4]
   
   Sub query from column 8:
-  LogicalProjection cols=[5] outer_cols=[1] exprs: [col:5]
+  LogicalProjection cols=[5] outer_cols=[1] presentation=[column1:5] exprs: [col:5]
     input: LogicalValues cols=[5, 6, 7] outer_cols=[1] values: [(col:1, 2, 3)]

@@ -5,7 +5,7 @@ options:
 query: |
   SELECT a1 FROM a WHERE a1 IN (SELECT 1)
 ok: |
-  LogicalProjection cols=[1] exprs: [col:1]
+  LogicalProjection cols=[1] presentation=[a1:1] exprs: [col:1]
     input: LogicalJoin type=LeftSemi on=col:1 = 1
       left: LogicalGet a cols=[1, 2, 3, 4]
       right: LogicalProjection cols=[5] exprs: [1]
@@ -15,7 +15,7 @@ query:
   SELECT a1 FROM a WHERE a2 IN (SELECT b2 FROM b)
 #>SELECT a1 FROM a JOIN b ON a2 = b2
 ok: |
-  LogicalProjection cols=[1] exprs: [col:1]
+  LogicalProjection cols=[1] presentation=[a1:1] exprs: [col:1]
     input: LogicalJoin type=LeftSemi on=col:2 = col:6
       left: LogicalGet a cols=[1, 2, 3, 4]
       right: LogicalProjection cols=[6] exprs: [col:6]
@@ -25,7 +25,7 @@ query:
   SELECT a1 FROM a WHERE a2 IN (SELECT b2 FROM b WHERE b1 = a2)
 #>SELECT a1 FROM a JOIN b ON a2 = b2 AND b1 = a2
 ok: |
-  LogicalProjection cols=[1] exprs: [col:1]
+  LogicalProjection cols=[1] presentation=[a1:1] exprs: [col:1]
     input: LogicalJoin type=LeftSemi on=col:2 = col:6 AND col:5 = col:2
       left: LogicalGet a cols=[1, 2, 3, 4]
       right: LogicalGet b cols=[5, 6, 7]
@@ -34,7 +34,7 @@ query:
   SELECT a1 FROM a WHERE a2 IN (SELECT b2 FROM b WHERE b1 = a2 AND b3 = 100)
 #>SELECT a1 FROM a JOIN b ON a2 = b2 AND b1 = a2 AND b3 = 100
 ok: |
-  LogicalProjection cols=[1] exprs: [col:1]
+  LogicalProjection cols=[1] presentation=[a1:1] exprs: [col:1]
     input: LogicalJoin type=LeftSemi on=col:2 = col:6 AND col:5 = col:2 AND col:7 = 100
       left: LogicalGet a cols=[1, 2, 3, 4]
       right: LogicalGet b cols=[5, 6, 7]
@@ -46,7 +46,7 @@ ok: |
 query:
   SELECT a1 FROM a WHERE a2 IN (SELECT b2 FROM b) OR a1 > 100
 ok: |
-  LogicalProjection cols=[1] exprs: [col:1]
+  LogicalProjection cols=[1] presentation=[a1:1] exprs: [col:1]
     input: LogicalSelect
       input: LogicalGet a cols=[1, 2, 3, 4]
       filter: Expr col:2 IN 02 OR col:1 > 100
@@ -59,7 +59,7 @@ ok: |
 query: |
   SELECT a1 FROM a WHERE a1 NOT IN (SELECT 1)
 ok: |
-  LogicalProjection cols=[1] exprs: [col:1]
+  LogicalProjection cols=[1] presentation=[a1:1] exprs: [col:1]
     input: LogicalSelect
       input: LogicalJoin type=Left on=col:1 = col:5
         left: LogicalGet a cols=[1, 2, 3, 4]
@@ -71,7 +71,7 @@ query:
   SELECT a1 FROM a WHERE a2 NOT IN (SELECT b2 FROM b WHERE b1 = a3)
 #>SELECT a1 FROM a LEFT JOIN b ON b1 = a2 AND b1 = a3 WHERE b2 IS NULL
 ok: |
-  LogicalProjection cols=[1] exprs: [col:1]
+  LogicalProjection cols=[1] presentation=[a1:1] exprs: [col:1]
     input: LogicalSelect
       input: LogicalJoin type=Left on=col:2 = col:6 AND col:5 = col:3
         left: LogicalGet a cols=[1, 2, 3, 4]
@@ -82,7 +82,7 @@ query:
   SELECT a1 FROM a WHERE a2 NOT IN (SELECT b2 FROM b WHERE b1 = a3 AND b3 = 100)
 #>SELECT a1 FROM a LEFT JOIN b ON b1 = a2 AND b1 = a3 AND b3 = 100 WHERE b2 IS NULL
 ok: |
-  LogicalProjection cols=[1] exprs: [col:1]
+  LogicalProjection cols=[1] presentation=[a1:1] exprs: [col:1]
     input: LogicalSelect
       input: LogicalJoin type=Left on=col:2 = col:6 AND col:5 = col:3 AND col:7 = 100
         left: LogicalGet a cols=[1, 2, 3, 4]
@@ -93,7 +93,7 @@ query:
   SELECT a1 FROM a WHERE a2 NOT IN (SELECT b2 FROM b WHERE b1 = a3 OR b3 = 100)
 #>SELECT a1 FROM a LEFT JOIN b ON b1 = a2 AND b1 = a3 OR b3 = 100 WHERE b2 IS NULL
 ok: |
-  LogicalProjection cols=[1] exprs: [col:1]
+  LogicalProjection cols=[1] presentation=[a1:1] exprs: [col:1]
     input: LogicalSelect
       input: LogicalJoin type=Left on=col:2 = col:6 AND col:5 = col:3 OR col:7 = 100
         left: LogicalGet a cols=[1, 2, 3, 4]
@@ -104,7 +104,7 @@ query: |
   SELECT a1 FROM a WHERE a2 NOT IN (SELECT b2 FROM b WHERE b2 NOT IN (SELECT c1 FROM c));
 # SELECT a1 FROM a LEFT JOIN (SELECT b2 FROM b LEFT JOIN c ON c1 = b2 WHERE c1 IS NULL) bc ON a2 = bc.b2 WHERE b2 IS NULL;
 ok: |
-  LogicalProjection cols=[1] exprs: [col:1]
+  LogicalProjection cols=[1] presentation=[a1:1] exprs: [col:1]
     input: LogicalSelect
       input: LogicalJoin type=Left on=col:2 = col:6 AND col:8 IS NULL
         left: LogicalGet a cols=[1, 2, 3, 4]
@@ -118,7 +118,7 @@ query: |
   SELECT a1 FROM a WHERE a2 NOT IN (SELECT b2 FROM b WHERE b3 = a3 AND b2 NOT IN (SELECT c1 FROM c));
 # SELECT a1 FROM a LEFT JOIN (SELECT b2,b3 FROM b LEFT JOIN c ON c1 = b2 WHERE c1 IS NULL) bc ON a2 = bc.b2 AND bc.b3 = a3 WHERE b2 IS NULL;
 ok: |
-  LogicalProjection cols=[1] exprs: [col:1]
+  LogicalProjection cols=[1] presentation=[a1:1] exprs: [col:1]
     input: LogicalSelect
       input: LogicalJoin type=Left on=col:2 = col:6 AND col:8 IS NULL AND col:7 = col:3
         left: LogicalGet a cols=[1, 2, 3, 4]

@@ -11,7 +11,7 @@ use crate::properties::OrderingChoice;
 pub struct PhysicalProperties {
     /// Physical properties required by an operator.
     pub required: Option<RequiredProperties>,
-    /// Presentation defines the order of columns expected by an operator.
+    /// Presentation defines names and an order of columns returned by an operator.
     pub presentation: Option<Presentation>,
 }
 
