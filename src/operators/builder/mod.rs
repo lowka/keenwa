@@ -204,20 +204,27 @@ impl OperatorBuilder {
         // Otherwise the names of the output columns are replaced by RewriteExprs
         // and we get the original names instead of aliases.
         let mut expr = if !alias.columns.is_empty() {
-            let scope = expr.scope.as_ref().map(Ok).unwrap_or_else(|| Err(OptimizerError::internal("No scope")))?;
+            let scope = expr
+                .scope
+                .as_ref()
+                .map(Ok)
+                .unwrap_or_else(|| Err(OptimizerError::internal("CTE: No scope")))?;
+
+            let num_columns = alias.columns.len();
 
             let columns: Vec<_> = scope
                 .columns()
                 .iter()
-                .map(|(_, col_id)| col_id)
-                .zip(alias.columns.iter())
-                .map(|(col_id, col_name)| {
+                .take(num_columns)
+                .enumerate()
+                .map(|(i, (_, col_id))| {
+                    let col_name = alias.columns[i].clone();
                     // if a column metadata has no expression then it is a reference to some column and
                     // we should and an alias in order to preserve its name.
                     let col_metadata = self.metadata.get_column(col_id);
                     match col_metadata.expr() {
                         Some(expr) => expr.clone(),
-                        None => ScalarExpr::Column(*col_id).alias(col_name),
+                        None => ScalarExpr::Column(*col_id).alias(col_name.as_str()),
                     }
                 })
                 .collect();

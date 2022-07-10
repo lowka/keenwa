@@ -158,7 +158,7 @@ where
                     if element_type.is_none() {
                         element_type = Some(expr_type.clone())
                     } else if Some(expr_type) != element_type.as_ref() {
-                        return Err(OptimizerError::argument(format!("Array with elements of different types")));
+                        return Err(OptimizerError::argument("Array with elements of different types"));
                     }
                 }
             }
