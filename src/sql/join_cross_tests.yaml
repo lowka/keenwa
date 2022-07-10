@@ -1,7 +1,7 @@
 query: |
   SELECT * FROM a CROSS JOIN b
 ok: |
-  LogicalProjection cols=[1, 2, 3, 4, 5, 6, 7] exprs: [col:1, col:2, col:3, col:4, col:5, col:6, col:7]
+  LogicalProjection cols=[1, 2, 3, 4, 5, 6, 7] presentation=[a1:1, a2:2, a3:3, a4:4, b1:5, b2:6, b3:7] exprs: [col:1, col:2, col:3, col:4, col:5, col:6, col:7]
     input: LogicalJoin type=Cross on=true
       left: LogicalGet a cols=[1, 2, 3, 4]
       right: LogicalGet b cols=[5, 6, 7]
@@ -10,7 +10,7 @@ ok: |
 query: |
   SELECT * FROM a, b, c
 ok: |
-  LogicalProjection cols=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10] exprs: [col:1, col:2, col:3, col:4, col:5, col:6, col:7, col:8, col:9, col:10]
+  LogicalProjection cols=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10] presentation=[a1:1, a2:2, a3:3, a4:4, b1:5, b2:6, b3:7, c1:8, c2:9, c3:10] exprs: [col:1, col:2, col:3, col:4, col:5, col:6, col:7, col:8, col:9, col:10]
     input: LogicalJoin type=Cross on=true
       left: LogicalJoin type=Cross on=true
         left: LogicalGet a cols=[1, 2, 3, 4]

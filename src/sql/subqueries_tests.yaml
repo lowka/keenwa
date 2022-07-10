@@ -1,11 +1,11 @@
 query: |
   SELECT 1 as a, (SELECT 2)
 ok: |
-  LogicalProjection cols=[2, 3] exprs: [1 AS a, SubQuery 02]
+  LogicalProjection cols=[2, 3] presentation=[a:2, ?column?:3] exprs: [1 AS a, SubQuery 02]
     input: LogicalEmpty return_one_row=true
 
   Sub query from column 3:
-  LogicalProjection cols=[1] exprs: [2]
+  LogicalProjection cols=[1] presentation=[?column?:1] exprs: [2]
     input: LogicalEmpty return_one_row=true
 
 ---
@@ -13,34 +13,34 @@ query: |
   SELECT 1, (SELECT 2 as x)
 
 ok: |
-  LogicalProjection cols=[2, 3] exprs: [1, SubQuery 02]
+  LogicalProjection cols=[2, 3] presentation=[?column?:2, x:3] exprs: [1, SubQuery 02]
     input: LogicalEmpty return_one_row=true
   
   Sub query from column 3:
-  LogicalProjection cols=[1] exprs: [2 AS x]
+  LogicalProjection cols=[1] presentation=[x:1] exprs: [2 AS x]
     input: LogicalEmpty return_one_row=true
 
 ---
 query: |
   SELECT 1 as a, (SELECT 2 + b1) as b FROM (SELECT 1 as b1)
 ok: |
-  LogicalProjection cols=[3, 4] exprs: [1 AS a, SubQuery 03 AS b]
+  LogicalProjection cols=[3, 4] presentation=[a:3, b:4] exprs: [1 AS a, SubQuery 03 AS b]
     input: LogicalProjection cols=[1] exprs: [1 AS b1]
       input: LogicalEmpty return_one_row=true
   
   Sub query from column 4:
-  LogicalProjection cols=[2] outer_cols=[1] exprs: [2 + col:1]
+  LogicalProjection cols=[2] outer_cols=[1] presentation=[?column?:2] exprs: [2 + col:1]
     input: LogicalEmpty return_one_row=true
 
 ---
 query: |
   SELECT a2, (SELECT a2) FROM a
 ok: |
-  LogicalProjection cols=[2, 5] exprs: [col:2, SubQuery 02]
+  LogicalProjection cols=[2, 5] presentation=[a2:2, a2:5] exprs: [col:2, SubQuery 02]
     input: LogicalGet a cols=[1, 2, 3, 4]
   
   Sub query from column 5:
-  LogicalProjection cols=[2] outer_cols=[2] exprs: [col:2]
+  LogicalProjection cols=[2] outer_cols=[2] presentation=[a2:2] exprs: [col:2]
     input: LogicalEmpty return_one_row=true
 
 ---
@@ -48,13 +48,13 @@ ok: |
 query: |
   SELECT a2 FROM a WHERE (SELECT true)
 ok: |
-  LogicalProjection cols=[2] exprs: [col:2]
+  LogicalProjection cols=[2] presentation=[a2:2] exprs: [col:2]
     input: LogicalSelect
       input: LogicalGet a cols=[1, 2, 3, 4]
       filter: Expr SubQuery 02
   
   Sub query from filter SubQuery 02:
-  LogicalProjection cols=[5] exprs: [true]
+  LogicalProjection cols=[5] presentation=[?column?:5] exprs: [true]
     input: LogicalEmpty return_one_row=true
 
 ---
@@ -62,18 +62,18 @@ ok: |
 query: |
   SELECT a2 FROM a WHERE (SELECT true WHERE (SELECT true))
 ok: |
-  LogicalProjection cols=[2] exprs: [col:2]
+  LogicalProjection cols=[2] presentation=[a2:2] exprs: [col:2]
     input: LogicalSelect
       input: LogicalGet a cols=[1, 2, 3, 4]
       filter: Expr SubQuery 05
   
   Sub query from filter SubQuery 05:
-  LogicalProjection cols=[6] exprs: [true]
+  LogicalProjection cols=[6] presentation=[?column?:6] exprs: [true]
     input: LogicalSelect
       input: LogicalEmpty return_one_row=true
       filter: Expr SubQuery 02
   Sub query from filter SubQuery 02:
-  LogicalProjection cols=[5] exprs: [true]
+  LogicalProjection cols=[5] presentation=[?column?:5] exprs: [true]
     input: LogicalEmpty return_one_row=true
 
 ---
@@ -82,13 +82,13 @@ queries:
   - SELECT (SELECT a1 + b.b1) FROM a as t, b
   - SELECT (SELECT a.a1 + b.b1) FROM a, b
 ok: |
-  LogicalProjection cols=[9] exprs: [SubQuery 05]
+  LogicalProjection cols=[9] presentation=[?column?:9] exprs: [SubQuery 05]
     input: LogicalJoin type=Cross on=true
       left: LogicalGet a cols=[1, 2, 3, 4]
       right: LogicalGet b cols=[5, 6, 7]
   
   Sub query from column 9:
-  LogicalProjection cols=[8] outer_cols=[1, 5] exprs: [col:1 + col:5]
+  LogicalProjection cols=[8] outer_cols=[1, 5] presentation=[?column?:8] exprs: [col:1 + col:5]
     input: LogicalEmpty return_one_row=true
 
 ---
@@ -99,11 +99,11 @@ ok: |
 query: |
   SELECT *, (SELECT a1+b1+c1 FROM a JOIN b on a1 = b1 and a1 = c1) FROM c
 ok: |
-  LogicalProjection cols=[1, 2, 3, 12] exprs: [col:1, col:2, col:3, SubQuery 05]
+  LogicalProjection cols=[1, 2, 3, 12] presentation=[c1:1, c2:2, c3:3, ?column?:12] exprs: [col:1, col:2, col:3, SubQuery 05]
     input: LogicalGet c cols=[1, 2, 3]
   
   Sub query from column 12:
-  LogicalProjection cols=[11] outer_cols=[1] exprs: [col:4 + col:8 + col:1]
+  LogicalProjection cols=[11] outer_cols=[1] presentation=[?column?:11] exprs: [col:4 + col:8 + col:1]
     input: LogicalJoin type=Inner on=col:4 = col:8 AND col:4 = col:1 outer_cols=[1]
       left: LogicalGet a cols=[4, 5, 6, 7]
       right: LogicalGet b cols=[8, 9, 10]
@@ -114,21 +114,21 @@ ok: |
 query: |
   SELECT (SELECT count(a1) FROM a) FROM a
 ok: |
-  LogicalProjection cols=[6] exprs: [SubQuery 02]
+  LogicalProjection cols=[6] presentation=[count:6] exprs: [SubQuery 02]
     input: LogicalGet a cols=[1, 2, 3, 4]
   
   Sub query from column 6:
-  LogicalAggregate cols=[5] aggr_exprs: [count(col:1)]
+  LogicalAggregate cols=[5] presentation=[count:5] aggr_exprs: [count(col:1)]
     input: LogicalGet a cols=[1, 2, 3, 4]
 ---
 query: |
   SELECT a1, (SELECT count(b1) FROM b WHERE b1=a1) FROM a
 ok: |
-  LogicalProjection cols=[1, 9] exprs: [col:1, SubQuery 04]
+  LogicalProjection cols=[1, 9] presentation=[a1:1, count:9] exprs: [col:1, SubQuery 04]
     input: LogicalGet a cols=[1, 2, 3, 4]
   
   Sub query from column 9:
-  LogicalAggregate cols=[8] outer_cols=[1] aggr_exprs: [count(col:5)]
+  LogicalAggregate cols=[8] outer_cols=[1] presentation=[count:8] aggr_exprs: [count(col:5)]
     input: LogicalSelect outer_cols=[1]
       input: LogicalGet b cols=[5, 6, 7]
       filter: Expr col:5 = col:1
@@ -137,22 +137,22 @@ ok: |
 query: |
   SELECT a1, (SELECT sum(b1 + a1) FROM b) FROM a
 ok: |
-  LogicalProjection cols=[1, 9] exprs: [col:1, SubQuery 02]
+  LogicalProjection cols=[1, 9] presentation=[a1:1, sum:9] exprs: [col:1, SubQuery 02]
     input: LogicalGet a cols=[1, 2, 3, 4]
   
   Sub query from column 9:
-  LogicalAggregate cols=[8] outer_cols=[1] aggr_exprs: [sum(col:5 + col:1)]
+  LogicalAggregate cols=[8] outer_cols=[1] presentation=[sum:8] aggr_exprs: [sum(col:5 + col:1)]
     input: LogicalGet b cols=[5, 6, 7]
 
 ---
 query: |
   SELECT a1, (SELECT sum(b1 + a1) FROM b GROUP BY a1) FROM a
 ok: |
-  LogicalProjection cols=[1, 9] exprs: [col:1, SubQuery 03]
+  LogicalProjection cols=[1, 9] presentation=[a1:1, sum:9] exprs: [col:1, SubQuery 03]
     input: LogicalGet a cols=[1, 2, 3, 4]
   
   Sub query from column 9:
-  LogicalAggregate cols=[8] outer_cols=[1]
+  LogicalAggregate cols=[8] outer_cols=[1] presentation=[sum:8]
     aggr_exprs: [sum(col:5 + col:1)]
     group_exprs: [col:1]
     input: LogicalGet b cols=[5, 6, 7]
@@ -163,19 +163,19 @@ query: |
   FROM a
   GROUP BY (SELECT count(b2) FROM b GROUP BY a1)
 ok: |
-  LogicalAggregate cols=[10]
+  LogicalAggregate cols=[10] presentation=[count:10]
     aggr_exprs: [SubQuery 02]
     group_exprs: [SubQuery 06]
     input: LogicalGet a cols=[1, 2, 3, 4]
   
   Sub query from column 10:
-  LogicalAggregate cols=[5] aggr_exprs: [count(col:1)]
+  LogicalAggregate cols=[5] presentation=[count:5] aggr_exprs: [count(col:1)]
     input: LogicalGet a cols=[1, 2, 3, 4]
   Sub query from aggregate SubQuery 02:
-  LogicalAggregate cols=[5] aggr_exprs: [count(col:1)]
+  LogicalAggregate cols=[5] presentation=[count:5] aggr_exprs: [count(col:1)]
     input: LogicalGet a cols=[1, 2, 3, 4]
   Sub query from aggregate SubQuery 02:
-  LogicalAggregate cols=[9] outer_cols=[1]
+  LogicalAggregate cols=[9] outer_cols=[1] presentation=[count:9]
     aggr_exprs: [count(col:7)]
     group_exprs: [col:1]
     input: LogicalGet b cols=[6, 7, 8]
@@ -184,7 +184,7 @@ ok: |
 query: |
   SELECT * FROM a WHERE EXISTS (SELECT 1)
 ok: |
-  LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:3, col:4]
+  LogicalProjection cols=[1, 2, 3, 4] presentation=[a1:1, a2:2, a3:3, a4:4] exprs: [col:1, col:2, col:3, col:4]
     input: LogicalSelect
       input: LogicalGet a cols=[1, 2, 3, 4]
       filter: Expr EXISTS 02
@@ -196,7 +196,7 @@ ok: |
 query: |
   SELECT * FROM a WHERE NOT EXISTS (SELECT 1)
 ok: |
-  LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:3, col:4]
+  LogicalProjection cols=[1, 2, 3, 4] presentation=[a1:1, a2:2, a3:3, a4:4] exprs: [col:1, col:2, col:3, col:4]
     input: LogicalSelect
       input: LogicalGet a cols=[1, 2, 3, 4]
       filter: Expr NOT EXISTS 02
@@ -208,7 +208,7 @@ ok: |
 query: |
   SELECT * FROM a WHERE a1 IN (SELECT 1)
 ok: |
-  LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:3, col:4]
+  LogicalProjection cols=[1, 2, 3, 4] presentation=[a1:1, a2:2, a3:3, a4:4] exprs: [col:1, col:2, col:3, col:4]
     input: LogicalSelect
       input: LogicalGet a cols=[1, 2, 3, 4]
       filter: Expr col:1 IN 02
@@ -220,7 +220,7 @@ ok: |
 query: |
   SELECT * FROM a WHERE a1 NOT IN (SELECT 1)
 ok: |
-  LogicalProjection cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:3, col:4]
+  LogicalProjection cols=[1, 2, 3, 4] presentation=[a1:1, a2:2, a3:3, a4:4] exprs: [col:1, col:2, col:3, col:4]
     input: LogicalSelect
       input: LogicalGet a cols=[1, 2, 3, 4]
       filter: Expr col:1 NOT IN 02
@@ -232,11 +232,11 @@ ok: |
 query: |
   SELECT (SELECT DISTINCT ON (a1) b1 FROM b LIMIT 1 OFFSET 2) FROM a
 ok: |
-  LogicalProjection cols=[8] exprs: [SubQuery 06]
+  LogicalProjection cols=[8] presentation=[b1:8] exprs: [SubQuery 06]
     input: LogicalGet a cols=[1, 2, 3, 4]
 
   Sub query from column 8:
-  LogicalLimit rows=1 outer_cols=[1]
+  LogicalLimit rows=1 outer_cols=[1] presentation=[b1:5]
     input: LogicalOffset rows=2 outer_cols=[1]
       input: LogicalDistinct cols=[5] outer_cols=[1]
         input: LogicalProjection cols=[5] exprs: [col:5]
@@ -246,11 +246,11 @@ ok: |
 query: |
   SELECT (SELECT 1 FROM (SELECT a.* FROM b LIMIT 1) tmp1) tmp2 FROM a
 ok: |
-  LogicalProjection cols=[9] exprs: [SubQuery 08 AS tmp2]
+  LogicalProjection cols=[9] presentation=[tmp2:9] exprs: [SubQuery 08 AS tmp2]
     input: LogicalGet a cols=[1, 2, 3, 4]
 
   Sub query from column 9:
-  LogicalProjection cols=[8] outer_cols=[1, 2, 3, 4] exprs: [1]
+  LogicalProjection cols=[8] outer_cols=[1, 2, 3, 4] presentation=[?column?:8] exprs: [1]
     input: LogicalLimit rows=1 outer_cols=[1, 2, 3, 4]
       input: LogicalProjection cols=[1, 2, 3, 4] outer_cols=[1, 2, 3, 4] exprs: [col:1, col:2, col:3, col:4]
         input: LogicalGet b cols=[5, 6, 7]

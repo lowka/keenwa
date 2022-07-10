@@ -13,7 +13,7 @@ use scope::{OperatorScope, RelationInScope};
 
 use crate::catalog::CatalogRef;
 use crate::error::OptimizerError;
-use crate::memo::MemoExprState;
+use crate::memo::{MemoExprState, Props};
 use crate::meta::{ColumnId, ColumnMetadata, MetadataRef, MutableMetadata};
 use crate::operators::builder::aggregate::{add_window_aggregates, has_window_aggregates};
 use crate::operators::builder::scope::CteInScope;
@@ -31,7 +31,7 @@ use crate::operators::scalar::types::resolve_expr_type;
 use crate::operators::scalar::value::ScalarValue;
 use crate::operators::scalar::{get_subquery, scalar, ScalarExpr, ScalarNode};
 use crate::operators::{ExprMemo, Operator, OperatorExpr, OperatorMetadata, OuterScope, Properties, ScalarProperties};
-use crate::properties::physical::{PhysicalProperties, RequiredProperties};
+use crate::properties::physical::{PhysicalProperties, Presentation, RequiredProperties};
 use crate::properties::{OrderingChoice, OrderingColumn};
 use crate::{not_implemented, not_supported};
 
@@ -199,20 +199,40 @@ impl OperatorBuilder {
     }
 
     /// Adds a common table expression with the given table alias.
-    pub fn with_table_expr(mut self, alias: TableAlias, mut expr: OperatorBuilder) -> Result<Self, OptimizerError> {
-        let (rel_node, mut scope) = expr.rel_node()?;
-        let name = alias.name.clone();
+    pub fn with_table_expr(mut self, alias: TableAlias, expr: OperatorBuilder) -> Result<Self, OptimizerError> {
+        // Add a projection when the alias contains column names.
+        // Otherwise the names of the output columns are replaced by RewriteExprs
+        // and we get the original names instead of aliases.
+        let mut expr = if !alias.columns.is_empty() {
+            let scope = expr.scope.as_ref().map(Ok).unwrap_or_else(|| Err(OptimizerError::internal("No scope")))?;
 
-        let num_columns = if alias.columns.is_empty() {
-            scope.output_relation().columns().len()
+            let columns: Vec<_> = scope
+                .columns()
+                .iter()
+                .map(|(_, col_id)| col_id)
+                .zip(alias.columns.iter())
+                .map(|(col_id, col_name)| {
+                    // if a column metadata has no expression then it is a reference to some column and
+                    // we should and an alias in order to preserve its name.
+                    let col_metadata = self.metadata.get_column(col_id);
+                    match col_metadata.expr() {
+                        Some(expr) => expr.clone(),
+                        None => ScalarExpr::Column(*col_id).alias(col_name),
+                    }
+                })
+                .collect();
+
+            expr.project(columns)?
         } else {
-            alias.columns.len()
+            expr
         };
-        scope.set_alias(alias, &self.metadata)?;
+
+        let (rel_node, scope) = expr.rel_node()?;
+        let name = alias.name;
 
         let cte = CteInScope {
             expr: rel_node,
-            relation: scope.output_relation().columns().iter().take(num_columns).cloned().collect(),
+            relation: scope.output_relation().columns().to_vec(),
         };
 
         let mut scope = if let Some(scope) = self.scope.take() {
@@ -735,6 +755,24 @@ impl OperatorBuilder {
             Ok(self)
         } else {
             Err(OptimizerError::argument("ALIAS: no operator"))
+        }
+    }
+
+    /// Set the [presentation](Presentation) physical property of the the current node of an operator tree.
+    pub fn with_presentation(mut self) -> Result<Self, OptimizerError> {
+        match (self.operator.take(), self.scope.as_ref()) {
+            (Some(operator), Some(scope)) => {
+                let presentation = Presentation {
+                    columns: scope.columns().to_vec(),
+                };
+                let mut physical = operator.props().relational().physical().clone();
+                physical.presentation = Some(presentation);
+
+                self.operator = Some(operator.with_physical(physical));
+                Ok(self)
+            }
+            (None, _) => Err(OptimizerError::internal("Presentation: No operator")),
+            (_, _) => Err(OptimizerError::internal("Presentation: No scope")),
         }
     }
 
@@ -2298,11 +2336,11 @@ Memo:
                 .having(col("a1").gt(scalar(100)))?
                 .build()?;
 
-            sum.build()
+            sum.with_presentation()?.build()
         });
         tester.expect_expr(
             r#"
-LogicalAggregate cols=[1, 3]
+LogicalAggregate cols=[1, 3] presentation=[a1:1, sum:3]
   aggr_exprs: [col:1, sum(col:1)]
   group_exprs: [col:1]
   input: LogicalGet A cols=[1, 2]
@@ -2335,11 +2373,11 @@ Memo:
             };
             let window = from_a.project(vec![col("a1"), row_number])?;
 
-            window.build()
+            window.with_presentation()?.build()
         });
         tester.expect_expr(
             r#"
-LogicalProjection cols=[1, 3] exprs: [col:1, col:3]
+LogicalProjection cols=[1, 3] presentation=[a1:1, row_number:3] exprs: [col:1, col:3]
   input: LogicalWindowAggregate cols=[1, 3]
     input: LogicalGet A cols=[1, 2]
     window_expr: Expr row_number() OVER(PARTITION BY col:1)
@@ -2372,11 +2410,11 @@ Memo:
             };
             let window = from_a.project(vec![col("a1"), first_value.clone(), first_value])?;
 
-            window.build()
+            window.with_presentation()?.build()
         });
         tester.expect_expr(
             r#"
-LogicalProjection cols=[1, 3, 4] exprs: [col:1, col:3, col:4]
+LogicalProjection cols=[1, 3, 4] presentation=[a1:1, first_value:3, first_value:4] exprs: [col:1, col:3, col:4]
   input: LogicalWindowAggregate cols=[1, 3]
     input: LogicalGet A cols=[1, 2]
     window_expr: Expr first_value(col:2) OVER(PARTITION BY col:1)
@@ -2418,11 +2456,11 @@ Memo:
             };
             let window = from_a.project(vec![rank, col("a2"), row_number])?;
 
-            window.build()
+            window.with_presentation()?.build()
         });
         tester.expect_expr(
             r#"
-LogicalProjection cols=[3, 2, 4] exprs: [col:3, col:2, col:4]
+LogicalProjection cols=[3, 2, 4] presentation=[rank:3, a2:2, row_number:4] exprs: [col:3, col:2, col:4]
   input: LogicalWindowAggregate cols=[3, 2, 4]
     input: LogicalWindowAggregate cols=[3, 2]
       input: LogicalGet A cols=[1, 2]
@@ -2456,7 +2494,13 @@ Memo:
 
             // SELECT a1, (SELECT b1 FROM B WHERE b1=a3) FROM A
             let from_a = builder.get("A", vec!["a1", "a2", "a3"])?;
-            let b1 = from_a.sub_query_builder().get("B", vec!["b1"])?.select(Some(filter))?.build()?;
+            let b1 = from_a
+                .sub_query_builder()
+                .get("B", vec!["b1"])?
+                .select(Some(filter))?
+                .with_presentation()?
+                .build()?;
+
             let b1 = ScalarExpr::SubQuery(RelNode::try_from(b1)?);
             let project = from_a.project(vec![col("a1"), b1])?;
 
@@ -2469,7 +2513,7 @@ LogicalProjection cols=[1, 5] exprs: [col:1, SubQuery 02]
   output cols: [1, 5]
 
 Sub query from column 5:
-LogicalSelect outer_cols=[3]
+LogicalSelect outer_cols=[3] presentation=[b1:4]
   input: LogicalGet B cols=[4]
   filter: Expr col:4 = col:3
 Metadata:
@@ -2477,7 +2521,7 @@ Metadata:
   col:2 A.a2 Int32
   col:3 A.a3 Int32
   col:4 B.b1 Int32
-  col:5 ?column? Int32, expr: SubQuery 02
+  col:5 b1 Int32, expr: SubQuery 02
 Memo:
   06 LogicalProjection input=03 exprs=[04, 05] cols=[1, 5]
   05 Expr SubQuery 02
@@ -2504,20 +2548,22 @@ Memo:
                 .get("B", vec!["b1"])?
                 .join_on(from_c, JoinType::Inner, join_condition)?
                 .project(vec![col("b1")])?
+                .with_presentation()?
                 .build()?;
+
             let b1 = ScalarExpr::SubQuery(RelNode::try_from(b1)?);
             let project = from_a.project(vec![col("a1"), b1])?;
 
-            project.build()
+            project.with_presentation()?.build()
         });
         tester.expect_expr(
             r#"
-LogicalProjection cols=[1, 6] exprs: [col:1, SubQuery 05]
+LogicalProjection cols=[1, 6] presentation=[a1:1, b1:6] exprs: [col:1, SubQuery 05]
   input: LogicalGet A cols=[1, 2, 3]
   output cols: [1, 6]
 
 Sub query from column 6:
-LogicalProjection cols=[5] outer_cols=[3] exprs: [col:5]
+LogicalProjection cols=[5] outer_cols=[3] presentation=[b1:5] exprs: [col:5]
   input: LogicalJoin type=Inner on=col:5 = col:4 AND col:4 = col:3 outer_cols=[3]
     left: LogicalGet B cols=[5]
     right: LogicalGet C cols=[4]
@@ -2527,7 +2573,7 @@ Metadata:
   col:3 A.a3 Int32
   col:4 C.c1 Int32
   col:5 B.b1 Int32
-  col:6 ?column? Int32, expr: SubQuery 05
+  col:6 b1 Int32, expr: SubQuery 05
 Memo:
   09 LogicalProjection input=06 exprs=[07, 08] cols=[1, 6]
   08 Expr SubQuery 05
@@ -2565,11 +2611,11 @@ Memo:
     fn test_distinct() {
         let mut tester = OperatorBuilderTester::new();
 
-        tester.build_operator(|builder| builder.from("A")?.distinct(None)?.build());
+        tester.build_operator(|builder| builder.from("A")?.distinct(None)?.with_presentation()?.build());
 
         tester.expect_expr(
             r#"
-LogicalDistinct cols=[1, 2, 3, 4]
+LogicalDistinct cols=[1, 2, 3, 4] presentation=[a1:1, a2:2, a3:3, a4:4]
   input: LogicalGet A cols=[1, 2, 3, 4]
   output cols: [1, 2, 3, 4]
 Metadata:
@@ -2594,12 +2640,12 @@ Memo:
             let expr = col("a1").eq(col("b1"));
             let join = left.join_on(right, JoinType::LeftSemi, expr)?;
 
-            join.build()
+            join.with_presentation()?.build()
         });
 
         tester.expect_expr(
             r#"
-LogicalJoin type=LeftSemi on=col:1 = col:3
+LogicalJoin type=LeftSemi on=col:1 = col:3 presentation=[a1:1, a2:2]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
   output cols: [1, 2]
@@ -2626,12 +2672,12 @@ Memo:
             let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
             let join = left.join_using(right, JoinType::LeftSemi, vec![("a1", "b1")])?;
 
-            join.build()
+            join.with_presentation()?.build()
         });
 
         tester.expect_expr(
             r#"
-LogicalJoin type=LeftSemi using=[(1, 3)]
+LogicalJoin type=LeftSemi using=[(1, 3)] presentation=[a1:1, a2:2]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
   output cols: [1, 2]
@@ -2658,12 +2704,12 @@ Memo:
             let expr = col("a1").eq(col("b1"));
             let join = left.join_on(right, JoinType::RightSemi, expr)?;
 
-            join.build()
+            join.with_presentation()?.build()
         });
 
         tester.expect_expr(
             r#"
-LogicalJoin type=RightSemi on=col:1 = col:3
+LogicalJoin type=RightSemi on=col:1 = col:3 presentation=[b1:3, b2:4]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
   output cols: [3, 4]
@@ -2690,12 +2736,12 @@ Memo:
             let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
             let join = left.join_using(right, JoinType::RightSemi, vec![("a1", "b1")])?;
 
-            join.build()
+            join.with_presentation()?.build()
         });
 
         tester.expect_expr(
             r#"
-LogicalJoin type=RightSemi using=[(1, 3)]
+LogicalJoin type=RightSemi using=[(1, 3)] presentation=[b1:3, b2:4]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
   output cols: [3, 4]
@@ -2722,12 +2768,12 @@ Memo:
             let expr = col("a1").eq(col("b1"));
             let join = left.join_on(right, JoinType::Anti, expr)?;
 
-            join.build()
+            join.with_presentation()?.build()
         });
 
         tester.expect_expr(
             r#"
-LogicalJoin type=Anti on=col:1 = col:3
+LogicalJoin type=Anti on=col:1 = col:3 presentation=[a1:1, a2:2]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
   output cols: [1, 2]
@@ -2754,12 +2800,12 @@ Memo:
             let right = left.new_query_builder().get("B", vec!["b1", "b2"])?;
             let join = left.join_using(right, JoinType::Anti, vec![("a1", "b1")])?;
 
-            join.build()
+            join.with_presentation()?.build()
         });
 
         tester.expect_expr(
             r#"
-LogicalJoin type=Anti using=[(1, 3)]
+LogicalJoin type=Anti using=[(1, 3)] presentation=[a1:1, a2:2]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
   output cols: [1, 2]
@@ -2787,12 +2833,12 @@ Memo:
                 columns: vec![],
             })?;
 
-            values.build()
+            values.with_presentation()?.build()
         });
 
         tester.expect_expr(
             r#"
-LogicalValues cols=[1, 2] values: [(1, true)]
+LogicalValues cols=[1, 2] presentation=[column1:1, column2:2] values: [(1, true)]
   output cols: [1, 2]
 Metadata:
   col:1 v.column1 Int32
@@ -2857,12 +2903,12 @@ Memo:
                 }
             };
 
-            op.build()
+            op.with_presentation()?.build()
         });
 
         tester.expect_expr(
             r#"
-:set_op all=:all cols=[5, 6]
+:set_op all=:all cols=[5, 6] presentation=[a1:5, a2:6]
   left: LogicalGet A cols=[1, 2]
   right: LogicalGet B cols=[3, 4]
   output cols: [5, 6]
@@ -2897,11 +2943,11 @@ Memo:
                 a1_vals,
             )?;
             let project = builder.from("a1_vals")?.project(vec![col("a1")])?;
-            project.build()
+            project.with_presentation()?.build()
         });
         tester.expect_expr(
             r#"
-LogicalProjection cols=[1] exprs: [col:1]
+LogicalProjection cols=[1] presentation=[a1:1] exprs: [col:1]
   input: LogicalProjection cols=[1] exprs: [col:1]
     input: LogicalGet a cols=[1, 2, 3, 4]
   output cols: [1]
@@ -2935,7 +2981,7 @@ Memo:
             );
             let array = empty.project(vec![ScalarExpr::Scalar(array)])?;
 
-            array.build()
+            array.with_presentation()?.build()
         });
         tester.expect_error("ARRAYS: scalar value of type array");
     }
@@ -2951,7 +2997,7 @@ Memo:
             let tuple = ScalarValue::Tuple(Some(vec![element]), Box::new(DataType::Tuple(vec![element_type])));
             let tuple = empty.project(vec![ScalarExpr::Scalar(tuple)])?;
 
-            tuple.build()
+            tuple.with_presentation()?.build()
         });
         tester.expect_error("TUPLES: scalar value of type tuple");
     }

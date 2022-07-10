@@ -2,7 +2,7 @@
 query: |
   SELECT 1 UNION SELECT 1
 ok: |
-  LogicalUnion all=false cols=[3]
+  LogicalUnion all=false cols=[3] presentation=[?column?:3]
     left: LogicalProjection cols=[1] exprs: [1]
       input: LogicalEmpty return_one_row=true
     right: LogicalProjection cols=[2] exprs: [1]
@@ -14,7 +14,7 @@ query: |
   UNION ALL
   SELECT b1, b2 FROM b
 ok: |
-  LogicalUnion all=true cols=[8, 9]
+  LogicalUnion all=true cols=[8, 9] presentation=[a1:8, a2:9]
     left: LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
       input: LogicalGet a cols=[1, 2, 3, 4]
     right: LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
@@ -25,7 +25,7 @@ query: |
   UNION
   SELECT b1, b2 FROM b
 ok: |
-  LogicalUnion all=false cols=[8, 9]
+  LogicalUnion all=false cols=[8, 9] presentation=[a1:8, a2:9]
     left: LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
       input: LogicalGet a cols=[1, 2, 3, 4]
     right: LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
@@ -34,11 +34,11 @@ ok: |
 query: |
   SELECT (SELECT a1 UNION SELECT 1) FROM a
 ok: |
-  LogicalProjection cols=[7] exprs: [SubQuery 05]
+  LogicalProjection cols=[7] presentation=[a1:7] exprs: [SubQuery 05]
     input: LogicalGet a cols=[1, 2, 3, 4]
   
   Sub query from column 7:
-  LogicalUnion all=false cols=[6] outer_cols=[1]
+  LogicalUnion all=false cols=[6] outer_cols=[1] presentation=[a1:6]
     left: LogicalProjection cols=[1] outer_cols=[1] exprs: [col:1]
       input: LogicalEmpty return_one_row=true
     right: LogicalProjection cols=[5] exprs: [1]
@@ -51,7 +51,7 @@ query: |
   EXCEPT ALL
   SELECT b1, b2 FROM b
 ok: |
-  LogicalExcept all=true cols=[8, 9]
+  LogicalExcept all=true cols=[8, 9] presentation=[a1:8, a2:9]
     left: LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
       input: LogicalGet a cols=[1, 2, 3, 4]
     right: LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
@@ -62,7 +62,7 @@ query: |
   EXCEPT
   SELECT b1, b2 FROM b
 ok: |
-  LogicalExcept all=false cols=[8, 9]
+  LogicalExcept all=false cols=[8, 9] presentation=[a1:8, a2:9]
     left: LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
       input: LogicalGet a cols=[1, 2, 3, 4]
     right: LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
@@ -71,11 +71,11 @@ ok: |
 query: |
   SELECT (SELECT a1 EXCEPT SELECT 1) FROM a
 ok: |
-  LogicalProjection cols=[7] exprs: [SubQuery 05]
+  LogicalProjection cols=[7] presentation=[a1:7] exprs: [SubQuery 05]
     input: LogicalGet a cols=[1, 2, 3, 4]
   
   Sub query from column 7:
-  LogicalExcept all=false cols=[6] outer_cols=[1]
+  LogicalExcept all=false cols=[6] outer_cols=[1] presentation=[a1:6]
     left: LogicalProjection cols=[1] outer_cols=[1] exprs: [col:1]
       input: LogicalEmpty return_one_row=true
     right: LogicalProjection cols=[5] exprs: [1]
@@ -87,7 +87,7 @@ query: |
   INTERSECT ALL
   SELECT b1, b2 FROM b
 ok: |
-  LogicalIntersect all=true cols=[8, 9]
+  LogicalIntersect all=true cols=[8, 9] presentation=[a1:8, a2:9]
     left: LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
       input: LogicalGet a cols=[1, 2, 3, 4]
     right: LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
@@ -98,7 +98,7 @@ query: |
   INTERSECT
   SELECT b1, b2 FROM b
 ok: |
-  LogicalIntersect all=false cols=[8, 9]
+  LogicalIntersect all=false cols=[8, 9] presentation=[a1:8, a2:9]
     left: LogicalProjection cols=[1, 2] exprs: [col:1, col:2]
       input: LogicalGet a cols=[1, 2, 3, 4]
     right: LogicalProjection cols=[5, 6] exprs: [col:5, col:6]
@@ -107,11 +107,11 @@ ok: |
 query: |
   SELECT (SELECT a1 INTERSECT SELECT 1) FROM a
 ok: |
-  LogicalProjection cols=[7] exprs: [SubQuery 05]
+  LogicalProjection cols=[7] presentation=[a1:7] exprs: [SubQuery 05]
     input: LogicalGet a cols=[1, 2, 3, 4]
   
   Sub query from column 7:
-  LogicalIntersect all=false cols=[6] outer_cols=[1]
+  LogicalIntersect all=false cols=[6] outer_cols=[1] presentation=[a1:6]
     left: LogicalProjection cols=[1] outer_cols=[1] exprs: [col:1]
       input: LogicalEmpty return_one_row=true
     right: LogicalProjection cols=[5] exprs: [1]
