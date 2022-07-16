@@ -839,6 +839,44 @@ fn test_prefer_streaming_aggregate_when_data_is_sorted() {
 }
 
 #[test]
+fn test_streaming_aggregate_provides_ordering() {
+    let mut tester = OptimizerTester::new();
+
+    tester.set_operator(|builder| {
+        let from_a = builder.get("A", vec!["a1", "a2"])?;
+        let sorted_a = from_a.order_by(OrderingOption::by("a2", false))?;
+        let mut projection = sorted_a.project(vec![col("a1"), col("a2")])?;
+        let aggr = projection
+            .aggregate_builder()
+            .add_column("a2")?
+            .add_func("count", "a1")?
+            .group_by("a2")?
+            .build()?;
+        let ordered = aggr.order_by(OrderingOption::by("a2", false))?;
+
+        ordered.build()
+    });
+
+    tester.add_rules(|_| vec![Box::new(HashAggregateRule), Box::new(StreamingAggregateRule)]);
+
+    tester.set_table_row_count("A", 100);
+
+    tester.optimize(
+        r#"
+05 StreamingAggregate [ord:[+2]=03 02 04 02] cols=[2, 3] ordering=[+2]
+02 Expr col:2
+04 Expr count(col:1)
+02 Expr col:2
+03 Projection [ord:[+2]=00 01 02] cols=[1, 2]
+02 Expr col:2
+01 Expr col:1
+00 Sort [00] ord=[+2]
+00 Scan A cols=[1, 2]
+"#,
+    );
+}
+
+#[test]
 fn test_union() {
     let mut tester = OptimizerTester::new();
 
