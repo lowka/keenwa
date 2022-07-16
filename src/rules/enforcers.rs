@@ -2,7 +2,7 @@ use crate::error::OptimizerError;
 use crate::meta::ColumnId;
 use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::physical::{
-    IndexScan, MergeSortJoin, PhysicalExpr, Projection, Select, Sort, Unique,
+    IndexScan, MergeSortJoin, PhysicalExpr, Projection, Select, Sort, StreamingAggregate, Unique,
 };
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::ScalarExpr;
@@ -139,6 +139,13 @@ pub fn expr_provides_property(expr: &PhysicalExpr, required: &RequiredProperties
         (
             PhysicalExpr::IndexScan(IndexScan {
                 ordering: Some(column_ordering),
+                ..
+            }),
+            Some(ordering),
+        ) => ordering.prefix_of(column_ordering),
+        (
+            PhysicalExpr::StreamingAggregate(StreamingAggregate {
+                ordering: column_ordering,
                 ..
             }),
             Some(ordering),
