@@ -8,7 +8,7 @@ use crate::error::OptimizerError;
 use crate::meta::MetadataRef;
 use crate::operators::relational::logical::LogicalExpr;
 use crate::operators::relational::physical::PhysicalExpr;
-use crate::operators::relational::RelNode;
+use crate::operators::relational::RelExpr;
 use crate::properties::physical::RequiredProperties;
 use crate::rules::enforcers::BuiltinPhysicalPropertiesProvider;
 
@@ -19,6 +19,9 @@ mod rewrite;
 #[cfg(test)]
 pub mod testing;
 pub mod transformation;
+
+pub use enforcers::SupportedPartitioningSchemes;
+pub use enforcers::{run_enforce_properties, run_explore_alternatives};
 
 /// An optimization rule used by the optimizer. An optimization rule either transform one logical expression into another or
 /// provides an implementation of the given logical expression.
@@ -137,22 +140,15 @@ pub trait RuleSet {
 /// to optimize expressions when physical properties are present.
 //FIXME: Remove in favour of traits for PhysicalExprs?
 pub trait PhysicalPropertiesProvider {
-    /// Checks whether the given physical expression satisfies the required physical properties.
-    fn evaluate_properties(
+    /// Returns a [strategy](DerivePropertyMode) that should be used in order to derive the required physical properties
+    /// for the given [physical expression](PhysicalExpr).
+    ///
+    /// Method must return an error if required properties are empty.
+    fn derive_properties(
         &self,
         expr: &PhysicalExpr,
         required_properties: &RequiredProperties,
-    ) -> Result<EvaluationResponse, OptimizerError>;
-
-    /// Creates an enforcer operator for the specified physical properties.
-    /// The result contains an enforcer operator and the remaining physical properties
-    /// that should be satisfied by another operator.
-    /// If enforcer can not be created this method must return an error.
-    fn create_enforcer(
-        &self,
-        required_properties: &RequiredProperties,
-        input: RelNode,
-    ) -> Result<(PhysicalExpr, Option<RequiredProperties>), OptimizerError>;
+    ) -> Result<DerivePropertyMode, OptimizerError>;
 
     /// Provides a hint to the optimizer whether or not to explore an alternative plan for the given expression
     /// that can use an enforcer as a parent expression. For example:
@@ -176,7 +172,24 @@ pub trait PhysicalPropertiesProvider {
     /// ```
     /// Plan #2 is more beneficial because in this case a sort operation will have less tuples to sort.
     ///
-    fn can_explore_with_enforcer(&self, expr: &LogicalExpr, required_properties: &RequiredProperties) -> bool;
+    fn can_explore_with_enforcer(&self, expr: &RelExpr, required_properties: &RequiredProperties) -> bool;
+
+    fn support_implementation(&self, required_properties: &RequiredProperties) -> bool;
+}
+
+/// Describes how physical properties should be derived from a physical expression.
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+pub enum DerivePropertyMode {
+    /// This strategy should be used when a physical expression
+    /// expression retains the required physical property.
+    PropertyIsRetained,
+    /// This strategy should be used when a physical expression
+    /// provides the required physical property.
+    PropertyIsProvided,
+    /// This strategy should be used when a physical expression can neither retain nor provide
+    /// the required physical property. In such case an enforcer operator must be used
+    /// in order to provide the required physical property.
+    ApplyEnforcer,
 }
 
 /// An iterator over available optimization rules.
@@ -222,7 +235,7 @@ impl<'a> Debug for RuleIterator<'a> {
 
 /// Result of a call to [PhysicalPropertiesProvider::evaluate_properties].
 #[derive(Debug)]
-//TODO: Find a better name.
+//TODO: Find a better name. Replace with enum.
 pub struct EvaluationResponse {
     /// If `true` a physical expression provides physical properties.
     pub provides_property: bool,
@@ -274,6 +287,7 @@ impl RuleSet for StaticRuleSet {
 pub struct StaticRuleSetBuilder {
     rules: HashMap<RuleId, Box<dyn Rule>>,
     explore_with_enforcer: bool,
+    supported_partitioning: SupportedPartitioningSchemes,
 }
 
 impl StaticRuleSetBuilder {
@@ -282,6 +296,7 @@ impl StaticRuleSetBuilder {
         StaticRuleSetBuilder {
             rules: Default::default(),
             explore_with_enforcer: true,
+            supported_partitioning: SupportedPartitioningSchemes::all(),
         }
     }
 
@@ -303,12 +318,17 @@ impl StaticRuleSetBuilder {
         self
     }
 
+    pub fn supported_partitioning(mut self, schemes: SupportedPartitioningSchemes) -> Self {
+        self.supported_partitioning = schemes;
+        self
+    }
+
     /// Builds an instance of a [StaticRuleSet].
     pub fn build(self) -> StaticRuleSet {
         let properties_provider = BuiltinPhysicalPropertiesProvider::explore_alternatives(self.explore_with_enforcer);
         StaticRuleSet {
             rules: self.rules,
-            properties_provider,
+            properties_provider: properties_provider.with_supported_partitioning_schemes(self.supported_partitioning),
         }
     }
 }

@@ -13,7 +13,7 @@ use scalar::{ScalarExpr, ScalarNode};
 
 use crate::memo::{
     CopyInExprs, CopyInNestedExprs, ExprContext, Memo, MemoBuilder, MemoExpr, MemoExprFormatter, MemoExprRef,
-    MemoExprState, MemoFormatterFlags, MemoGroupCallback, MemoGroupCallbackRef, NewChildExprs, Props,
+    MemoExprState, MemoFormatterFlags, MemoGroupCallback, MemoGroupCallbackRef, MemoGroupRef, NewChildExprs, Props,
 };
 use crate::meta::{ColumnId, MutableMetadata};
 use crate::operators::format::PropertiesFormatter;
@@ -25,12 +25,14 @@ use crate::statistics::StatisticsBuilder;
 
 pub mod builder;
 pub mod format;
+// mod partitioning;
 pub mod properties;
 pub mod relational;
 pub mod scalar;
 
 pub type OperatorMetadata = Rc<MutableMetadata>;
 pub type ExprMemo = Memo<Operator, OperatorMetadata>;
+pub type ExprGroupRef<'a> = MemoGroupRef<'a, Operator, OperatorMetadata>;
 pub type ExprRef = MemoExprRef<Operator>;
 pub type ExprCallback = MemoGroupCallbackRef<Operator, OperatorMetadata>;
 
@@ -559,6 +561,14 @@ impl OuterScope {
                 // referenced in by it because the outer columns are only used by relational operators.
                 outer_columns: Vec::new(),
             },
+        }
+    }
+}
+
+impl From<RelationalProperties> for OuterScope {
+    fn from(props: RelationalProperties) -> Self {
+        OuterScope {
+            outer_columns: props.logical.output_columns,
         }
     }
 }

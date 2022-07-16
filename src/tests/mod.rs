@@ -1,5 +1,5 @@
 use crate::catalog::{Catalog, IndexBuilder, OrderingBuilder, DEFAULT_SCHEMA};
-use crate::operators::builder::{OrderingOption, OrderingOptions};
+use crate::operators::builder::{OrderingOption, OrderingOptions, PartitioningOptions};
 use crate::operators::relational::join::JoinType;
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::{col, cols, scalar, ScalarExpr};
@@ -1074,6 +1074,271 @@ fn test_limit_offset() {
 02 Limit [01] rows=4
 01 Offset [00] rows=10
 00 Scan A cols=[1, 2]
+"#,
+    );
+}
+
+// PARTITIONING
+
+#[test]
+fn test_add_initial_partitioning_after_not_partitioned_input() {
+    let mut tester = OptimizerTester::new();
+    tester.enable_partitioning(vec!["hash"]);
+
+    tester.set_operator(|builder| {
+        let from_a = builder.get("A", vec!["a1", "a2"])?;
+        let partitioned = from_a.partition_by(vec!["a1"])?;
+
+        partitioned.build()
+    });
+
+    tester.add_rules(|_| vec![Box::new(SelectRule)]);
+
+    tester.set_table_row_count("A", 100);
+    tester.optimize(
+        r#"
+00 InitialPartitioning [partitioning:()=00] hash-partitioning=[1]
+00 Scan A cols=[1, 2]
+"#,
+    );
+}
+
+#[test]
+fn test_add_full_merge_when_serial_input_is_requested() {
+    let mut tester = OptimizerTester::new();
+    tester.enable_partitioning(vec!["hash"]);
+
+    tester.set_operator(|builder| {
+        let from_a = builder.get("A", vec!["a1", "a2"])?;
+        let partitioned = from_a.partition_by(PartitioningOptions::Singleton)?;
+
+        partitioned.build()
+    });
+
+    tester.add_rules(|_| vec![Box::new(SelectRule)]);
+
+    tester.set_table_row_count("A", 100);
+    tester.optimize(
+        r#"
+00 FullMerge [partitioning:hash()=00] partitioning=()
+00 Scan A cols=[1, 2]
+"#,
+    );
+}
+
+#[test]
+fn test_add_initial_partitioning_when_partitioning_is_requested() {
+    let mut tester = OptimizerTester::new();
+    tester.enable_partitioning(vec!["hash"]);
+
+    tester.set_operator(|builder| {
+        let from_a = builder.get("A", vec!["a1", "a2"])?;
+        let projection = from_a.project(vec![col("a1"), col("a2")])?;
+        let projection = projection.project(vec![col("a1"), col("a2")])?;
+        let partitioned = projection.partition_by(vec!["a1"])?;
+
+        partitioned.build()
+    });
+
+    tester.set_table_row_count("A", 100);
+    tester.optimize(
+        r#"
+04 InitialPartitioning [partitioning:()=04] hash-partitioning=[1]
+04 Projection [03 01 02] cols=[1, 2]
+02 Expr col:2
+01 Expr col:1
+03 Projection [00 01 02] cols=[1, 2]
+02 Expr col:2
+01 Expr col:1
+00 Scan A cols=[1, 2]
+"#,
+    );
+}
+
+#[test]
+fn test_get_partitioned_and_ordered() {
+    let mut tester = OptimizerTester::new();
+    tester.enable_partitioning(vec!["hash"]);
+
+    tester.set_operator(|builder| {
+        let from_a = builder.get("A", vec!["a1", "a2"])?;
+        let partitioned = from_a.partition_by(vec!["a1"])?;
+        let ordered = partitioned.order_by(OrderingOption::by("a2", false))?;
+
+        ordered.build()
+    });
+
+    tester.add_rules(|_| vec![Box::new(SelectRule)]);
+    tester.explore_with_enforcer(false);
+
+    tester.set_table_row_count("A", 100);
+    tester.optimize(
+        r#"
+00 Sort [partitioning:hash(1)=01] ord=[+2]
+01 InitialPartitioning [00] hash-partitioning=[1]
+00 Scan A cols=[1, 2]
+"#,
+    );
+}
+
+#[test]
+fn test_add_parallel_requirements_after_join() {
+    let mut tester = OptimizerTester::new();
+    tester.enable_partitioning(vec!["hash"]);
+
+    tester.set_operator(|builder| {
+        let left = builder.clone().get("A", vec!["a1"])?;
+        let right = builder.get("B", vec!["b1"])?;
+
+        let join = left.join_using(right, JoinType::Inner, vec![("a1", "b1")])?;
+        let project = join.project(vec![col("a1")])?;
+        let project = project.partition_by(vec!["a1"])?;
+
+        project.build()
+    });
+
+    tester.add_rules(|_| vec![Box::new(HashJoinRule), Box::new(MergeSortJoinRule)]);
+    tester.disable_rules(|r| r.name() == "MergeSortJoinRule");
+
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("B", 10);
+
+    tester.optimize(
+        r#"
+04 InitialPartitioning [partitioning:()=04] hash-partitioning=[1]
+04 Projection [02 03] cols=[1]
+03 Expr col:1
+02 HashJoin [00 01] type=Inner using=[(1, 2)]
+01 Scan B cols=[2]
+00 Scan A cols=[1]
+"#,
+    );
+
+    tester.reset_rule_filters();
+    tester.disable_rules(|r| r.name() == "HashJoinRule");
+
+    tester.optimize(
+        r#"
+04 InitialPartitioning [partitioning:()=04] hash-partitioning=[1]
+04 Projection [02 03] cols=[1]
+03 Expr col:1
+02 MergeSortJoin [ord:[+1]=00 ord:[+2]=01] type=Inner using=[(1, 2)] left_ord=[+1] right_ord=[+2]
+01 Sort [01] ord=[+2]
+01 Scan B cols=[2]
+00 Sort [00] ord=[+1]
+00 Scan A cols=[1]
+"#,
+    );
+}
+
+#[test]
+fn test_add_serial_requirements_after_join() {
+    let mut tester = OptimizerTester::new();
+    tester.enable_partitioning(vec!["hash"]);
+
+    tester.set_operator(|builder| {
+        let left = builder.clone().get("A", vec!["a1"])?;
+        let right = builder.get("B", vec!["b1"])?;
+
+        let left = left.partition_by(vec!["a1"])?;
+        // retain partitioning by adding a projection
+        let left = left.project(vec![col("a1")])?;
+
+        let right = right.partition_by(vec!["b1"])?;
+        // retain partitioning by adding a projection
+        let right = right.project(vec![col("b1")])?;
+
+        let join = left.join_using(right, JoinType::Inner, vec![("a1", "b1")])?;
+        let project = join.project(vec![col("a1")])?;
+        let project = project.partition_by(PartitioningOptions::Singleton)?;
+
+        project.build()
+    });
+
+    tester.add_rules(|_| vec![Box::new(HashJoinRule), Box::new(MergeSortJoinRule)]);
+    tester.disable_rules(|r| r.name() == "MergeSortJoinRule");
+
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("B", 10);
+
+    tester.optimize(
+        r#"
+07 FullMerge [partitioning:hash()=07] partitioning=()
+07 Projection [06 01] cols=[1]
+01 Expr col:1
+06 HashJoin [04 05] type=Inner using=[(1, 2)]
+05 Projection [partitioning:hash(2)=02 03] cols=[2]
+03 Expr col:2
+02 InitialPartitioning [partitioning:()=02] hash-partitioning=[2]
+02 Scan B cols=[2]
+04 Projection [partitioning:hash(1)=00 01] cols=[1]
+01 Expr col:1
+00 InitialPartitioning [partitioning:()=00] hash-partitioning=[1]
+00 Scan A cols=[1]
+"#,
+    );
+
+    tester.reset_rule_filters();
+    tester.disable_rules(|r| r.name() == "HashJoinRule");
+
+    tester.optimize(
+        r#"
+07 FullMerge [partitioning:hash()=07] partitioning=()
+07 Projection [06 01] cols=[1]
+01 Expr col:1
+06 MergeSortJoin [ord:[+1]=04 ord:[+2]=05] type=Inner using=[(1, 2)] left_ord=[+1] right_ord=[+2]
+05 Projection [ord:[+2]=02 03] cols=[2]
+03 Expr col:2
+02 Sort [02] ord=[+2]
+02 InitialPartitioning [partitioning:()=02] ord-partitioning=[2]
+02 Scan B cols=[2]
+04 Projection [ord:[+1]=00 01] cols=[1]
+01 Expr col:1
+00 Sort [00] ord=[+1]
+00 InitialPartitioning [partitioning:()=00] ord-partitioning=[1]
+00 Scan A cols=[1]
+"#,
+    );
+}
+
+#[test]
+fn test_merge_join_after_streaming_aggregate() {
+    let mut tester = OptimizerTester::new();
+
+    tester.set_operator(|builder| {
+        let left = builder.clone().get("A", vec!["a1"])?;
+        let right = builder.get("B", vec!["b1"])?;
+
+        let mut join = left.join_using(right, JoinType::Inner, vec![("a1", "b1")])?;
+        let aggr = join.aggregate_builder().add_column("a1")?.group_by("a1")?.build()?;
+        let aggr = aggr.order_by(OrderingOption::by("a1", false))?;
+
+        let filter = col("a1").gt(scalar(10));
+        let select = aggr.select(Some(filter))?;
+        let project = select.project(vec![col("a1")])?;
+
+        project.build()
+    });
+
+    tester.add_rules(|_| vec![Box::new(MergeSortJoinRule), Box::new(StreamingAggregateRule)]);
+
+    tester.set_table_row_count("A", 100);
+    tester.set_table_row_count("B", 10);
+
+    tester.optimize(
+        r#"
+07 Projection [06 03] cols=[1]
+03 Expr col:1
+06 Select [ord:[+1]=04 05]
+05 Expr col:1 > 10
+04 StreamingAggregate [ord:[+1]=02 03 03] cols=[1] ordering=[+1]
+03 Expr col:1
+03 Expr col:1
+02 MergeSortJoin [ord:[+1]=00 ord:[+2]=01] type=Inner using=[(1, 2)] left_ord=[+1] right_ord=[+2]
+01 Sort [01] ord=[+2]
+01 Scan B cols=[2]
+00 Sort [00] ord=[+1]
+00 Scan A cols=[1]
 "#,
     );
 }

@@ -15,10 +15,11 @@ use crate::operators::builder::{MemoizeOperators, OperatorBuilder};
 use crate::operators::properties::LogicalPropertiesBuilder;
 use crate::operators::{Operator, OperatorMemoBuilder};
 use crate::optimizer::{BestExprContext, BestExprRef, OptimizedExprCallback, Optimizer};
+use crate::properties::partitioning::Partitioning;
 use crate::rules::implementation::{EmptyRule, GetToScanRule, LimitOffsetRule, ProjectionRule, SelectRule, ValuesRule};
 use crate::rules::testing::TestRuleSet;
-use crate::rules::RuleSet;
 use crate::rules::{Rule, StaticRuleSetBuilder};
+use crate::rules::{RuleSet, SupportedPartitioningSchemes};
 use crate::statistics::simple::{PrecomputedSelectivityStatistics, SimpleCatalogStatisticsBuilder};
 
 static INIT_LOG: Once = Once::new();
@@ -29,6 +30,7 @@ static INIT_LOG: Once = Once::new();
 pub struct OptimizerTester {
     rules: Box<dyn Fn(CatalogRef) -> Vec<Box<dyn Rule>>>,
     rules_filter: Box<dyn Fn(&Box<dyn Rule>) -> bool>,
+    enabled_partitioning: Vec<String>,
     shuffle_rules: bool,
     explore_with_enforcer: bool,
     row_count_per_table: HashMap<String, usize>,
@@ -44,6 +46,7 @@ impl OptimizerTester {
         OptimizerTester {
             rules: Box::new(|_| Vec::new()),
             rules_filter: Box::new(|_r| true),
+            enabled_partitioning: Vec::new(),
             shuffle_rules: true,
             explore_with_enforcer: true,
             row_count_per_table: HashMap::new(),
@@ -85,6 +88,17 @@ impl OptimizerTester {
     /// Resets a filter set by [Self::disable_rules()] method.
     pub fn reset_rule_filters(&mut self) {
         self.rules_filter = Box::new(|_r| true);
+    }
+
+    pub fn enable_partitioning<T>(&mut self, schemes: Vec<T>)
+    where
+        T: Into<String>,
+    {
+        self.enabled_partitioning = schemes.into_iter().map(Into::into).collect()
+    }
+
+    pub fn reset_partitioning(&mut self) {
+        self.enabled_partitioning = vec![];
     }
 
     /// Sets a function that can modify a database catalog used by the optimizer.
@@ -168,10 +182,29 @@ impl OptimizerTester {
         ];
         default_rules.extend((self.rules)(catalog.clone()));
 
+        let enabled_partitioning_schemes = if self.enabled_partitioning.is_empty() {
+            SupportedPartitioningSchemes::all()
+        } else {
+            let mut enabled = SupportedPartitioningSchemes::empty();
+            enabled.add(&Partitioning::Singleton);
+            enabled.add(&Partitioning::Partitioned(vec![]));
+
+            for scheme in self.enabled_partitioning.iter() {
+                match scheme.as_str() {
+                    "hash" => enabled.add(&Partitioning::HashPartitioning(vec![])),
+                    "ord" => enabled.add(&Partitioning::OrderedPartitioning(vec![])),
+                    _ => panic!("Unexpected partitioning scheme: {}", scheme),
+                }
+            }
+
+            enabled
+        };
+
         let rules = default_rules.into_iter().filter(|r| (self.rules_filter)(r));
         let rule_set = StaticRuleSetBuilder::new()
             .add_rules(rules)
             .explore_with_enforcer(self.explore_with_enforcer)
+            .supported_partitioning(enabled_partitioning_schemes)
             .build();
 
         assert!(!rule_set.get_rules().count() > 0, "No rules have been specified");
@@ -308,6 +341,8 @@ where
             Some(required) => {
                 if let Some(ordering) = required.ordering() {
                     self.fmt.push_str(format!("ord:{}=", ordering).as_str());
+                } else if let Some(partitioning) = required.partitioning() {
+                    self.fmt.push_str(format!("partitioning:{}=", partitioning).as_str());
                 } else {
                     panic!("Unexpected required property!: {:?}", required)
                 }
