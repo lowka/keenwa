@@ -6,6 +6,7 @@
 
 pub mod logical;
 mod ordering;
+pub mod partitioning;
 pub mod physical;
 
 #[cfg(test)]

@@ -308,6 +308,8 @@ where
             Some(required) => {
                 if let Some(ordering) = required.ordering() {
                     self.fmt.push_str(format!("ord:{}=", ordering).as_str());
+                } else if let Some(partitioning) = required.partitioning() {
+                    self.fmt.push_str(format!("partitioning:{}=", partitioning).as_str());
                 } else {
                     panic!("Unexpected required property!: {:?}", required)
                 }
