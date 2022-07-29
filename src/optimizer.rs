@@ -399,14 +399,12 @@ fn group_optimized(
 
     if state.best_expr.is_none() {
         let group = memo.get_group(&ctx.group_id)?;
-        return Err(OptimizerError::internal(format!(
-            "No best expr for ctx: {}. first expression: {:?}",
-            ctx,
-            group.mexpr()
-        )));
+        let message = format!("No best expr for ctx: {}. first expression: {:?}", ctx, group.mexpr());
+        Err(OptimizerError::internal(message))
+    } else {
+        state.optimized = true;
+        Ok(())
     }
-    state.optimized = true;
-    Ok(())
 }
 
 fn optimize_expr<R>(
@@ -506,15 +504,11 @@ where
 
     runtime_state.applied_rules.mark_applied(&rule_id, &binding);
 
-    let result = {
-        let operator = expr.expr();
-        let metadata = memo.metadata().get_ref();
+    let operator = expr.expr();
+    let metadata = memo.metadata().get_ref();
 
-        let rule_ctx = RuleContext::new(ctx.required_properties.clone(), metadata);
-        rule_set
-            .apply_rule(&rule_id, &rule_ctx, operator.relational().logical())
-            .expect("Failed to apply a rule")
-    };
+    let rule_ctx = RuleContext::new(ctx.required_properties.clone(), metadata);
+    let result = rule_set.apply_rule(&rule_id, &rule_ctx, operator.relational().logical())?;
 
     if let Some(result) = result {
         match result {
