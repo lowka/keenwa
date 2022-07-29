@@ -367,26 +367,21 @@ where
             let best_expr = BestExpr::new(expr.clone(), 0.0, vec![]);
             state.best_expr = Some(best_expr);
         } else {
-            let task = get_optimize_scalar_inputs_task(&ctx, expr);
+            let task = get_optimize_scalar_inputs_task(&ctx, expr)?;
             runtime_state.tasks.schedule(task)
         }
     } else {
         runtime_state.tasks.schedule(Task::ExploreGroup { ctx: ctx.clone() });
 
         for expr in group.mexprs() {
-            let expr_id = expr.id();
             match expr.expr().relational() {
-                RelExpr::Logical(_) => {
-                    assert!(!state.is_expr_optimized(&expr_id), "already optimized");
-
-                    runtime_state.tasks.schedule(Task::OptimizeExpr {
-                        ctx: ctx.clone(),
-                        expr: expr.clone(),
-                        explore: false,
-                    })
-                }
+                RelExpr::Logical(_) => runtime_state.tasks.schedule(Task::OptimizeExpr {
+                    ctx: ctx.clone(),
+                    expr: expr.clone(),
+                    explore: false,
+                }),
                 RelExpr::Physical(_) => {
-                    let task = get_optimize_rel_inputs_task(&ctx, &expr, rule_set);
+                    let task = get_optimize_rel_inputs_task(&ctx, &expr, rule_set)?;
                     runtime_state.tasks.schedule(task);
                 }
             }
@@ -404,7 +399,11 @@ fn group_optimized(
 
     if state.best_expr.is_none() {
         let group = memo.get_group(&ctx.group_id)?;
-        panic!("No best expr for ctx: {}. first expression: {:?}", ctx, group.mexpr());
+        return Err(OptimizerError::internal(format!(
+            "No best expr for ctx: {}. first expression: {:?}",
+            ctx,
+            group.mexpr()
+        )));
     }
     state.optimized = true;
     Ok(())
@@ -547,7 +546,7 @@ where
 
                 log::debug!(" + Physical expression: {}", new_expr);
 
-                let task = get_optimize_rel_inputs_task(&ctx, &new_expr, rule_set);
+                let task = get_optimize_rel_inputs_task(&ctx, &new_expr, rule_set)?;
                 runtime_state.tasks.schedule(task);
             }
         }
@@ -567,9 +566,14 @@ where
 {
     runtime_state.stats.tasks.enforce_properties += 1;
 
-    let required_properties = ctx.required_properties.as_ref().as_ref().unwrap_or_else(|| {
-        panic!("Can not apply an enforcer - no required properties. ctx: {}, task: {}", ctx, enforcer_task)
-    });
+    let required_properties = if let Some(required_properties) = ctx.required_properties.as_ref() {
+        required_properties
+    } else {
+        return Err(OptimizerError::internal(format!(
+            "Can not apply an enforcer - no required properties. ctx: {}, task: {}",
+            ctx, enforcer_task
+        )));
+    };
 
     let (enforcer_expr, remaining_properties) = {
         let group = memo.get_group(&ctx.group_id)?;
@@ -577,9 +581,7 @@ where
         let input = RelNode::try_from_group(group)?;
 
         let properties_provider = rule_set.get_physical_properties_provider();
-        let (enforcer_expr, remaining_properties) = properties_provider
-            .create_enforcer(required_properties, input)
-            .expect("Failed to create an enforcer");
+        let (enforcer_expr, remaining_properties) = properties_provider.create_enforcer(required_properties, input)?;
         let enforcer_expr = OperatorExpr::from(enforcer_expr);
         // ENFORCERS: Currently enforcers can not be retrieved from group.exprs()
         // because adding an enforcer to a group won't allow the optimizer to complete the optimization process:
@@ -682,16 +684,21 @@ where
     Ok(())
 }
 
-fn get_optimize_scalar_inputs_task(ctx: &OptimizationContext, expr: &ExprRef) -> Task {
+fn get_optimize_scalar_inputs_task(ctx: &OptimizationContext, expr: &ExprRef) -> Result<Task, OptimizerError> {
     // Optimize nested subqueries with their required properties.
     let required_props = expr.children().map(|expr| expr.props().relational().physical.required.clone()).collect();
 
-    OptimizeInputsTaskBuilder::new(ctx.clone(), expr.clone())
+    let task = OptimizeInputsTaskBuilder::new(ctx.clone(), expr.clone())
         .use_required_properties(Some(required_props))
-        .build()
+        .build();
+    Ok(task)
 }
 
-fn get_optimize_rel_inputs_task<R>(ctx: &OptimizationContext, expr: &ExprRef, rule_set: &R) -> Task
+fn get_optimize_rel_inputs_task<R>(
+    ctx: &OptimizationContext,
+    expr: &ExprRef,
+    rule_set: &R,
+) -> Result<Task, OptimizerError>
 where
     R: RuleSet,
 {
@@ -704,15 +711,13 @@ where
             let EvaluationResponse {
                 provides_property,
                 retains_property,
-            } = properties_provider
-                .evaluate_properties(physical_expr, required_properties)
-                .expect("Invalid expr or required physical properties");
+            } = properties_provider.evaluate_properties(physical_expr, required_properties)?;
             (provides_property, retains_property)
         }
         None => (true, false),
     };
 
-    if ctx.required_properties.is_none() && required_input_properties.is_none() {
+    let task = if ctx.required_properties.is_none() && required_input_properties.is_none() {
         // Optimization context has no required properties + expression does not require any property from its inputs.
         // -> optimize each child expression using required properties of child expressions.
         // In this case every child expression is optimized using required properties of its memo group.
@@ -748,7 +753,8 @@ where
             ctx: ctx.clone(),
             enforcer_task: EnforcerTask::ProvideProperties(expr.clone()),
         }
-    }
+    };
+    Ok(task)
 }
 
 fn expr_optimized(runtime_state: &mut RuntimeState, ctx: OptimizationContext, expr: ExprRef) {
@@ -1125,13 +1131,12 @@ fn new_cost_estimation_ctx(
 
     for ctx in inputs.inputs.iter() {
         let group_state = state.get_state(ctx)?;
-        let best_expr = group_state
-            .best_expr
-            .as_ref()
-            .unwrap_or_else(|| panic!("No best expr for input group: {:?}", ctx));
-
-        best_exprs.push(best_expr.expr.clone());
-        input_cost += best_expr.cost;
+        if let Some(best_expr) = group_state.best_expr.as_ref() {
+            best_exprs.push(best_expr.expr.clone());
+            input_cost += best_expr.cost;
+        } else {
+            return Err(OptimizerError::internal(format!("No best expr for input group: {:?}", ctx)));
+        }
     }
 
     Ok((CostEstimationContext { inputs: best_exprs }, input_cost))
