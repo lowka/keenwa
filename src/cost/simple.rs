@@ -84,8 +84,11 @@ impl CostEstimator for SimpleCostEstimator {
             PhysicalExpr::Sort(_) => {
                 let input_stats = ctx.child_statistics(0).unwrap();
                 let row_count = input_stats.row_count();
-
-                row_count.ln() * row_count
+                if row_count > 1.0 {
+                    row_count.ln() * row_count
+                } else {
+                    1.0
+                }
             }
             PhysicalExpr::Unique(Unique { inputs, .. }) => {
                 // Inputs are sorted
