@@ -44,7 +44,7 @@ use std::time::{Duration, Instant};
 
 use itertools::Itertools;
 
-use crate::cost::{Cost, CostEstimationContext, CostEstimator};
+use crate::cost::{Cost, CostEstimationContext, CostEstimator, COST_PER_OPERATOR};
 use crate::error::OptimizerError;
 use crate::memo::{format_memo, ExprId, GroupId, MemoExpr, NewChildExprs, Props};
 use crate::meta::MetadataRef;
@@ -446,6 +446,7 @@ fn optimize_expr<R>(
                     RuleMatch::Expr => None,
                     RuleMatch::Group => Some(ctx.group_id),
                 },
+                rule_type: rule.rule_type(),
                 #[cfg(test)]
                 rule_name: rule.name(),
             };
@@ -496,13 +497,12 @@ where
     runtime_state.stats.tasks.apply_rule += 1;
     let expr_id = expr.id();
     let rule_id = binding.rule_id;
+    let rule_type = &binding.rule_type;
     let group_id = ctx.group_id;
 
-    if runtime_state.applied_rules.is_applied(&rule_id, &expr_id, &group_id) {
+    if rule_type == &RuleType::Transformation && runtime_state.applied_rules.is_applied(&rule_id, &expr_id, &group_id) {
         return Ok(());
     }
-
-    runtime_state.applied_rules.mark_applied(&rule_id, &binding);
 
     let operator = expr.expr();
     let metadata = memo.metadata().get_ref();
@@ -521,7 +521,9 @@ where
                 let new_expr = memo.insert_group_member(group_token, new_operator, &scope).unwrap();
                 let new_expr = new_expr.state().memo_expr();
 
-                log::debug!(" + Logical expression: {}", new_expr);
+                runtime_state.applied_rules.mark_applied(&rule_id, &binding);
+
+                log::debug!(" + Logical expr: {} ctx: {}", new_expr, ctx);
 
                 runtime_state.tasks.schedule(Task::OptimizeExpr {
                     ctx,
@@ -537,8 +539,13 @@ where
                 let group_token = memo_group.to_group_token();
                 let new_expr = memo.insert_group_member(group_token, new_operator, &scope).unwrap();
                 let new_expr = new_expr.state().memo_expr();
+                let state = runtime_state.state.get_state(&ctx)?;
 
-                log::debug!(" + Physical expression: {}", new_expr);
+                if state.is_expr_optimized(&new_expr.id()) {
+                    return Ok(());
+                }
+
+                log::debug!(" + Physical expr: {} ctx: {}", new_expr, ctx);
 
                 let task = get_optimize_rel_inputs_task(&ctx, &new_expr, rule_set)?;
                 runtime_state.tasks.schedule(task);
@@ -595,7 +602,7 @@ where
             // When this task is executed, all inputs of the enforcer operator are optimized.
             let task = OptimizeInputsTaskBuilder::new(ctx.clone(), enforcer_expr)
                 .require_properties(remaining_properties.clone())
-                .build_completed();
+                .build();
 
             runtime_state.tasks.schedule(task);
 
@@ -654,7 +661,8 @@ where
                 let statistics = logical_properties.statistics();
                 let (cost_ctx, inputs_cost) = new_cost_estimation_ctx(&inputs, &runtime_state.state)?;
                 let expr_cost = cost_estimator.estimate_cost(rel_expr.physical(), &cost_ctx, statistics);
-                expr_cost + inputs_cost
+                // a plan that has more operators must have a higher cost
+                expr_cost + inputs_cost + COST_PER_OPERATOR
             }
             OperatorExpr::Scalar(_) => {
                 let (_, inputs_cost) = new_cost_estimation_ctx(&inputs, &runtime_state.state)?;
@@ -943,6 +951,7 @@ struct RuleBinding {
     rule_id: RuleId,
     expr: ExprRef,
     group: Option<GroupId>,
+    rule_type: RuleType,
     #[cfg(test)]
     rule_name: String,
 }
@@ -981,10 +990,6 @@ struct OptimizeInputsState {
 }
 
 impl OptimizeInputsState {
-    fn set_optimized(&mut self) {
-        self.current_index = self.inputs.len()
-    }
-
     fn next_input(&mut self) -> Option<OptimizationContext> {
         if self.current_index < self.inputs.len() {
             let ctx = self.inputs[self.current_index].clone();
@@ -1063,15 +1068,6 @@ impl OptimizeInputsTaskBuilder {
 
     /// Builds an OptimizeInputs task.
     pub fn build(self) -> Task {
-        self.do_build_task(false)
-    }
-
-    /// Build an OptimizeInputs task that won't schedule optimization of child expressions.
-    pub fn build_completed(self) -> Task {
-        self.do_build_task(true)
-    }
-
-    fn do_build_task(self, completed: bool) -> Task {
         let input_properties = self.input_properties;
         let child_iter = self.expr.children();
 
@@ -1090,14 +1086,10 @@ impl OptimizeInputsTaskBuilder {
             })
             .collect();
 
-        let mut inputs = OptimizeInputsState {
+        let inputs = OptimizeInputsState {
             inputs,
             current_index: 0,
         };
-
-        if completed {
-            inputs.set_optimized();
-        }
 
         Task::OptimizeInputs {
             ctx: self.ctx,
