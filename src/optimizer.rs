@@ -518,7 +518,7 @@ where
                 let memo_group = memo.get_group(&ctx.group_id)?;
                 let scope = OuterScope::from_properties(memo_group.props());
                 let group_token = memo_group.to_group_token();
-                let new_expr = memo.insert_group_member(group_token, new_operator, &scope).unwrap();
+                let new_expr = memo.insert_group_member(group_token, new_operator, &scope)?;
                 let new_expr = new_expr.state().memo_expr();
 
                 runtime_state.applied_rules.mark_applied(&rule_id, &binding);
@@ -537,7 +537,7 @@ where
                 let memo_group = memo.get_group(&ctx.group_id)?;
                 let scope = OuterScope::from_properties(memo_group.props());
                 let group_token = memo_group.to_group_token();
-                let new_expr = memo.insert_group_member(group_token, new_operator, &scope).unwrap();
+                let new_expr = memo.insert_group_member(group_token, new_operator, &scope)?;
                 let new_expr = new_expr.state().memo_expr();
                 let state = runtime_state.state.get_state(&ctx)?;
 
@@ -590,7 +590,7 @@ where
         // optimize_inputs on the enforcer which then calls optimize group on the same group and we have an infinite loop.
         // 2) copy_out_best_expr traverses its child expressions recursively so adding an enforcer to a group which
         // is used as its input results an infinite loop during the traversal.
-        let enforcer_expr = memo.insert_group(Operator::from(enforcer_expr), &scope).unwrap();
+        let enforcer_expr = memo.insert_group(Operator::from(enforcer_expr), &scope)?;
         let enforcer_expr = enforcer_expr.state().memo_expr();
 
         (enforcer_expr, Rc::new(remaining_properties))
