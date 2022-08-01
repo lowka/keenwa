@@ -10,6 +10,11 @@ pub mod simple;
 //FIXME Wrap into struct to prevent overflows?
 pub type Cost = f64;
 
+/// Additional cost per operator.
+/// This extra cost is added to each an operator by the optimizer so a plan with more operator
+/// has a higher cost than a plan with less operators.
+pub const COST_PER_OPERATOR: f64 = 1f64;
+
 /// Estimates a cost of a physical expression.
 pub trait CostEstimator {
     /// Estimates the cost of the given physical expression excluding the cost of its inputs.
