@@ -48,7 +48,11 @@ impl OrderingChoice {
             .iter()
             .copied()
             .map(|col| {
-                if let Some(p) = source_columns.iter().position(|s| s == &col.column()) {
+                if let Some(p) = source_columns
+                    .iter()
+                    .position(|s| s == &col.column())
+                    .filter(|p| *p < output_columns.len())
+                {
                     let output = output_columns[p];
                     OrderingColumn::ord(output, col.descending())
                 } else {
@@ -311,6 +315,19 @@ mod test {
         let result_ord = ord.with_mapping(&a_cols, &b_cols);
 
         let expected_ord = ordering_from_string(&metadata, &["B:-b1", "C:-c1", "B:+b2"]);
+        assert_eq!(result_ord, expected_ord);
+    }
+
+    #[test]
+    fn with_mapping_when_output_contains_less_columns() {
+        let mut metadata = TestMetadata::with_tables(vec!["A", "B"]);
+        let a_cols = metadata.add_columns("A", vec!["a1", "a2"]);
+        let b_cols = metadata.add_columns("B", vec!["b1"]);
+
+        let ord = ordering_from_string(&metadata, &["A:+a1", "A:-a2"]);
+        let result_ord = ord.with_mapping(&a_cols, &b_cols);
+
+        let expected_ord = ordering_from_string(&metadata, &["B:+b1", "A:-a2"]);
         assert_eq!(result_ord, expected_ord);
     }
 

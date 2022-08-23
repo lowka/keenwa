@@ -8,6 +8,7 @@ use crate::operators::relational::{RelExpr, RelNode};
 use crate::operators::scalar::get_subquery;
 use crate::operators::{Operator, OperatorExpr, OperatorMetadata, Properties};
 use crate::properties::logical::LogicalProperties;
+use crate::properties::partitioning::Partitioning;
 use crate::properties::physical::PhysicalProperties;
 use itertools::Itertools;
 use std::fmt::Display;
@@ -446,6 +447,14 @@ where
         let required = physical.required.as_ref();
         if let Some(ordering) = required.and_then(|r| r.ordering()) {
             self.fmt.write_values("ordering", ordering.columns().iter());
+        }
+        if let Some(partitioning) = required.and_then(|r| r.partitioning()).as_ref() {
+            match partitioning {
+                Partitioning::Singleton => self.fmt.write_value("partitioning", "()"),
+                Partitioning::Partitioned(columns) => self.fmt.write_values("partitioning", columns.iter()),
+                Partitioning::OrderedPartitioning(columns) => self.fmt.write_values("ord-partitioning", columns.iter()),
+                Partitioning::HashPartitioning(columns) => self.fmt.write_values("hash-partitioning", columns.iter()),
+            }
         }
         if let Some(presentation) = physical.presentation.as_ref() {
             self.fmt

@@ -31,6 +31,7 @@ use crate::operators::scalar::types::resolve_expr_type;
 use crate::operators::scalar::value::ScalarValue;
 use crate::operators::scalar::{get_subquery, scalar, ScalarExpr, ScalarNode};
 use crate::operators::{ExprMemo, Operator, OperatorExpr, OperatorMetadata, OuterScope, Properties, ScalarProperties};
+use crate::properties::partitioning::Partitioning;
 use crate::properties::physical::{PhysicalProperties, Presentation, RequiredProperties};
 use crate::properties::{OrderingChoice, OrderingColumn};
 use crate::{not_implemented, not_supported};
@@ -117,6 +118,29 @@ impl OrderingOption {
 impl From<OrderingOption> for OrderingOptions {
     fn from(o: OrderingOption) -> Self {
         OrderingOptions::new(vec![o])
+    }
+}
+
+/// Partitioning options.
+pub enum PartitioningOptions {
+    /// Singleton partitioned.
+    Singleton,
+    /// Tuples partitioned by the given columns.
+    Partitioned(Vec<String>),
+}
+
+impl<T, S> From<T> for PartitioningOptions
+where
+    T: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    fn from(opts: T) -> Self {
+        let mut cols = Vec::new();
+        for v in opts.into_iter() {
+            let name = v.into();
+            cols.push(name);
+        }
+        PartitioningOptions::Partitioned(cols)
     }
 }
 
@@ -577,8 +601,53 @@ impl OperatorBuilder {
                 }
                 // FIXME: Add null_last_{col_name}/null_first_{column} to support NULLS FIRST/LAST option
                 let ordering = OrderingChoice::new(ordering_columns);
-                let required = RequiredProperties::new_with_ordering(ordering);
-                let physical = PhysicalProperties::with_required(required);
+                let required = match operator.props().relational().physical().required.clone() {
+                    Some(required) => required.with_ordering(ordering),
+                    None => RequiredProperties::new_with_ordering(ordering),
+                };
+                let physical = PhysicalProperties::new_with_required(required);
+                self.operator = Some(operator.with_physical(physical));
+                self.scope = Some(scope);
+                Ok(self)
+            }
+            _ => Err(OptimizerError::internal("No input operator")),
+        }
+    }
+
+    /// Sets partitioning scheme required by the current node of an operator tree.
+    pub fn partition_by(mut self, partitioning: impl Into<PartitioningOptions>) -> Result<Self, OptimizerError> {
+        match (self.operator.take(), self.scope.take()) {
+            (Some(operator), Some(scope)) => {
+                let partitioning = partitioning.into();
+                let partitioning = match partitioning {
+                    PartitioningOptions::Singleton => Partitioning::Singleton,
+                    PartitioningOptions::Partitioned(columns) => {
+                        let columns: Result<Vec<_>, _> = columns
+                            .into_iter()
+                            .map(|col_name| {
+                                let metadata = self.metadata.clone();
+                                let mut rewriter =
+                                    RewriteExprs::new(&scope, metadata, ValidateProjectionExpr::projection_expr());
+                                let expr = ScalarExpr::ColumnName(col_name.clone());
+                                let expr = expr.rewrite(&mut rewriter)?;
+                                match expr {
+                                    ScalarExpr::Column(id) => Ok(id),
+                                    _ => Err(OptimizerError::argument(format!(
+                                        "PARTITION BY unexpected column {}",
+                                        col_name
+                                    ))),
+                                }
+                            })
+                            .collect();
+                        Partitioning::Partitioned(columns?)
+                    }
+                };
+                let partitioning = partitioning.normalize();
+                let required = match operator.props().relational().physical().required.clone() {
+                    Some(required) => required.with_partitioning(partitioning),
+                    None => RequiredProperties::new_with_partitioning(partitioning),
+                };
+                let physical = PhysicalProperties::new_with_required(required);
                 self.operator = Some(operator.with_physical(physical));
                 self.scope = Some(scope);
                 Ok(self)
@@ -1801,6 +1870,81 @@ Memo:
         tester.expect_expr(
             r#"
 LogicalGet A cols=[1, 2, 3] ordering=[+2]
+  output cols: [1, 2, 3]
+Metadata:
+  col:1 A.a2 Int32
+  col:2 A.a1 Int32
+  col:3 A.a3 Int32
+Memo:
+  00 LogicalGet A cols=[1, 2, 3]
+"#,
+        );
+    }
+
+    #[test]
+    fn test_partition_by_singleton() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let from_a = builder.get("A", vec!["a2", "a1", "a3"])?;
+            let partitioning = PartitioningOptions::Singleton;
+
+            from_a.partition_by(partitioning)?.build()
+        });
+
+        tester.expect_expr(
+            r#"
+LogicalGet A cols=[1, 2, 3] partitioning=()
+  output cols: [1, 2, 3]
+Metadata:
+  col:1 A.a2 Int32
+  col:2 A.a1 Int32
+  col:3 A.a3 Int32
+Memo:
+  00 LogicalGet A cols=[1, 2, 3]
+"#,
+        );
+    }
+
+    #[test]
+    fn test_partition_by_columns() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let from_a = builder.get("A", vec!["a2", "a1", "a3"])?;
+
+            from_a.partition_by(vec!["a1", "a2"])?.build()
+        });
+
+        tester.expect_expr(
+            r#"
+LogicalGet A cols=[1, 2, 3] partitioning=[1, 2]
+  output cols: [1, 2, 3]
+Metadata:
+  col:1 A.a2 Int32
+  col:2 A.a1 Int32
+  col:3 A.a3 Int32
+Memo:
+  00 LogicalGet A cols=[1, 2, 3]
+"#,
+        );
+    }
+
+    #[test]
+    fn test_partitioning_and_ordering() {
+        let mut tester = OperatorBuilderTester::new();
+
+        tester.build_operator(|builder| {
+            let from_a = builder.get("A", vec!["a2", "a1", "a3"])?;
+            let partitioned = from_a.partition_by(vec!["a1", "a2"])?;
+            let ordered = partitioned.order_by(OrderingOption::by("a1", false))?;
+
+            ordered.build()
+        });
+
+        tester.expect_expr(
+            r#"
+LogicalGet A cols=[1, 2, 3] ordering=[+2] partitioning=[1, 2]
   output cols: [1, 2, 3]
 Metadata:
   col:1 A.a2 Int32
