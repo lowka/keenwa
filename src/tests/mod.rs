@@ -1127,6 +1127,104 @@ fn test_add_full_merge_when_serial_input_is_requested() {
 }
 
 #[test]
+fn test_full_merge_prefer() {
+    let mut tester = OptimizerTester::new();
+
+    tester.set_operator(|builder| {
+        let from_a = builder.get("A", vec!["a1", "a2"])?;
+        let partitioned = from_a.partition_by(vec!["a1", "a2"])?;
+        let ordering = vec![OrderingOption::by("a1", false), OrderingOption::by("a2", false)];
+        // let ordered = partitioned.order_by(OrderingOptions::new(ordering))?;
+
+        partitioned.build()
+    });
+
+    tester.add_rules(|catalog| vec![Box::new(IndexOnlyScanRule::new(catalog))]);
+    tester.update_catalog(|catalog| {
+        let table = catalog.get_table("A").expect("Table does not exist");
+        let index_ordering = OrderingBuilder::new(table.clone()).add_asc("a1").add_asc("a2").build()?;
+
+        let index = IndexBuilder::new(table, "my_index")
+            .add_column("a1")
+            .add_column("a2")
+            .ordering(index_ordering)
+            .build()?;
+
+        catalog.add_index(DEFAULT_SCHEMA, index).unwrap();
+        Ok(())
+    });
+
+    tester.set_table_row_count("A", 100);
+    // tester.set_table_row_count("Index:A", 20);
+
+    tester.optimize(
+        r#"
+00 InitialPartitioning [partitioning:()=00] hash-partitioning=[1, 2]
+00 IndexScan A cols=[1, 2]
+"#,
+    );
+
+    tester.disable_rules(|r| r.name() == "IndexOnlyScanRule");
+
+    tester.optimize(
+        r#"
+00 InitialPartitioning [partitioning:()=00] hash-partitioning=[1, 2]
+00 Scan A cols=[1, 2]
+"#,
+    );
+}
+
+#[test]
+fn test_full_merge_prefer_with_ordering() {
+    let mut tester = OptimizerTester::new();
+    tester.enable_partitioning(vec!["ord"]);
+
+    tester.set_operator(|builder| {
+        let from_a = builder.get("A", vec!["a1", "a2"])?;
+        let partitioned = from_a.partition_by(vec!["a1", "a2"])?;
+        let ordering = vec![OrderingOption::by("a1", false), OrderingOption::by("a2", false)];
+        let ordered = partitioned.order_by(OrderingOptions::new(ordering))?;
+
+        ordered.build()
+    });
+
+    tester.add_rules(|catalog| vec![Box::new(IndexOnlyScanRule::new(catalog))]);
+    tester.update_catalog(|catalog| {
+        let table = catalog.get_table("A").expect("Table does not exist");
+        let index_ordering = OrderingBuilder::new(table.clone()).add_asc("a1").add_asc("a2").build()?;
+
+        let index = IndexBuilder::new(table, "my_index")
+            .add_column("a1")
+            .add_column("a2")
+            .ordering(index_ordering)
+            .build()?;
+
+        catalog.add_index(DEFAULT_SCHEMA, index).unwrap();
+        Ok(())
+    });
+
+    tester.set_table_row_count("A", 100);
+    // tester.set_table_row_count("Index:A", 20);
+
+    //     tester.optimize(
+    //         r#"
+    // 00 InitialPartitioning [ord:[+1, +2]=00] ord-partitioning=[1, 2]
+    // 00 IndexScan A cols=[1, 2]
+    // "#,
+    //     );
+
+    tester.disable_rules(|r| r.name() == "IndexOnlyScanRule");
+
+    tester.optimize(
+        r#"
+00 InitialPartitioning [ord:[+1, +2]=00] ord-partitioning=[1, 2]
+00 Sort [ord=00] ord=[+1, +2]
+00 Scan A cols=[1, 2]
+"#,
+    );
+}
+
+#[test]
 fn test_add_initial_partitioning_when_partitioning_is_requested() {
     let mut tester = OptimizerTester::new();
     tester.enable_partitioning(vec!["hash"]);

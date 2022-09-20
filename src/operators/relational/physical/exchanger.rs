@@ -76,7 +76,7 @@ impl Exchanger {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum ExchangerType {
     FullMerge,
     Repartition,

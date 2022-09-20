@@ -1732,6 +1732,9 @@ where
             num_children: self.expr.num_children(),
         }
     }
+
+    // We do not have mexpr method on MemoExprRef because that method
+    // returns a memo group and not a concrete expression.
 }
 
 impl<E> PartialEq for MemoExprRef<E>

@@ -11,6 +11,7 @@ use crate::operators::{ExprRef, OuterScope};
 use crate::optimizer::OptimizerContext;
 use crate::properties::partitioning::Partitioning;
 use crate::properties::physical::RequiredProperties;
+use crate::properties::OrderingChoice;
 use crate::rules::{DerivePropertyMode, PhysicalPropertiesProvider};
 
 #[derive(Debug)]
@@ -167,70 +168,67 @@ where
        [if expr no partitioning requirements -> assume it requires parallel output under the same partitioning scheme]
      */
 
+    let f = format!("{}: {} expr: {}", group_id, required_properties, input_expr);
+
     if required_properties.has_several() {
-        let input = optimizer.get_rel_node(group_id)?;
-        let scope = OuterScope::from(input.props().clone());
-
         let partitioning = required_properties.partitioning().unwrap().clone();
-        // We can only return concrete partitioning scheme because
-        // the optimizer can only operate on specific partitioning schemes
+        let ordering = required_properties.ordering();
+        let (exchanger_type, partitioning_schemes) =
+            generate_ordered_input_partitioning_schemes(&partitioning, ordering);
+        let ordering = required_properties.ordering().clone().expect("Expected ordering");
 
-        let (input_partitioning, tpe) = match &partitioning {
-            Partitioning::Singleton => (Partitioning::HashPartitioning(vec![]), ExchangerType::FullMerge),
-            Partitioning::Partitioned(_) => (Partitioning::Singleton, ExchangerType::Init),
-            Partitioning::OrderedPartitioning(_) => (Partitioning::Singleton, ExchangerType::Init),
-            Partitioning::HashPartitioning(_) => (Partitioning::Singleton, ExchangerType::Init),
-        };
-        let part_enforcer_expr = PhysicalExpr::Exchanger(Exchanger {
-            input,
-            partitioning: partitioning.clone(),
-            exchanger_type: tpe,
-        });
-        let part_enforcer_expr = optimizer.add_enforcer(part_enforcer_expr, &scope)?;
+        for (input_partitioning, should_be_ordered) in partitioning_schemes {
+            if should_be_ordered {
+                let part_enforcer_expr =
+                    add_partitioning_enforcer(optimizer, exchanger_type, partitioning.clone(), group_id)?;
+                let partitioning_remaining_properties =
+                    Some(RequiredProperties::new_with_partitioning(input_partitioning));
 
-        // Enforce ordering (uses partitioning enforcer as an input)
+                let ordering_enforcer_expr =
+                    add_ordering_enforcer(optimizer, ordering.clone(), part_enforcer_expr.group_id())?;
+                let ordering_remaining_properties = required_properties.clone().without_ordering().into_option();
 
-        let ordering = required_properties.ordering().unwrap().clone();
-        let ordering_input = optimizer.get_rel_node(part_enforcer_expr.group_id())?;
-        let ordering_scope = OuterScope::from(ordering_input.props().clone());
+                let ordering_fmt = format!("{}", ordering_enforcer_expr);
+                let partitioning_fmt = format!("{}", part_enforcer_expr);
 
-        let ordering_enforcer_expr = PhysicalExpr::Sort(Sort {
-            input: ordering_input,
-            ordering,
-        });
-        let ordering_enforcer_expr = optimizer.add_enforcer(ordering_enforcer_expr, &ordering_scope)?;
+                // Enforce ordering (uses partitioning enforcer as an input)
+                optimizer.optimize_expr(
+                    group_id,
+                    ordering_enforcer_expr.clone(),
+                    part_enforcer_expr.clone(),
+                    required_properties.clone(),
+                    ordering_remaining_properties,
+                )?;
 
-        optimizer.optimize_expr(
-            group_id,
-            ordering_enforcer_expr.clone(),
-            part_enforcer_expr.clone(),
-            required_properties.clone(),
-            Some(required_properties.without_ordering()),
-        )?;
+                // Enforce partitioning (uses original expression as an input)
+                optimizer.optimize_expr(
+                    ordering_enforcer_expr.group_id(),
+                    part_enforcer_expr,
+                    input_expr.clone(),
+                    RequiredProperties::new_with_partitioning(partitioning.clone()),
+                    partitioning_remaining_properties,
+                )?;
+            } else {
+                let enforcer_expr =
+                    add_partitioning_enforcer(optimizer, exchanger_type, partitioning.clone(), group_id)?;
+                let remaining_properties = Some(required_properties.clone().with_partitioning(input_partitioning));
 
-        // Enforce partitioning (uses original expression as an input)
+                let enforcer_fmt = format!("{}", enforcer_expr);
 
-        let remaining_properties = Some(RequiredProperties::new_with_partitioning(input_partitioning));
-
-        optimizer.optimize_expr(
-            ordering_enforcer_expr.group_id(),
-            part_enforcer_expr,
-            input_expr,
-            RequiredProperties::new_with_partitioning(partitioning),
-            remaining_properties,
-        )?;
+                optimizer.optimize_expr(
+                    group_id,
+                    enforcer_expr,
+                    input_expr.clone(),
+                    required_properties.clone(),
+                    remaining_properties,
+                )?;
+            }
+        }
 
         Ok(())
     } else if let Some(ordering) = required_properties.ordering() {
-        let input = optimizer.get_rel_node(group_id)?;
-        let scope = OuterScope::from(input.props().clone());
-
-        let enforcer_expr = PhysicalExpr::Sort(Sort {
-            input,
-            ordering: ordering.clone(),
-        });
-        let enforcer_expr = optimizer.add_enforcer(enforcer_expr, &scope)?;
-        let remaining_properties = None;
+        let enforcer_expr = add_ordering_enforcer(optimizer, ordering.clone(), input_expr.group_id())?;
+        let remaining_properties = required_properties.clone().without_ordering().into_option();
 
         optimizer.optimize_expr(group_id, enforcer_expr, input_expr, required_properties, remaining_properties)?;
 
@@ -238,26 +236,20 @@ where
     } else if let Some(partitioning) = required_properties.partitioning() {
         // insert repartitioning operator when p != input partitioning.
 
-        let input = optimizer.get_rel_node(group_id)?;
-        let scope = OuterScope::from(input.props().clone());
+        let (exchanger_type, partitioning_schemes) = generate_input_partitioning_schemes(partitioning);
 
-        // We can only return concrete partitioning scheme because
-        // the optimizer can only operate on specific partitioning schemes.
-        let (input_partitioning, tpe) = match &partitioning {
-            Partitioning::Singleton => (Partitioning::HashPartitioning(vec![]), ExchangerType::FullMerge),
-            Partitioning::Partitioned(_) => (Partitioning::Singleton, ExchangerType::Init),
-            Partitioning::OrderedPartitioning(_) => (Partitioning::Singleton, ExchangerType::Init),
-            Partitioning::HashPartitioning(_) => (Partitioning::Singleton, ExchangerType::Init),
-        };
-        let enforcer_expr = PhysicalExpr::Exchanger(Exchanger {
-            input,
-            partitioning: partitioning.clone(),
-            exchanger_type: tpe,
-        });
-        let enforcer_expr = optimizer.add_enforcer(enforcer_expr, &scope)?;
-        let remaining_properties = Some(RequiredProperties::new_with_partitioning(input_partitioning));
+        for input_partitioning in partitioning_schemes {
+            let enforcer_expr = add_partitioning_enforcer(optimizer, exchanger_type, partitioning.clone(), group_id)?;
+            let remaining_properties = Some(RequiredProperties::new_with_partitioning(input_partitioning));
 
-        optimizer.optimize_expr(group_id, enforcer_expr, input_expr, required_properties, remaining_properties)?;
+            optimizer.optimize_expr(
+                group_id,
+                enforcer_expr,
+                input_expr.clone(),
+                RequiredProperties::new_with_partitioning(partitioning.clone()),
+                remaining_properties,
+            )?;
+        }
 
         Ok(())
     } else {
@@ -279,17 +271,127 @@ where
 
     if let Some(ordering) = required_properties.ordering() {
         // At the moment only ordering is supported (See [BuiltinPhysicalPropertiesProvider::can_explore_with_enforcer].)
-        let input = optimizer.get_rel_node(group_id)?;
-        let scope = OuterScope::from(input.props().clone());
+        let enforcer_expr = add_ordering_enforcer(optimizer, ordering.clone(), group_id)?;
+        let remaining_properties = required_properties.clone().without_ordering().into_option();
 
-        let enforcer_expr = PhysicalExpr::Sort(Sort {
-            input,
-            ordering: ordering.clone(),
-        });
-        let enforcer_expr = optimizer.add_enforcer(enforcer_expr, &scope)?;
-
-        optimizer.optimize_enforcer(group_id, enforcer_expr, required_properties, None)
+        optimizer.optimize_enforcer(group_id, enforcer_expr, required_properties, remaining_properties)
     } else {
         Err(OptimizerError::internal(format!("Unexpected required properties: {}", required_properties)))
+    }
+}
+
+fn enforce_ordering<T>(
+    optimizer: &mut T,
+    group_id: GroupId,
+    input_expr: ExprRef,
+    ordering: OrderingChoice,
+    required_properties: RequiredProperties,
+) -> Result<ExprRef, OptimizerError>
+where
+    T: OptimizerContext,
+{
+    let enforcer_expr = add_ordering_enforcer(optimizer, ordering.clone(), input_expr.group_id())?;
+    let remaining_properties = required_properties.clone().without_ordering().into_option();
+
+    optimizer.optimize_expr(group_id, enforcer_expr, input_expr, required_properties, remaining_properties)
+}
+
+fn enforce_partitioning<T>(
+    optimizer: &mut T,
+    group_id: GroupId,
+    input_expr: ExprRef,
+    exchanger_type: ExchangerType,
+    partitioning: Partitioning,
+    input_partitioning: Partitioning,
+    required_properties: RequiredProperties,
+) -> Result<ExprRef, OptimizerError>
+where
+    T: OptimizerContext,
+{
+    let enforcer_expr = add_partitioning_enforcer(optimizer, exchanger_type, partitioning.clone(), group_id)?;
+    let remaining_properties = Some(RequiredProperties::new_with_partitioning(input_partitioning));
+
+    optimizer.optimize_expr(
+        group_id,
+        enforcer_expr,
+        input_expr.clone(),
+        required_properties.clone(),
+        remaining_properties,
+    )
+}
+
+fn add_ordering_enforcer<T>(
+    optimizer: &mut T,
+    ordering: OrderingChoice,
+    input_group_id: GroupId,
+) -> Result<ExprRef, OptimizerError>
+where
+    T: OptimizerContext,
+{
+    let input = optimizer.get_rel_node(input_group_id)?;
+    let scope = OuterScope::from(input.props().clone());
+
+    let enforcer_expr = PhysicalExpr::Sort(Sort { input, ordering });
+    optimizer.add_enforcer(enforcer_expr, &scope)
+}
+
+fn add_partitioning_enforcer<T>(
+    optimizer: &mut T,
+    exchanger_type: ExchangerType,
+    partitioning: Partitioning,
+    input_group_id: GroupId,
+) -> Result<ExprRef, OptimizerError>
+where
+    T: OptimizerContext,
+{
+    let input = optimizer.get_rel_node(input_group_id)?;
+    let scope = OuterScope::from(input.props().clone());
+
+    let enforcer_expr = PhysicalExpr::Exchanger(Exchanger {
+        input,
+        exchanger_type,
+        partitioning,
+    });
+    optimizer.add_enforcer(enforcer_expr, &scope)
+}
+
+fn generate_input_partitioning_schemes(partitioning: &Partitioning) -> (ExchangerType, Vec<Partitioning>) {
+    use Partitioning::*;
+
+    // We can only return concrete partitioning scheme because
+    // the optimizer can only operate on specific partitioning schemes
+
+    match partitioning {
+        Singleton => (ExchangerType::FullMerge, vec![OrderedPartitioning(vec![]), HashPartitioning(vec![])]),
+        Partitioned(_) => (ExchangerType::Init, vec![Singleton]),
+        OrderedPartitioning(_) => (ExchangerType::Init, vec![Singleton]),
+        HashPartitioning(_) => (ExchangerType::Init, vec![Singleton]),
+    }
+}
+
+fn generate_ordered_input_partitioning_schemes(
+    partitioning: &Partitioning,
+    ordering: Option<&OrderingChoice>,
+) -> (ExchangerType, Vec<(Partitioning, bool)>) {
+    use Partitioning::*;
+
+    // We can only return concrete partitioning scheme because
+    // the optimizer can only operate on specific partitioning schemes
+
+    match (partitioning, ordering) {
+        (Singleton, Some(ordering)) => (
+            ExchangerType::FullMerge,
+            vec![
+                (OrderedPartitioning(ordering.clone().into_columns()), false),
+                (HashPartitioning(vec![]), true),
+            ],
+        ),
+        (Singleton, None) => (ExchangerType::FullMerge, vec![(HashPartitioning(vec![]), true)]),
+        (Partitioned(_), _) => (ExchangerType::Init, vec![(Singleton, true)]),
+        (OrderedPartitioning(cols), Some(ordering)) if cols == &ordering.clone().into_columns() => {
+            (ExchangerType::Init, vec![(Singleton, false)])
+        }
+        (OrderedPartitioning(_), _) => (ExchangerType::Init, vec![(Singleton, true)]),
+        (HashPartitioning(_), _) => (ExchangerType::Init, vec![(Singleton, true)]),
     }
 }

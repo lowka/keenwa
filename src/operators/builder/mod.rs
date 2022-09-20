@@ -638,7 +638,7 @@ impl OperatorBuilder {
                                 }
                             })
                             .collect();
-                        Partitioning::Partitioned(columns?)
+                        Partitioning::HashPartitioning(columns?)
                     }
                 };
                 let partitioning = partitioning.normalize();

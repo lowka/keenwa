@@ -1,9 +1,11 @@
 use crate::meta::ColumnId;
+use crate::operators::relational::physical::exchanger::Exchanger;
 use crate::operators::relational::physical::{
     IndexScan, MergeSortJoin, PhysicalExpr, Projection, Sort, StreamingAggregate, Unique,
 };
 use crate::operators::relational::RelNode;
 use crate::operators::scalar::ScalarExpr;
+use crate::properties::partitioning::Partitioning;
 use crate::properties::OrderingChoice;
 use crate::rules::enforcers::PhysicalProperty;
 use crate::rules::DerivePropertyMode;
@@ -87,7 +89,13 @@ impl PhysicalProperty for OrderingChoice {
             PhysicalExpr::Offset(_) => PropertyIsRetained,
             PhysicalExpr::Values(_) => ApplyEnforcer,
             PhysicalExpr::Empty(_) => ApplyEnforcer,
-            PhysicalExpr::Exchanger(_) => ApplyEnforcer,
+            PhysicalExpr::Exchanger(Exchanger { partitioning, .. }) => match partitioning {
+                Partitioning::Singleton => ApplyEnforcer,
+                Partitioning::Partitioned(_) => ApplyEnforcer,
+                // Partitioning::OrderedPartitioning(cols) if cols == &self.clone().into_columns() => PropertyIsProvided,
+                Partitioning::OrderedPartitioning(_) => ApplyEnforcer,
+                Partitioning::HashPartitioning(_) => ApplyEnforcer,
+            },
         }
     }
 }

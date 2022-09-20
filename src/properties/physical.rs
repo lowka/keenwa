@@ -126,6 +126,16 @@ impl RequiredProperties {
         }
     }
 
+    /// If this object has any required properties this method returns [Some](std::option::Option).
+    /// Otherwise it returns [None](std::option::Option).
+    pub fn into_option(self) -> Option<RequiredProperties> {
+        if self.has_any() {
+            Some(self)
+        } else {
+            None
+        }
+    }
+
     /// Returns an iterator over all possible implementations of these required properties.
     /// This method returns `None` if there no other implementations of these properties.
     // TODO: find a better name. *_forms_something???.
