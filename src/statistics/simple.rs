@@ -21,7 +21,7 @@ use crate::properties::logical::LogicalProperties;
 use crate::statistics::StatisticsBuilder;
 use crate::statistics::{Selectivity, Statistics};
 
-/// A simple implementation of [StatisticsBuilder](super::StatisticsBuilder) that information available in a [database catalog].
+/// A simple implementation of [StatisticsBuilder] that information available in a [database catalog].
 ///
 /// [database catalog]: crate::catalog::Catalog
 #[derive(Debug)]
@@ -243,14 +243,14 @@ where
 
 /// An extra trait that computes selectivity of predicate expressions.  
 pub trait SelectivityProvider {
-    /// Returns this selectivity statistics as [`Any`](std::any::Any) in order it can be downcast to its implementation.
+    /// Returns this selectivity statistics as [Any] in order it can be downcast to its implementation.
     fn as_any(&self) -> &dyn Any;
 
     /// Returns selectivity of the given predicate expression `filter` in a context of the relational expression `expr`.
     fn get_selectivity(&self, filter: &ScalarExpr, metadata: MetadataRef) -> Option<Selectivity>;
 }
 
-/// [SelectivityProvider](self::SelectivityProvider) that always returns selectivity of 1.0.
+/// [SelectivityProvider] that always returns selectivity of 1.0.
 #[derive(Debug)]
 pub struct DefaultSelectivityStatistics;
 
@@ -264,7 +264,7 @@ impl SelectivityProvider for DefaultSelectivityStatistics {
     }
 }
 
-/// [SelectivityProvider](self::SelectivityProvider) that allows to set selectivity on per predicate basis.
+/// [SelectivityProvider] that allows to set selectivity on per predicate basis.
 /// When selectivity for a predicate is not specified returns selectivity of 1.0.
 #[derive(Debug)]
 pub struct PrecomputedSelectivityStatistics {

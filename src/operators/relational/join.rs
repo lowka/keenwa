@@ -46,9 +46,9 @@ impl Display for JoinType {
 /// Join condition.
 #[derive(Debug, Clone)]
 pub enum JoinCondition {
-    /// USING (column_list) condition.
+    /// `USING (column_list)` condition.
     Using(JoinUsing),
-    /// ON <expr> condition.
+    /// `ON <expr>` condition.
     On(JoinOn),
 }
 
@@ -107,7 +107,7 @@ impl Display for JoinUsing {
     }
 }
 
-/// ON <expr> condition.
+/// `ON <expr>` condition.
 #[derive(Debug, Clone)]
 pub struct JoinOn {
     /// The expression.

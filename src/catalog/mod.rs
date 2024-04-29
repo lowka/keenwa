@@ -19,7 +19,7 @@ pub type ColumnRef = Arc<Column>;
 /// Provides access to database objects used by the optimizer.
 //TODO: Add tests that ensure that this trait is object safe
 pub trait Catalog: Debug + Sync + Send {
-    /// Returns this catalog as [`Any`](std::any::Any) in order it can be downcast to its implementation.
+    /// Returns this catalog as [Any] in order it can be downcast to its implementation.
     fn as_any(&self) -> &dyn Any;
 
     /// Returns an iterator over schemas available in the catalog.
@@ -44,7 +44,7 @@ pub const DEFAULT_SCHEMA: &str = "default";
 /// Represents a database schema.
 //TODO: Add tests that ensure that this trait is object safe
 pub trait Schema: Debug + Sync + Send {
-    /// Returns this schema as [`Any`](std::any::Any) in order it can be downcast to its implementation.
+    /// Returns this schema as [Any] in order it can be downcast to its implementation.
     fn as_any(&self) -> &dyn Any;
 
     /// Returns an iterator over tables registered in this schema.

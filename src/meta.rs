@@ -185,7 +185,7 @@ impl Metadata {
     }
 }
 
-/// A mutable variant of a [Metadata](self::Metadata).
+/// A mutable variant of a [Metadata].
 #[derive(Debug, Clone)]
 pub struct MutableMetadata {
     inner: RefCell<MutableMetadataInner>,
