@@ -1,4 +1,4 @@
-## Keenwa 
+## Keenwa
 
 Cost-based query optimizer (WIP).
 
@@ -76,7 +76,7 @@ Cost-based query optimizer (WIP).
 - [x] Right
 - [x] Full
 - [x] Cross
-- [x] Semi 
+- [x] Semi
 - [x] Anti (NOT IN ..)
 - [ ] Lateral
 
@@ -100,7 +100,7 @@ Cost-based query optimizer (WIP).
 
 - [x] Basic scalar expressions.
 - [x] Basic aggregate functions.
-- [x] Basic sub queries. 
+- [x] Basic sub queries.
 - [x] Basic identifiers (`table.column`, etc)
 - [ ] Compound identifiers (`schema.object.whatever`, etc)
 - [x] Functions expressions.
@@ -129,8 +129,11 @@ Cost-based query optimizer (WIP).
 - [x] Floating point types.
 - [ ] Decimal types.
 - [ ] Byte arrays.
-- [x] Date (Days), Time (Hours, Minutes, Seconds, Millis)
-- [x] Timestamp with timezone, Timestamp without time zone.
+- [x] Date (Days)
+- [x] Time (Hours, Minutes, Seconds, Millis) without time zone.
+- [ ] Time with time zone.
+- [x] Timestamp without time zone.
+- [ ] Timestamp with time zone.
 - [x] Time intervals: Year, Year to Month, Month, Day, Day to Hour, Day to Minute, Day to Second.
 - [x] Arrays.
 - [x] Tuples.
