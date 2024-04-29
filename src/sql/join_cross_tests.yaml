@@ -20,10 +20,10 @@ ok: |
 query: |
   SELECT * FROM a CROSS JOIN b on a1 = b1
 error: |
-  Internal error: Parser error: Expected end of statement, found: on
+  Internal error: Parser error: Expected end of statement, found: on at Line: 1, Column 30
 
 ---
-query: | 
+query: |
   SELECT * FROM a CROSS JOIN AB USING (a1)
 error: |
-  Internal error: Parser error: Expected end of statement, found: USING
+  Internal error: Parser error: Expected end of statement, found: USING at Line: 1, Column 31
