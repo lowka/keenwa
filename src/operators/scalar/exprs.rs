@@ -116,7 +116,7 @@ mod test {
     }
 
     fn expect_columns(expr: &Expr, expected: Vec<ColumnId>, message: &str) {
-        let columns = collect_columns(&expr);
+        let columns = collect_columns(expr);
         assert_eq!(expected, columns, "{} ", message);
     }
 

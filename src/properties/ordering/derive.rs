@@ -291,7 +291,7 @@ mod test {
                 .input
                 .iter()
                 .map(|(l, _)| {
-                    let (table, column) = l.split_once(":").unwrap();
+                    let (table, column) = l.split_once(':').unwrap();
                     self.metadata.find_column(table, column)
                 })
                 .collect();
@@ -300,7 +300,7 @@ mod test {
                 .input
                 .iter()
                 .map(|(_, r)| {
-                    let (table, column) = r.split_once(":").unwrap();
+                    let (table, column) = r.split_once(':').unwrap();
                     self.metadata.find_column(table, column)
                 })
                 .collect();

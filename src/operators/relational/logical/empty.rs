@@ -42,6 +42,6 @@ impl LogicalEmpty {
         F: MemoExprFormatter,
     {
         f.write_name("LogicalEmpty");
-        f.write_value("return_one_row", &self.return_one_row)
+        f.write_value("return_one_row", self.return_one_row)
     }
 }

@@ -277,7 +277,7 @@ mod test {
             .map_err(|e| format!("{}", e))
             .map(|r| format!("{}", r));
 
-        assert_eq!(result, Err(format!("Argument error: No function test_func(String)")));
+        assert_eq!(result, Err("Argument error: No function test_func(String)".to_string()));
     }
 
     #[test]
@@ -289,7 +289,7 @@ mod test {
 
     #[test]
     fn test_return_type_for_a_function_with_mirror_return_type() {
-        for tpe in vec![DataType::Bool, DataType::Int32, DataType::String] {
+        for tpe in [DataType::Bool, DataType::Int32, DataType::String] {
             let signature = FunctionSignatureBuilder::exact(vec![tpe.clone()]).return_mirrors();
             let result = get_return_type("test_func", &signature, &[tpe.clone()]).unwrap();
             assert_eq!(result, tpe, "return type");
@@ -298,7 +298,7 @@ mod test {
 
     #[test]
     fn test_return_type_for_a_function_with_return_type_expr() {
-        for tpe in vec![DataType::Bool, DataType::Int32, DataType::String] {
+        for tpe in [DataType::Bool, DataType::Int32, DataType::String] {
             let ret_expr = |_args: &[DataType]| Ok(DataType::Null);
             let signature = FunctionSignatureBuilder::exact(vec![tpe.clone()]).return_expr(Arc::new(ret_expr));
             let result = get_return_type("test_func", &signature, &[tpe.clone()]).unwrap();
@@ -307,13 +307,13 @@ mod test {
     }
 
     fn expect_signature_accepts_args(signature: &FunctionSignature, args: &[DataType]) {
-        let r = verify_function_arguments(&signature, args);
+        let r = verify_function_arguments(signature, args);
 
         assert_signature_matches(signature, args, true, r);
     }
 
     fn expect_signature_does_not_accept_args(signature: &FunctionSignature, args: &[DataType]) {
-        let r = verify_function_arguments(&signature, args);
+        let r = verify_function_arguments(signature, args);
 
         assert_signature_matches(signature, args, false, r);
     }

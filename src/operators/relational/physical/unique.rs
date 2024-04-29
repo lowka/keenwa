@@ -200,6 +200,6 @@ mod test {
             })
             .collect();
 
-        Unique::derive_input_orderings(ordering, &rel_nodes, &output_columns)
+        Unique::derive_input_orderings(ordering, &rel_nodes, output_columns)
     }
 }

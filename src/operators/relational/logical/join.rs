@@ -56,7 +56,7 @@ impl LogicalJoin {
             1 => Some(self.right.mexpr()),
             2 => match &self.condition {
                 JoinCondition::Using(_) => None,
-                JoinCondition::On(on) => Some((&on.expr).mexpr()),
+                JoinCondition::On(on) => Some(on.expr.mexpr()),
             },
             _ => None,
         }

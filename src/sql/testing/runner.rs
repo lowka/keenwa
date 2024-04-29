@@ -140,7 +140,7 @@ where
             actual_tables.extend(catalog.tables.iter().map(|t| (&t.name, t)))
         }
 
-        let tables = actual_tables.into_iter().map(|(_, t)| t.clone()).collect();
+        let tables = actual_tables.into_values().map(|t| t.clone()).collect();
         TestCatalog { tables }
     }
 
@@ -593,7 +593,7 @@ impl Mismatch {
             match r {
                 Ok(ok) => format!("ok:\n{}", ok),
                 Err(err) if !err.is_empty() => format!("error:\n  {}", err),
-                Err(_) => format!("error"),
+                Err(_) => "error".to_string(),
             }
         }
 
@@ -616,7 +616,7 @@ fn create_mismatch(
             // exact_error_match says to not to use the match method because
             // that method always returns `true` if the caller expects any error.
             if expected.matches(actual, exact_error_match) {
-                return None;
+                None
             } else {
                 let error = format!("{}", expected);
                 if !error.is_empty() {

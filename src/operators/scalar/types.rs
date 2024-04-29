@@ -846,7 +846,7 @@ mod test {
         }
 
         // not supported
-        for tpe in vec![DataType::Tuple(vec![String]), DataType::Array(Box::new(String))] {
+        for tpe in [DataType::Tuple(vec![String]), DataType::Array(Box::new(String))] {
             for op in ops.clone() {
                 invalid_bin_expr(tpe.clone(), op, tpe.clone())
             }
@@ -1097,7 +1097,7 @@ mod test {
                 }
             }
             DataType::Array(ref element_type) => {
-                let element_type = (&**element_type).clone();
+                let element_type = (**element_type).clone();
                 if let Expr::Scalar(value) = get_value_expr(element_type.clone()) {
                     let array_data_type = DataType::Array(Box::new(element_type));
                     let array = ScalarValue::Array(Some(Array { elements: vec![value] }), Box::new(array_data_type));

@@ -61,7 +61,7 @@ impl OrderingChoice {
 
     /// Converts this ordering into a `Vec` of column identifiers.
     pub fn into_columns(self) -> Vec<ColumnId> {
-        self.columns.into_iter().map(|c| ColumnId(c.0.abs() as usize)).collect()
+        self.columns.into_iter().map(|c| ColumnId(c.0.unsigned_abs() as usize)).collect()
     }
 }
 
@@ -97,7 +97,7 @@ impl OrderingColumn {
 
     /// Returns the column.
     pub fn column(&self) -> ColumnId {
-        ColumnId(self.0.abs() as usize)
+        ColumnId(self.0.unsigned_abs() as usize)
     }
 
     /// Returns `true` if the column is sorted in descending order.
@@ -152,7 +152,7 @@ pub mod testing {
         let str = ordering_to_string(&metadata, &ord);
         assert_eq!(str, "A:-a1, A:+a2, B:-b1", "to_string");
 
-        let cols: Vec<_> = str.split(",").map(|s| s.trim()).collect();
+        let cols: Vec<_> = str.split(',').map(|s| s.trim()).collect();
         let ord_from_str = ordering_from_string(&metadata, &cols);
         assert_eq!(ord_from_str, ord, "from string")
     }
@@ -172,7 +172,7 @@ pub mod testing {
         let columns = columns
             .iter()
             .map(|name| {
-                let (table, ord) = name.split_once(":").unwrap();
+                let (table, ord) = name.split_once(':').unwrap();
                 let direction = &ord[0..1];
                 let descending = match direction {
                     "+" => false,
@@ -323,7 +323,7 @@ mod test {
         let columns = columns
             .iter()
             .map(|name| {
-                let (name, ord) = name.split_once(":").unwrap();
+                let (name, ord) = name.split_once(':').unwrap();
                 let id = metadata.find_column(table, name);
                 match ord {
                     "asc" => OrderingColumn::asc(id),

@@ -48,18 +48,20 @@ where
             let test_case = parse_test_case(&buf)?;
 
             if let Some(test_case) = test_case {
-                if test_cases.is_empty() && (catalog.is_none() || options.is_none()) {
-                    if test_case.query.is_none() && test_case.queries.is_none() {
-                        let (new_catalog, new_options) = catalog_and_options(test_case, options_parser)?;
-                        if new_catalog.is_some() {
-                            catalog = new_catalog;
-                        }
-                        if new_options.is_some() {
-                            options = new_options;
-                        }
-                        buf.clear();
-                        continue;
+                if test_cases.is_empty()
+                    && (catalog.is_none() || options.is_none())
+                    && test_case.query.is_none()
+                    && test_case.queries.is_none()
+                {
+                    let (new_catalog, new_options) = catalog_and_options(test_case, options_parser)?;
+                    if new_catalog.is_some() {
+                        catalog = new_catalog;
                     }
+                    if new_options.is_some() {
+                        options = new_options;
+                    }
+                    buf.clear();
+                    continue;
                 }
 
                 parse_sql_test_case(test_case, &buf, &mut test_cases, options_parser)?;
@@ -81,7 +83,7 @@ where
     }
 
     if test_cases.is_empty() {
-        Err(format!("No test cases"))
+        Err("No test cases".to_string())
     } else {
         Ok(SqlTestCaseSet {
             catalog,
@@ -111,7 +113,7 @@ impl TestOptionsParser for NoOpTestOptionsParser {
 fn parse_test_case(str: &str) -> Result<Option<TestCase>, String> {
     let mut buf = String::new();
     for line in str.lines() {
-        if line.starts_with("#") {
+        if line.starts_with('#') {
             // remove comments
             continue;
         }
@@ -161,7 +163,7 @@ where
     T: TestOptionsParser,
 {
     if test_case.ok.is_some() || test_case.error.is_some() {
-        Err(format!("Catalog: neither `ok` nor `error` can be specified"))
+        Err("Catalog: neither `ok` nor `error` can be specified".to_string())
     } else {
         let catalog = yaml_to_catalog(test_case.catalog.take())?;
         let options = if let Some(options) = test_case.options {
@@ -178,20 +180,20 @@ where
 fn validate_test_case(test_case: &TestCase) -> Result<(), String> {
     if test_case.query.is_none() && test_case.queries.is_none() {
         return if test_case.catalog.is_some() {
-            Err(format!("Test case: Expected `query` or `queries` but got catalog"))
+            Err("Test case: Expected `query` or `queries` but got catalog".to_string())
         } else if test_case.options.is_some() {
-            Err(format!("Test case: Expected `query` or `queries` but got options"))
+            Err("Test case: Expected `query` or `queries` but got options".to_string())
         } else {
-            Err(format!("Test case: Neither `query` nor `queries` has been specified"))
+            Err("Test case: Neither `query` nor `queries` has been specified".to_string())
         };
     }
 
     if test_case.query.is_some() && test_case.queries.is_some() {
-        return Err(format!("Test case: Both `query` and `queries` have been specified"));
+        return Err("Test case: Both `query` and `queries` have been specified".to_string());
     }
 
     if test_case.ok.is_some() && test_case.error.is_some() {
-        return Err(format!("Test case: Both `ok` and `error` have been specified"));
+        return Err("Test case: Both `ok` and `error` have been specified".to_string());
     }
 
     // if both ok and error are absent then it is an error.
@@ -234,7 +236,7 @@ fn parse_table_columns(str: &str) -> Result<Vec<(String, DataType)>, String> {
     let mut columns = vec![];
 
     for column in str.split(',') {
-        match column.trim().split_once(":") {
+        match column.trim().split_once(':') {
             Some((column_name, data_type)) => {
                 let data_type = match data_type {
                     _ if data_type.eq_ignore_ascii_case("bool") => DataType::Bool,
@@ -492,7 +494,7 @@ options:
         let _ = parse_test_cases(str, &options_parser)?;
         match options_parser.cell.take() {
             Some(value) => Ok(value),
-            None => Err(format!("")),
+            None => Err(String::new()),
         }
     }
 

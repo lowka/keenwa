@@ -194,7 +194,7 @@ mod test {
     fn count() {
         test_aggregate_function(AggregateFunction::Count, "count", "any <1> -> int32 immutable");
 
-        for tpe in vec![DataType::Null, DataType::Int32, DataType::String, DataType::Bool] {
+        for tpe in [DataType::Null, DataType::Int32, DataType::String, DataType::Bool] {
             let actual_return_type = AggregateFunction::Count.get_return_type(&[tpe.clone()]).unwrap();
             assert_eq!(actual_return_type, DataType::Int32, "count({}) return type", tpe)
         }
