@@ -12,7 +12,7 @@ pub struct FunctionSignature {
     pub args: ArgumentList,
     /// A function that computes a return type.
     pub return_type: FunctionReturnType,
-    /// [Volatility](Volatility) of the function.
+    /// [Volatility] of the function.
     pub volatility: Volatility,
 }
 

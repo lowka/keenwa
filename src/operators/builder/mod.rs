@@ -467,7 +467,7 @@ impl OperatorBuilder {
         Ok(self)
     }
 
-    /// Adds a join operator with the given join type and ON <expr> condition to an operator tree.
+    /// Adds a join operator with the given join type and `ON <expr>` condition to an operator tree.
     pub fn join_on(
         mut self,
         mut right: OperatorBuilder,

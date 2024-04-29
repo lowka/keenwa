@@ -46,7 +46,7 @@ where
     Not(Box<Expr<T>>),
     /// Negation of an arithmetic expression (eg. - 1).
     Negation(Box<Expr<T>>),
-    /// IN/ NOT IN (item1, .., itemN) expression.
+    /// `IN/ NOT IN (item1, .., itemN)` expression.
     InList {
         not: bool,
         expr: Box<Expr<T>>,
@@ -72,9 +72,9 @@ where
     Case {
         /// Base case expression.
         expr: Option<Box<Expr<T>>>,
-        /// A collection of WHEN <expr> THEN <expr> clauses.
+        /// A collection of `WHEN <expr> THEN <expr>` clauses.
         when_then_exprs: Vec<(Expr<T>, Expr<T>)>,
-        /// ELSE <expr>.
+        /// `ELSE <expr>`.
         else_expr: Option<Box<Expr<T>>>,
     },
     /// An ordered list of expressions.
@@ -120,15 +120,15 @@ where
     /// A subquery expression.
     //TODO: Implement table subquery operators such as ALL, ANY, SOME, UNIQUE.
     SubQuery(T),
-    /// An EXIST / NOT EXISTS (<subquery>) expression.
+    /// An `EXIST / NOT EXISTS (<subquery>)` expression.
     Exists { not: bool, query: T },
-    /// IN / NOT IN (<subquery>) expression.
+    /// `IN / NOT IN (<subquery>)` expression.
     InSubQuery { not: bool, expr: Box<Expr<T>>, query: T },
     /// Wildcard expression (eg. `*`, `alias.*` etc).
     Wildcard(Option<String>),
 }
 
-/// Trait that must be implemented by other expressions that can be nested inside [Expr](self::Expr).
+/// Trait that must be implemented by other expressions that can be nested inside [Expr].
 pub trait NestedExpr: Debug + Clone + Eq + Hash {
     /// Returns the output columns returned by this nested expression.
     fn output_columns(&self) -> &[ColumnId];

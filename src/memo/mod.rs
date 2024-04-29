@@ -221,7 +221,7 @@ pub trait MemoExpr: Clone {
     fn copy_in<T>(&self, visitor: &mut CopyInExprs<Self, T>) -> Result<(), OptimizerError>;
 
     /// Creates a new expression from the given expression `expr` by replacing its child expressions
-    /// with expressions provided by the given [NewChildExprs](self::NewChildExprs).
+    /// with expressions provided by the given [NewChildExprs].
     fn expr_with_new_children(expr: &Self::Expr, inputs: NewChildExprs<Self>) -> Result<Self::Expr, OptimizerError>;
 
     /// Called when a scalar expression with the given nested sub-queries should be added to a memo.
@@ -354,8 +354,8 @@ pub trait MemoGroupCallback {
     ) -> Result<Self::Props, OptimizerError>;
 }
 
-/// Represents an expression that has not been copied into a [memo](self::Memo).
-/// This is the `owned` state of a [MemoExprState](self::MemoExprState).
+/// Represents an expression that has not been copied into a [memo](Memo).
+/// This is the `owned` state of a [MemoExprState].
 #[derive(Clone)]
 pub struct OwnedExpr<E>
 where
@@ -1959,8 +1959,8 @@ where
     }
 }
 
-/// Represents an expression stored in a [memo](crate::memo::Memo).
-/// This is the `memo` state of a [MemoExprState](self::MemoExprState).
+/// Represents an expression stored in a [memo](Memo).
+/// This is the `memo` state of a [MemoExprState].
 #[derive(Clone)]
 // get_expr_ref fails to compiler under 1.57.
 // note: rustc 1.57.0 (f1edd0429 2021-11-29) running on x86_64-apple-darwin
