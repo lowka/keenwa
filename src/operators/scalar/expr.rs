@@ -46,14 +46,20 @@ where
     Not(Box<Expr<T>>),
     /// Negation of an arithmetic expression (eg. - 1).
     Negation(Box<Expr<T>>),
-    /// `IN/ NOT IN (item1, .., itemN)` expression.
+    /// `<expr> IN [NOT] (item1, .., itemN)` expression.
     InList {
         not: bool,
         expr: Box<Expr<T>>,
         exprs: Vec<Expr<T>>,
     },
-    /// IS NULL/ IS NOT NULL expression.
+    /// `IS [NOT] NULL` expression.
     IsNull { not: bool, expr: Box<Expr<T>> },
+    /// `IS [NOT] FALSE` expression.
+    IsFalse { not: bool, expr: Box<Expr<T>> },
+    /// `IS [NOT] TRUE` expression.
+    IsTrue { not: bool, expr: Box<Expr<T>> },
+    /// `IS [NOT] UNKNOWN` expression.
+    IsUnknown { not: bool, expr: Box<Expr<T>> },
     /// An expression that checks whether the given value is within the specified range.
     Between {
         /// Negated or not.
@@ -85,6 +91,19 @@ where
     ArrayIndex { array: Box<Expr<T>>, indexes: Vec<Expr<T>> },
     /// A scalar function expression.
     ScalarFunction { func: ScalarFunction, args: Vec<Expr<T>> },
+    /// A `[NOT] LIKE <pattern> [ESCAPE <escape_character>]` expression.
+    Like {
+        /// Negated or not.
+        not: bool,
+        /// The Expression.
+        expr: Box<Expr<T>>,
+        /// A pattern.
+        pattern: Box<Expr<T>>,
+        /// An escape character.
+        escape_char: Option<char>,
+        /// Case-insensitive or not.
+        case_insensitive: bool,
+    },
     /// An aggregate expression.
     Aggregate {
         /// The aggregate function.
@@ -185,6 +204,15 @@ where
             Expr::IsNull { expr, .. } => {
                 expr.accept(visitor)?;
             }
+            Expr::IsTrue { expr, .. } => {
+                expr.accept(visitor)?;
+            }
+            Expr::IsFalse { expr, .. } => {
+                expr.accept(visitor)?;
+            }
+            Expr::IsUnknown { expr, .. } => {
+                expr.accept(visitor)?;
+            }
             Expr::Between { expr, low, high, .. } => {
                 expr.accept(visitor)?;
                 low.accept(visitor)?;
@@ -226,6 +254,10 @@ where
                 for arg in args {
                     arg.accept(visitor)?;
                 }
+            }
+            Expr::Like { expr, pattern, .. } => {
+                expr.accept(visitor)?;
+                pattern.accept(visitor)?;
             }
             Expr::Aggregate { args, filter, .. } => {
                 for arg in args {
@@ -316,6 +348,18 @@ where
                 let expr = rewrite_boxed(*expr, rewriter)?;
                 Expr::IsNull { not, expr }
             }
+            Expr::IsFalse { not, expr } => {
+                let expr = rewrite_boxed(*expr, rewriter)?;
+                Expr::IsFalse { not, expr }
+            }
+            Expr::IsTrue { not, expr } => {
+                let expr = rewrite_boxed(*expr, rewriter)?;
+                Expr::IsTrue { not, expr }
+            }
+            Expr::IsUnknown { not, expr } => {
+                let expr = rewrite_boxed(*expr, rewriter)?;
+                Expr::IsUnknown { not, expr }
+            }
             Expr::Between { not, expr, low, high } => Expr::Between {
                 not,
                 expr: rewrite_boxed(*expr, rewriter)?,
@@ -336,6 +380,19 @@ where
             Expr::ScalarFunction { func, args } => Expr::ScalarFunction {
                 func,
                 args: rewrite_vec(args, rewriter)?,
+            },
+            Expr::Like {
+                not,
+                expr,
+                pattern,
+                escape_char,
+                case_insensitive,
+            } => Expr::Like {
+                not,
+                expr: rewrite_boxed(*expr, rewriter)?,
+                pattern: rewrite_boxed(*pattern, rewriter)?,
+                escape_char,
+                case_insensitive,
             },
             Expr::Aggregate {
                 func,
@@ -424,6 +481,9 @@ where
                 result
             }
             Expr::IsNull { expr, .. } => vec![expr.as_ref().clone()],
+            Expr::IsFalse { expr, .. } => vec![expr.as_ref().clone()],
+            Expr::IsTrue { expr, .. } => vec![expr.as_ref().clone()],
+            Expr::IsUnknown { expr, .. } => vec![expr.as_ref().clone()],
             Expr::Between { expr, low, high, .. } => {
                 vec![expr.as_ref().clone(), low.as_ref().clone(), high.as_ref().clone()]
             }
@@ -436,6 +496,9 @@ where
                 result
             }
             Expr::ScalarFunction { args, .. } => args.clone(),
+            Expr::Like { expr, pattern, .. } => {
+                vec![expr.as_ref().clone(), pattern.as_ref().clone()]
+            }
             Expr::Aggregate { args, filter, .. } => {
                 let mut children: Vec<_> = args.to_vec();
                 if let Some(filter) = filter.clone() {
@@ -533,6 +596,27 @@ where
                     expr: Box::new(children.swap_remove(0)),
                 }
             }
+            Expr::IsFalse { not, .. } => {
+                expect_children("IsFalse", children.len(), 1)?;
+                Expr::IsFalse {
+                    not: *not,
+                    expr: Box::new(children.swap_remove(0)),
+                }
+            }
+            Expr::IsTrue { not, .. } => {
+                expect_children("IsTrue", children.len(), 1)?;
+                Expr::IsFalse {
+                    not: *not,
+                    expr: Box::new(children.swap_remove(0)),
+                }
+            }
+            Expr::IsUnknown { not, .. } => {
+                expect_children("IsUnknown", children.len(), 1)?;
+                Expr::IsFalse {
+                    not: *not,
+                    expr: Box::new(children.swap_remove(0)),
+                }
+            }
             Expr::Between { not, .. } => {
                 expect_children("Between", children.len(), 3)?;
                 Expr::Between {
@@ -599,6 +683,21 @@ where
                 Expr::ScalarFunction {
                     func: func.clone(),
                     args: children,
+                }
+            }
+            Expr::Like {
+                not,
+                escape_char,
+                case_insensitive,
+                ..
+            } => {
+                expect_children("Like", children.len(), 2)?;
+                Expr::Like {
+                    not: *not,
+                    expr: Box::new(children.swap_remove(0)),
+                    pattern: Box::new(children.swap_remove(0)),
+                    escape_char: escape_char.clone(),
+                    case_insensitive: *case_insensitive,
                 }
             }
             Expr::Aggregate {
@@ -692,6 +791,60 @@ where
             lhs: Box::new(self),
             op,
             rhs: Box::new(rhs),
+        }
+    }
+
+    /// Returns `this_expr LIKE pattern [ESCAPE <escape_char>]`
+    pub fn like(self, pattern: Expr<T>, escape_char: Option<char>) -> Self {
+        Expr::Like {
+            not: false,
+            expr: Box::new(self),
+            pattern: Box::new(pattern),
+            escape_char,
+            case_insensitive: false,
+        }
+    }
+
+    /// Returns `this_expr ILIKE pattern [ESCAPE <escape_char>]`
+    pub fn ilike(self, pattern: Expr<T>, escape_char: Option<char>) -> Self {
+        Expr::Like {
+            not: false,
+            expr: Box::new(self),
+            pattern: Box::new(pattern),
+            escape_char,
+            case_insensitive: true,
+        }
+    }
+
+    /// Returns `this_expr IS UNKNOWN` expression.
+    pub fn is_null(self) -> Self {
+        Expr::IsNull {
+            not: false,
+            expr: Box::new(self),
+        }
+    }
+
+    /// Returns `this_expr IS FALSE` expression.
+    pub fn is_false(self) -> Self {
+        Expr::IsFalse {
+            not: false,
+            expr: Box::new(self),
+        }
+    }
+
+    /// Returns `this_expr IS TRUE` expression.
+    pub fn is_true(self) -> Self {
+        Expr::IsTrue {
+            not: false,
+            expr: Box::new(self),
+        }
+    }
+
+    /// Returns `this_expr IS UNKNOWN` expression.
+    pub fn is_unknown(self) -> Self {
+        Expr::IsUnknown {
+            not: false,
+            expr: Box::new(self),
         }
     }
 
@@ -872,10 +1025,6 @@ pub enum BinaryOp {
     Modulo,
     /// String concatenation.
     Concat,
-    /// Match operator.
-    Like,
-    /// Not match operator.
-    NotLike,
 }
 
 impl BinaryOp {
@@ -898,6 +1047,31 @@ where
             Expr::ScalarFunction { func, args } => {
                 write!(f, "{}(", func)?;
                 write!(f, "{})", DisplayArgs(args))
+            }
+            Expr::Like {
+                not,
+                expr,
+                pattern,
+                escape_char,
+                case_insensitive,
+            } => {
+                write!(f, "{} ", expr)?;
+
+                if *not {
+                    write!(f, "NOT ")?;
+                }
+
+                if *case_insensitive {
+                    write!(f, "ILIKE {}", pattern)?;
+                } else {
+                    write!(f, "LIKE {}", pattern)?;
+                }
+
+                if let Some(escape_char) = escape_char {
+                    write!(f, " ESCAPE {}", escape_char)?;
+                }
+
+                Ok(())
             }
             Expr::Aggregate {
                 func,
@@ -987,6 +1161,27 @@ where
                     write!(f, "{} IS NULL", expr)
                 }
             }
+            Expr::IsFalse { not, expr } => {
+                if *not {
+                    write!(f, "{} IS NOT FALSE", expr)
+                } else {
+                    write!(f, "{} IS FALSE", expr)
+                }
+            }
+            Expr::IsTrue { not, expr } => {
+                if *not {
+                    write!(f, "{} IS NOT TRUE", expr)
+                } else {
+                    write!(f, "{} IS TRUE", expr)
+                }
+            }
+            Expr::IsUnknown { not, expr } => {
+                if *not {
+                    write!(f, "{} IS NOT UNKNOWN", expr)
+                } else {
+                    write!(f, "{} IS UNKNOWN", expr)
+                }
+            }
             Expr::Between { not, expr, low, high } => {
                 if *not {
                     write!(f, "{} NOT BETWEEN {} AND {}", expr, low, high)
@@ -1068,8 +1263,6 @@ impl Display for BinaryOp {
             BinaryOp::Divide => write!(f, "/"),
             BinaryOp::Modulo => write!(f, "%"),
             BinaryOp::Concat => write!(f, "||"),
-            BinaryOp::Like => write!(f, "LIKE"),
-            BinaryOp::NotLike => write!(f, "NOT LIKE"),
         }
     }
 }
@@ -1252,20 +1445,6 @@ mod test {
     }
 
     #[test]
-    fn string_like() {
-        let expr = str_val("hello");
-        let rhs = str_val("h*");
-        expect_expr(expr.binary_expr(BinaryOp::Like, rhs), "hello LIKE h*");
-    }
-
-    #[test]
-    fn string_not_like() {
-        let expr = str_val("hello");
-        let rhs = str_val("w*");
-        expect_expr(expr.binary_expr(BinaryOp::NotLike, rhs), "hello NOT LIKE w*");
-    }
-
-    #[test]
     fn column_traversal() {
         let expr = col("a1");
         expect_traversal_order(&expr, vec!["pre:col:a1", "post:col:a1"]);
@@ -1291,11 +1470,26 @@ mod test {
 
     #[test]
     fn is_null_expr_traversal() {
-        let expr = Expr::IsNull {
-            not: false,
-            expr: Box::new(bool_val(true)),
-        };
+        let expr = bool_val(true).is_null();
         expect_traversal_order(&expr, vec!["pre:true IS NULL", "pre:true", "post:true", "post:true IS NULL"])
+    }
+
+    #[test]
+    fn is_false_expr_traversal() {
+        let expr = bool_val(true).is_false();
+        expect_traversal_order(&expr, vec!["pre:true IS FALSE", "pre:true", "post:true", "post:true IS FALSE"])
+    }
+
+    #[test]
+    fn is_true_expr_traversal() {
+        let expr = bool_val(true).is_true();
+        expect_traversal_order(&expr, vec!["pre:true IS TRUE", "pre:true", "post:true", "post:true IS TRUE"])
+    }
+
+    #[test]
+    fn is_unknown_expr_traversal() {
+        let expr = bool_val(true).is_unknown();
+        expect_traversal_order(&expr, vec!["pre:true IS UNKNOWN", "pre:true", "post:true", "post:true IS UNKNOWN"])
     }
 
     #[test]
@@ -1314,11 +1508,18 @@ mod test {
 
     #[test]
     fn is_not_null_expr_traversal() {
-        let expr = Expr::IsNull {
-            not: true,
-            expr: Box::new(bool_val(true)),
-        };
-        expect_traversal_order(&expr, vec!["pre:true IS NOT NULL", "pre:true", "post:true", "post:true IS NOT NULL"])
+        let expr = bool_val(true).is_null().not();
+        expect_traversal_order(
+            &expr,
+            vec![
+                "pre:NOT true IS NULL",
+                "pre:true IS NULL",
+                "pre:true",
+                "post:true",
+                "post:true IS NULL",
+                "post:NOT true IS NULL",
+            ],
+        )
     }
 
     #[test]
@@ -1361,6 +1562,50 @@ mod test {
                 "pre:true",
                 "post:true",
                 "post:avg(col:a1) filter (where true)",
+            ],
+        )
+    }
+
+    #[test]
+    fn like_expr_traversal() {
+        let expr = str_val("str").like(str_val("p"), None);
+        expect_traversal_order(
+            &expr,
+            vec!["pre:str LIKE p", "pre:str", "post:str", "pre:p", "post:p", "post:str LIKE p"],
+        );
+
+        let expr = str_val("str").like(str_val("p"), Some('c'));
+        expect_traversal_order(
+            &expr,
+            vec![
+                "pre:str LIKE p ESCAPE c",
+                "pre:str",
+                "post:str",
+                "pre:p",
+                "post:p",
+                "post:str LIKE p ESCAPE c",
+            ],
+        )
+    }
+
+    #[test]
+    fn ilike_expr_traversal() {
+        let expr = str_val("str").ilike(str_val("p"), None);
+        expect_traversal_order(
+            &expr,
+            vec!["pre:str ILIKE p", "pre:str", "post:str", "pre:p", "post:p", "post:str ILIKE p"],
+        );
+
+        let expr = str_val("str").ilike(str_val("p"), Some('c'));
+        expect_traversal_order(
+            &expr,
+            vec![
+                "pre:str ILIKE p ESCAPE c",
+                "pre:str",
+                "post:str",
+                "pre:p",
+                "post:p",
+                "post:str ILIKE p ESCAPE c",
             ],
         )
     }

@@ -21,10 +21,11 @@ use crate::operators::{ExprMemo, Operator, OperatorMemoBuilder, OperatorMetadata
 use crate::statistics::StatisticsBuilder;
 use itertools::Itertools;
 use sqlparser::ast::{
-    BinaryOperator, Cte, DataType as SqlDataType, DateTimeField, Expr, Function, FunctionArg, FunctionArgExpr, Ident,
-    Join, JoinConstraint, JoinOperator, ObjectName, OrderByExpr, Query, Select, SelectItem, SetExpr, SetOperator,
-    Statement, TableAlias as SqlTableAlias, TableFactor, TableWithJoins, UnaryOperator, Value, Values, WindowSpec,
-    With,
+    BinaryOperator, Cte, DataType as SqlDataType, DateTimeField, Distinct, Expr, Function, FunctionArg,
+    FunctionArgExpr, GroupByExpr, Ident, Interval as SqlInterval, Join, JoinConstraint, JoinOperator, ObjectName,
+    OrderByExpr, Query, Select, SelectItem, SetExpr, SetOperator, SetQuantifier, Statement,
+    TableAlias as SqlTableAlias, TableFactor, TableWithJoins, TimezoneInfo, UnaryOperator, Value, Values,
+    WildcardAdditionalOptions, WindowSpec, WindowType, With,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::{Parser, ParserError};
@@ -138,6 +139,7 @@ fn build_statement(builder: OperatorBuilder, stmt: Statement) -> Result<Operator
         Statement::Explain { .. } => not_implemented!("EXPLAIN"),
         Statement::Savepoint { .. } => not_implemented!("SAVEPOINT"),
         Statement::Merge { .. } => not_implemented!("MERGE"),
+        _ => not_supported!("Not supported statement"),
     }
 }
 
@@ -148,7 +150,7 @@ fn build_query(builder: OperatorBuilder, query: Query) -> Result<OperatorBuilder
         builder
     };
 
-    let builder = build_set_expr(builder, query.body)?;
+    let builder = build_set_expr(builder, *query.body)?;
     let builder = build_order_by(builder, query.order_by)?;
 
     let builder = if let Some(offset) = query.offset {
@@ -187,9 +189,16 @@ fn build_set_expr(builder: OperatorBuilder, set_expr: SetExpr) -> Result<Operato
     match set_expr {
         SetExpr::Select(select) => build_select(builder, *select),
         SetExpr::Query(query) => build_query(builder, *query),
-        SetExpr::SetOperation { op, all, left, right } => build_set_operation(builder, op, all, *left, *right),
+        SetExpr::SetOperation {
+            op,
+            set_quantifier,
+            left,
+            right,
+        } => build_set_operation(builder, op, set_quantifier, *left, *right),
         SetExpr::Values(values) => build_values(builder, values),
         SetExpr::Insert(_) => not_implemented!("INSERT"),
+        SetExpr::Update(_) => not_implemented!("UPDATE"),
+        SetExpr::Table(_) => not_implemented!("TABLE"),
     }
 }
 
@@ -200,7 +209,7 @@ fn build_cte(builder: OperatorBuilder, with: With) -> Result<OperatorBuilder, Op
 
     for cte_table in with.cte_tables {
         let cte_table: Cte = cte_table;
-        let table_expr = build_query(cte_builder.clone(), cte_table.query)?;
+        let table_expr = build_query(cte_builder.clone(), *cte_table.query)?;
         let table_alias = TableAlias {
             name: cte_table.alias.name.to_string(),
             columns: cte_table.alias.columns.into_iter().map(|c| c.to_string()).collect(),
@@ -238,11 +247,21 @@ fn build_select(builder: OperatorBuilder, select: Select) -> Result<OperatorBuil
         builder
     };
     let mut is_aggregate = false;
-    let select_distinct = select.distinct;
-    let mut distinct_on: Option<ScalarExpr> = None;
 
-    for (i, item) in select.projection.into_iter().enumerate() {
-        let item: SelectItem = item;
+    let (select_distinct, distinct_on) = match select.distinct {
+        None => (false, None),
+        Some(Distinct::Distinct) => (true, None),
+        Some(Distinct::On(mut exprs)) => {
+            not_implemented!(exprs.len() > 1, "SELECT DISTINCT <multiple columns>");
+
+            let expr = exprs.remove(0);
+            let distinct_expr = build_scalar_expr(expr, builder.clone())?;
+
+            (true, Some(distinct_expr))
+        }
+    };
+
+    for item in select.projection.into_iter() {
         let subquery_builder = builder.clone();
         let mut expr = match item {
             SelectItem::UnnamedExpr(expr) => build_scalar_expr(expr, subquery_builder)?,
@@ -250,13 +269,19 @@ fn build_select(builder: OperatorBuilder, select: Select) -> Result<OperatorBuil
                 let expr = build_scalar_expr(expr, subquery_builder)?;
                 expr.alias(alias.value.as_str())
             }
-            SelectItem::QualifiedWildcard(object_name) => {
-                let object_name: ObjectName = object_name;
+            SelectItem::QualifiedWildcard(object_name, opts) => {
                 not_implemented!(object_name.0.len() > 1, "Projection: object names other than <name>.*");
                 let name = object_name.to_string();
+
+                validate_wildcard_options(&opts)?;
+
                 ScalarExpr::Wildcard(Some(name))
             }
-            SelectItem::Wildcard => ScalarExpr::Wildcard(None),
+            SelectItem::Wildcard(opts) => {
+                validate_wildcard_options(&opts)?;
+
+                ScalarExpr::Wildcard(None)
+            }
         };
         #[derive(Default)]
         struct IsAggregate {
@@ -293,21 +318,24 @@ fn build_select(builder: OperatorBuilder, select: Select) -> Result<OperatorBuil
         //   Projection exprs = [ Alias (Function {name=ON, args=a1+a2}, a1), a2, a3 ]
         //     From table_a
         //
-        if select_distinct && i == 0 {
-            // build_scalar_expr converts Function {name=ON, args=[arg]} expr into arg expr.
-            if let ScalarExpr::Alias(expr, col) = &mut expr {
-                let expr = expr.as_ref();
-                distinct_on = Some(expr.clone());
-                projection.push(ScalarExpr::ColumnName(col.clone()));
-                continue;
-            }
-        }
+        // if select_distinct && i == 0 {
+        //     // build_scalar_expr converts Function {name=ON, args=[arg]} expr into arg expr.
+        //     if let ScalarExpr::Alias(expr, col) = &mut expr {
+        //         let expr = expr.as_ref();
+        //         distinct_on = Some(expr.clone());
+        //         projection.push(ScalarExpr::ColumnName(col.clone()));
+        //         continue;
+        //     }
+        // }
 
         projection.push(expr);
     }
 
     if !is_aggregate {
-        is_aggregate = !select.group_by.is_empty()
+        is_aggregate = match &select.group_by {
+            GroupByExpr::All => not_supported!("GROUP BY ALL"),
+            GroupByExpr::Expressions(exprs) => !exprs.is_empty(),
+        }
     }
 
     let builder = if let Some(expr) = select.selection {
@@ -326,10 +354,15 @@ fn build_select(builder: OperatorBuilder, select: Select) -> Result<OperatorBuil
             aggregate_builder = aggregate_builder.add_expr(item)?;
         }
 
-        for group_by_expr in select.group_by {
-            let group_by_expr: Expr = group_by_expr;
-            let expr = build_scalar_expr(group_by_expr, scalar_expr_builder.clone())?;
-            aggregate_builder = aggregate_builder.group_by_expr(expr)?;
+        match select.group_by {
+            GroupByExpr::All => not_supported!("GROUP BY ALL"),
+            GroupByExpr::Expressions(exprs) => {
+                for group_by_expr in exprs {
+                    let group_by_expr: Expr = group_by_expr;
+                    let expr = build_scalar_expr(group_by_expr, scalar_expr_builder.clone())?;
+                    aggregate_builder = aggregate_builder.group_by_expr(expr)?;
+                }
+            }
         }
 
         if let Some(having_expr) = select.having {
@@ -353,15 +386,39 @@ fn build_select(builder: OperatorBuilder, select: Select) -> Result<OperatorBuil
     }
 }
 
+fn validate_wildcard_options(opts: &WildcardAdditionalOptions) -> Result<(), OptimizerError> {
+    let WildcardAdditionalOptions {
+        opt_exclude,
+        opt_except,
+        opt_rename,
+        opt_replace,
+    } = opts;
+
+    not_supported!(opt_exclude.is_some(), "Wildcard: EXCLUDE is not supported.");
+    not_supported!(opt_replace.is_some(), "Wildcard: REPLACE is not supported.");
+    not_supported!(opt_rename.is_some(), "Wildcard: RENAME is not supported.");
+    not_supported!(opt_except.is_some(), "Wildcard: EXCEPT is not supported.");
+
+    Ok(())
+}
+
 fn build_set_operation(
     builder: OperatorBuilder,
     op: sqlparser::ast::SetOperator,
-    all: bool,
+    set_qualifier: SetQuantifier,
     left: SetExpr,
     right: SetExpr,
 ) -> Result<OperatorBuilder, OptimizerError> {
     let left = build_set_expr(builder.clone(), left)?;
     let right = build_set_expr(builder, right)?;
+    let all = match set_qualifier {
+        SetQuantifier::All => true,
+        SetQuantifier::Distinct => not_supported!("Set qualifier: DISTINCT"),
+        SetQuantifier::ByName => not_supported!("Set qualifier: BY NAME"),
+        SetQuantifier::AllByName => not_supported!("Set qualifier: ALL BY NAME"),
+        SetQuantifier::DistinctByName => not_supported!("Set qualifier: DISTINCT BY NAME"),
+        SetQuantifier::None => false,
+    };
 
     match op {
         SetOperator::Union if all => left.union_all(right),
@@ -374,7 +431,7 @@ fn build_set_operation(
 }
 
 fn build_values(builder: OperatorBuilder, values: Values) -> Result<OperatorBuilder, OptimizerError> {
-    let value_lists: Vec<Vec<Expr>> = values.0;
+    let value_lists: Vec<Vec<Expr>> = values.rows;
     let mut value_list_result = Vec::with_capacity(value_lists.len());
 
     for value_list in value_lists {
@@ -400,6 +457,10 @@ fn build_from(builder: OperatorBuilder, from: TableWithJoins) -> Result<Operator
             JoinOperator::CrossJoin => (JoinType::Cross, None),
             JoinOperator::CrossApply => not_supported!("CROSS APPLY JOIN"),
             JoinOperator::OuterApply => not_supported!("OUTER APPLY JOIN"),
+            JoinOperator::LeftSemi(constraint) => (JoinType::LeftSemi, Some(constraint)),
+            JoinOperator::RightSemi(constraint) => (JoinType::RightSemi, Some(constraint)),
+            JoinOperator::LeftAnti(_) => not_supported!("LEFT ANTI"),
+            JoinOperator::RightAnti(_) => not_supported!("RIGHT ANTI"),
         };
         let right = build_relation(join_builder.clone(), join.relation)?;
         match constraint {
@@ -438,9 +499,13 @@ fn build_relation(builder: OperatorBuilder, relation: TableFactor) -> Result<Ope
             alias,
             args,
             with_hints,
+            version,
+            partitions,
         } => {
-            not_implemented!(!args.is_empty(), "FROM table. Table valued-function arguments");
+            not_implemented!(args.is_some(), "FROM table. Table valued-function arguments");
             not_implemented!(!with_hints.is_empty(), "FROM table WITH hints");
+            not_implemented!(version.is_some(), "FROM table WITH version");
+            not_implemented!(!partitions.is_empty(), "FROM table WITH partitions");
 
             let alias = build_table_alias(alias)?;
             let builder = builder.from(name.to_string().as_str())?;
@@ -468,10 +533,21 @@ fn build_relation(builder: OperatorBuilder, relation: TableFactor) -> Result<Ope
             }
         }
         TableFactor::TableFunction { .. } => not_supported!("FROM TABLE function"),
-        TableFactor::NestedJoin(table) => {
-            let table: TableWithJoins = *table;
+        TableFactor::NestedJoin {
+            table_with_joins,
+            alias,
+        } => {
+            let table: TableWithJoins = *table_with_joins;
+
+            not_supported!(alias.is_some(), "NESTED JOIN with alias");
+
             build_from(builder, table)?
         }
+        TableFactor::UNNEST { .. } => not_supported!("FROM UNNEST"),
+        TableFactor::JsonTable { .. } => not_supported!("FROM JSON_TABLE"),
+        TableFactor::Pivot { .. } => not_supported!("FROM table PIVOT(..,)"),
+        TableFactor::Unpivot { .. } => not_supported!("FROM table UNPIVOT(...)"),
+        TableFactor::Function { .. } => not_supported!("FROM function(...)"),
     };
     Ok(builder)
 }
@@ -576,12 +652,19 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
             }
         }
         Expr::BinaryOp { op, left, right } => build_binary_expr(op, *left, *right, builder)?,
-        Expr::AnyOp(_) => not_implemented!("ANY expression"),
-        Expr::AllOp(_) => not_implemented!("ALL expression"),
+        Expr::AnyOp { .. } => not_implemented!("ANY expression"),
+        Expr::AllOp { .. } => not_implemented!("ALL expression"),
         Expr::UnaryOp { op, expr } => build_unary_expr(op, *expr, builder)?,
-        Expr::Cast { expr, data_type } => {
+        Expr::Cast {
+            expr,
+            data_type,
+            format,
+        } => {
             let expr = build_scalar_expr(*expr, builder)?;
             let data_type = convert_data_type(data_type)?;
+
+            not_implemented!(format.is_some(), "CAST ... AS type FORMAT format_string_expression");
+
             ScalarExpr::Cast {
                 expr: Box::new(expr),
                 data_type,
@@ -597,8 +680,16 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
         Expr::Value(value) => build_value_expr(value)?,
         Expr::TypedString { data_type, value } => match data_type {
             SqlDataType::Date => ScalarExpr::Scalar(parse_date(value.as_str())?),
-            SqlDataType::Timestamp => ScalarExpr::Scalar(parse_timestamp(value.as_str())?),
-            SqlDataType::Time => ScalarExpr::Scalar(parse_time(value.as_str())?),
+            SqlDataType::Timestamp(precision, tz) => {
+                not_implemented!(precision.is_some(), "Timestamp: precision");
+                not_implemented!(tz != TimezoneInfo::None, "Timestamp: timezone");
+                ScalarExpr::Scalar(parse_timestamp(value.as_str())?)
+            }
+            SqlDataType::Time(precision, tz) => {
+                not_implemented!(precision.is_some(), "Time: precision");
+                not_implemented!(tz != TimezoneInfo::None, "Time: timezone");
+                ScalarExpr::Scalar(parse_time(value.as_str())?)
+            }
             _ => {
                 let message = format!("Typed string expression for data type: {}", data_type);
                 not_supported!(message)
@@ -635,14 +726,11 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
                 else_expr: else_expr.map(Box::new),
             }
         }
-        Expr::Exists(query) => {
-            let builder = build_query(builder.sub_query_builder(), *query)?;
+        Expr::Exists { subquery, negated } => {
+            let builder = build_query(builder.sub_query_builder(), *subquery)?;
             let subquery = builder.build()?;
-            // Unlike [NOT IN <query>] expression [NOT EXISTS <query>] expression is parsed
-            // as [NOT (EXISTS <query>)]. build_unary_expr than sets not to true
-            // if the parent operator is a [NOT] expression.
             ScalarExpr::Exists {
-                not: false,
+                not: negated,
                 query: RelNode::try_from(subquery)?,
             }
         }
@@ -663,10 +751,10 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
             ScalarExpr::Tuple(values?)
         }
         Expr::InUnnest { .. } => not_supported!("InUnnest expression"),
-        Expr::ArrayIndex { obj, indexs } => {
+        Expr::ArrayIndex { obj, indexes } => {
             let expr = build_scalar_expr(*obj, builder.clone())?;
             let indexes: Result<Vec<ScalarExpr>, OptimizerError> =
-                indexs.into_iter().map(|expr| build_scalar_expr(expr, builder.clone())).collect();
+                indexes.into_iter().map(|expr| build_scalar_expr(expr, builder.clone())).collect();
             ScalarExpr::ArrayIndex {
                 array: Box::new(expr),
                 indexes: indexes?,
@@ -677,6 +765,134 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
                 array.elem.into_iter().map(|expr| build_scalar_expr(expr, builder.clone())).collect();
             ScalarExpr::Array(values?)
         }
+        Expr::Interval(SqlInterval {
+            value,
+            leading_field,
+            leading_precision,
+            last_field,
+            fractional_seconds_precision,
+        }) => {
+            let value = build_scalar_expr(*value, builder.clone())?;
+
+            if let Some(leading_field) = leading_field {
+                if leading_precision.is_some() {
+                    not_supported!("Interval: Leading field precision is not supported")
+                }
+                if fractional_seconds_precision.is_some() {
+                    not_supported!("Interval: Fractional second precision is not supported")
+                }
+
+                match value {
+                    ScalarExpr::Scalar(ScalarValue::String(Some(str))) => {
+                        build_interval_literal(str.as_str(), leading_field, last_field)?
+                    }
+                    other => {
+                        let msg = format!("Interval value: {}", other);
+                        not_implemented!(msg)
+                    }
+                }
+            } else {
+                not_supported!("Interval: literals without leading field")
+            }
+        }
+        Expr::Like {
+            negated,
+            expr,
+            pattern,
+            escape_char,
+        } => {
+            let expr = Box::new(build_scalar_expr(*expr, builder.clone())?);
+            let pattern = Box::new(build_scalar_expr(*pattern, builder.clone())?);
+            ScalarExpr::Like {
+                not: negated,
+                expr,
+                pattern,
+                escape_char,
+                case_insensitive: false,
+            }
+        }
+        Expr::ILike {
+            negated,
+            expr,
+            pattern,
+            escape_char,
+        } => {
+            let expr = Box::new(build_scalar_expr(*expr, builder.clone())?);
+            let pattern = Box::new(build_scalar_expr(*pattern, builder.clone())?);
+            ScalarExpr::Like {
+                not: negated,
+                expr,
+                pattern,
+                escape_char,
+                case_insensitive: true,
+            }
+        }
+        Expr::IsFalse(expr) => {
+            let expr = Box::new(build_scalar_expr(*expr, builder.clone())?);
+            ScalarExpr::IsFalse { not: false, expr }
+        }
+        Expr::IsNotFalse(expr) => {
+            let expr = Box::new(build_scalar_expr(*expr, builder.clone())?);
+            ScalarExpr::IsFalse { not: true, expr }
+        }
+        Expr::IsTrue(expr) => {
+            let expr = Box::new(build_scalar_expr(*expr, builder.clone())?);
+            ScalarExpr::IsTrue { not: false, expr }
+        }
+        Expr::IsNotTrue(expr) => {
+            let expr = Box::new(build_scalar_expr(*expr, builder.clone())?);
+            ScalarExpr::IsTrue { not: true, expr }
+        }
+        Expr::IsUnknown(expr) => {
+            let expr = Box::new(build_scalar_expr(*expr, builder.clone())?);
+            ScalarExpr::IsUnknown { not: false, expr }
+        }
+        Expr::IsNotUnknown(expr) => {
+            let expr = Box::new(build_scalar_expr(*expr, builder.clone())?);
+            ScalarExpr::IsUnknown { not: true, expr }
+        }
+        Expr::SimilarTo {
+            negated,
+            expr,
+            pattern,
+            escape_char,
+        } => {
+            let expr = Box::new(build_scalar_expr(*expr, builder.clone())?);
+            let pattern = Box::new(build_scalar_expr(*pattern, builder.clone())?);
+            ScalarExpr::Like {
+                not: negated,
+                expr,
+                pattern,
+                escape_char,
+                case_insensitive: false,
+            }
+        }
+        Expr::RLike { .. } => not_supported!("RLike function. MySQL specific"),
+        Expr::Convert { .. } => not_supported!("CONVERT function"),
+        Expr::SafeCast { .. } => not_supported!("SAFE_CAST expression"),
+        Expr::AtTimeZone { .. } => not_supported!("AT TIME ZONE expression"),
+        Expr::Ceil { .. } => not_supported!("CEIL expression"),
+        Expr::Floor { .. } => not_supported!("FLOOR expression"),
+        Expr::Overlay { .. } => not_supported!("OVERLAY expression"),
+        Expr::IntroducedString { .. } => not_supported!("Introduced string expression. MySQL specific"),
+        Expr::AggregateExpressionWithFilter { .. } => not_implemented!("Aggregate with filter expression"),
+        Expr::ArraySubquery(_) => not_implemented!("Array subquery expression"),
+        Expr::ArrayAgg(_) => not_implemented!("ArrayAgg expression"),
+        Expr::Struct { .. } => not_supported!("Struct expression. BigQuery specific"),
+        Expr::Named { expr, name } => {
+            let expr = Box::new(build_scalar_expr(*expr, builder.clone())?);
+            ScalarExpr::Alias(expr, name.value)
+        }
+        Expr::Dictionary(_) => not_supported!("Literal struct expression. Duckdb specific"),
+        Expr::MatchAgainst { .. } => not_implemented!("MATCH (<col>, <col>, ...) AGAINST (<expr> [<search modifier>])"),
+        Expr::Wildcard => ScalarExpr::Wildcard(None),
+        Expr::QualifiedWildcard(name) => {
+            not_implemented!(name.0.len() > 1, "Wildcard: object names other than <name>.*");
+            let name = name.to_string();
+
+            ScalarExpr::Wildcard(Some(name))
+        }
+        Expr::OuterJoin(_) => not_supported!("Outer join syntax (+)"),
     };
     Ok(expr)
 }
@@ -704,10 +920,6 @@ fn build_binary_expr(
         BinaryOperator::And => BinaryOp::And,
         BinaryOperator::Or => BinaryOp::Or,
         BinaryOperator::Xor => not_implemented!("Binary operator: Xor"),
-        BinaryOperator::Like => BinaryOp::Like,
-        BinaryOperator::NotLike => BinaryOp::NotLike,
-        BinaryOperator::ILike => not_implemented!("Binary operator: ILIKE"),
-        BinaryOperator::NotILike => not_implemented!("Binary operator: NOT ILIKE"),
         BinaryOperator::BitwiseOr => not_implemented!("Binary operator: Bitwise Or"),
         BinaryOperator::BitwiseAnd => not_implemented!("Binary operator: Bitwise And"),
         BinaryOperator::BitwiseXor => not_implemented!("Binary operator: Bitwise Xor"),
@@ -718,6 +930,17 @@ fn build_binary_expr(
         BinaryOperator::PGRegexIMatch => not_supported!("Binary operator: IMATCH (Postgres)"),
         BinaryOperator::PGRegexNotMatch => not_supported!("Binary operator: Regex Match (Postgres)"),
         BinaryOperator::PGRegexNotIMatch => not_supported!("Binary operator: Regex not IMatch (Postgres)"),
+        BinaryOperator::DuckIntegerDivide => not_supported!("Binary operator: // division operator (DuckDb)"),
+        BinaryOperator::MyIntegerDivide => not_supported!("Binary operator: DIV operator (MySql)"),
+        BinaryOperator::Custom(_) => not_supported!("Binary operator: custom operator"),
+        BinaryOperator::PGExp => not_supported!("Binary operator: a ^ b (Postgres)"),
+        BinaryOperator::PGOverlap => not_supported!("Binary operator: a && b (Postgres)"),
+        BinaryOperator::PGLikeMatch => not_supported!("Binary operator: a ~~ b (Postgres)"),
+        BinaryOperator::PGILikeMatch => not_supported!("Binary operator: a ~~* b (Postgres)"),
+        BinaryOperator::PGNotLikeMatch => not_supported!("Binary operator: a !~~ b (Postgres)"),
+        BinaryOperator::PGNotILikeMatch => not_supported!("Binary operator: a !~~* b (Postgres)"),
+        BinaryOperator::PGStartsWith => not_supported!("Binary operator: a ^@ b (Postgres)"),
+        BinaryOperator::PGCustomBinaryOperator(_) => not_supported!("Binary operator: custom operator (Postgres)"),
     };
     let lhs = build_scalar_expr(lhs, builder.clone())?;
     let rhs = build_scalar_expr(rhs, builder)?;
@@ -768,26 +991,17 @@ fn build_value_expr(value: Value) -> Result<ScalarExpr, OptimizerError> {
         Value::HexStringLiteral(_) => not_supported!("HEX value literal"),
         Value::DoubleQuotedString(value) => ScalarValue::String(Some(value)),
         Value::Boolean(value) => ScalarValue::Bool(Some(value)),
-        Value::Interval {
-            value,
-            leading_field,
-            leading_precision,
-            last_field,
-            fractional_seconds_precision,
-        } => {
-            if let Some(leading_field) = leading_field {
-                if leading_precision.is_some() {
-                    not_supported!("Interval: Leading field precision is not supported")
-                }
-                if fractional_seconds_precision.is_some() {
-                    not_supported!("Interval: Fractional second precision is not supported")
-                }
-                return build_interval_literal(value.as_str(), leading_field, last_field);
-            } else {
-                not_supported!("Interval: literals without leading field")
-            }
-        }
         Value::Null => ScalarValue::Null,
+        Value::DollarQuotedString(_) => not_supported!("Dollar quoted string"),
+        Value::EscapedStringLiteral(_) => not_supported!("Escaped string literal (e'string value')"),
+        Value::SingleQuotedByteStringLiteral(_) => {
+            not_implemented!("Single quoted bytes string literal (B'string value')")
+        }
+        Value::DoubleQuotedByteStringLiteral(_) => {
+            not_implemented!("Single quoted bytes string literal (B\"string value\")")
+        }
+        Value::RawStringLiteral(_) => not_supported!("Raw string literal (r'string value')"),
+        Value::UnQuotedString(_) => not_supported!("Unquoted string"),
         Value::Placeholder(_) => not_implemented!("Placeholder"),
     };
     Ok(ScalarExpr::Scalar(value))
@@ -934,10 +1148,12 @@ fn build_interval_literal(
 fn build_function_expr(func: Function, builder: OperatorBuilder) -> Result<ScalarExpr, OptimizerError> {
     let name = func.name.to_string().to_lowercase();
     let distinct = func.distinct;
-    let window_spec = if let Some(spec) = func.over {
-        Some(build_window_spec(builder.clone(), spec)?)
-    } else {
-        None
+    let window_spec = match func.over {
+        None => None,
+        Some(WindowType::WindowSpec(spec)) => Some(build_window_spec(builder.clone(), spec)?),
+        Some(WindowType::NamedWindow(_)) => {
+            not_implemented!("Named window")
+        }
     };
 
     let mut args = vec![];
@@ -971,52 +1187,45 @@ fn build_function_expr(func: Function, builder: OperatorBuilder) -> Result<Scala
         return Err(OptimizerError::argument(format!("FUNCTION: function {} is called with invalid arguments", name)));
     }
 
-    // DISTINCT ON (expr) workaround:
-    // Convert function ON (expr1) into its first argument.
-    // FIXME: Support multiple arguments in DISTINCT ON operator
-    if name.eq_ignore_ascii_case("ON") && args.len() == 1 {
-        Ok(args.swap_remove(0))
-    } else {
-        let func = WindowOrAggregateFunction::try_from(name.as_str());
-        match func {
-            Err(_) if distinct => {
-                let message = format!("DISTINCT is not implemented for non-aggregate functions: {}", name);
+    let func = WindowOrAggregateFunction::try_from(name.as_str());
+    match func {
+        Err(_) if distinct => {
+            let message = format!("DISTINCT is not implemented for non-aggregate functions: {}", name);
+            return Err(OptimizerError::argument(message));
+        }
+        _ => {}
+    }
+
+    match (func, window_spec) {
+        (Ok(func), Some(spec)) => {
+            let FunctionExprWindowSpec { partition_by, order_by } = spec;
+            if distinct {
+                let message = format!("DISTINCT is not implemented for window functions: {}", name);
                 return Err(OptimizerError::argument(message));
             }
-            _ => {}
-        }
-
-        match (func, window_spec) {
-            (Ok(func), Some(spec)) => {
-                let FunctionExprWindowSpec { partition_by, order_by } = spec;
-                if distinct {
-                    let message = format!("DISTINCT is not implemented for window functions: {}", name);
-                    return Err(OptimizerError::argument(message));
-                }
-                Ok(ScalarExpr::WindowAggregate {
-                    func,
-                    args,
-                    partition_by,
-                    order_by,
-                })
-            }
-            (Ok(WindowOrAggregateFunction::Aggregate(func)), None) => Ok(ScalarExpr::Aggregate {
+            Ok(ScalarExpr::WindowAggregate {
                 func,
-                distinct,
                 args,
-                filter: None,
-            }),
-            (Ok(WindowOrAggregateFunction::Window(func)), None) => {
-                let msg = format!("WINDOW FUNCTION: no window specification for function: {}", func);
-                not_supported!(msg)
-            }
-            _ => {
-                if let Ok(func) = ScalarFunction::try_from(name.as_str()) {
-                    Ok(ScalarExpr::ScalarFunction { func, args })
-                } else {
-                    let msg = format!("FUNCTION: non aggregate function: {}", name);
-                    not_implemented!(msg)
-                }
+                partition_by,
+                order_by,
+            })
+        }
+        (Ok(WindowOrAggregateFunction::Aggregate(func)), None) => Ok(ScalarExpr::Aggregate {
+            func,
+            distinct,
+            args,
+            filter: None,
+        }),
+        (Ok(WindowOrAggregateFunction::Window(func)), None) => {
+            let msg = format!("WINDOW FUNCTION: no window specification for function: {}", func);
+            not_supported!(msg)
+        }
+        _ => {
+            if let Ok(func) = ScalarFunction::try_from(name.as_str()) {
+                Ok(ScalarExpr::ScalarFunction { func, args })
+            } else {
+                let msg = format!("FUNCTION: non aggregate function: {}", name);
+                not_implemented!(msg)
             }
         }
     }
@@ -1053,7 +1262,7 @@ fn convert_data_type(input: SqlDataType) -> Result<DataType, OptimizerError> {
         SqlDataType::Binary(_) => not_implemented!("Data type: Binary"),
         SqlDataType::Varbinary(_) => not_implemented!("Data type: Varbinary"),
         SqlDataType::Blob(_) => not_implemented!("Data type: Blob"),
-        SqlDataType::Decimal(_, _) => not_implemented!("Data type: Decimal"),
+        SqlDataType::Decimal(_) => not_implemented!("Data type: Decimal"),
         SqlDataType::Float(_) => not_implemented!("Data type: Float"),
         SqlDataType::TinyInt(_) => not_implemented!("Data type: TinyInt"),
         SqlDataType::SmallInt(_) => not_implemented!("Data type: SmallInt"),
@@ -1069,14 +1278,28 @@ fn convert_data_type(input: SqlDataType) -> Result<DataType, OptimizerError> {
         SqlDataType::Double => not_implemented!("Data type: Double"),
         SqlDataType::Boolean => Ok(DataType::Bool),
         SqlDataType::Date => Ok(DataType::Date),
-        SqlDataType::Time => Ok(DataType::Time),
-        SqlDataType::Timestamp => Ok(DataType::Timestamp(false /*should be ignored by cast*/)),
+        SqlDataType::Time(precision, tz) => {
+            not_implemented!(precision.is_some(), "Data type: Time with precision");
+            not_implemented!(tz != TimezoneInfo::None, "Data type: Time with time zone");
+
+            Ok(DataType::Time)
+        }
+        SqlDataType::Timestamp(precision, tz) => {
+            not_implemented!(precision.is_some(), "Data type: Timestamp with precision");
+            not_implemented!(tz != TimezoneInfo::None, "Data type: Timestamp with time zone");
+
+            Ok(DataType::Timestamp(false /*should be ignored by cast*/))
+        }
         SqlDataType::Interval => not_implemented!("Data type: Interval"),
         SqlDataType::Regclass => not_implemented!("Data type: Regclass"),
         SqlDataType::Text => not_implemented!("Data type: Text"),
-        SqlDataType::String => Ok(DataType::String),
+        SqlDataType::String(length) => {
+            not_implemented!(length.is_some(), "Data type: String with precision");
+
+            Ok(DataType::String)
+        }
         SqlDataType::Bytea => not_implemented!("Data type: Bytea"),
-        SqlDataType::Custom(_) => not_implemented!("Data type: Custom data type"),
+        SqlDataType::Custom(_, _) => not_implemented!("Data type: Custom data type"),
         SqlDataType::Array(_) => not_implemented!("Data type: Array"),
         SqlDataType::Enum(_) => not_implemented!("Data type: Enum"),
         SqlDataType::Set(_) => not_implemented!("Data type: Set"),
@@ -1084,6 +1307,10 @@ fn convert_data_type(input: SqlDataType) -> Result<DataType, OptimizerError> {
         SqlDataType::UnsignedSmallInt(_) => not_implemented!("Data type: Unsigned SmallInt"),
         SqlDataType::UnsignedInt(_) => not_implemented!("Data type: Unsigned Int"),
         SqlDataType::UnsignedBigInt(_) => not_implemented!("Data type: Unsigned BigiInt"),
+        data_type => {
+            let msg = format!("Data type: {}", data_type);
+            not_implemented!(msg)
+        }
     }
 }
 
@@ -1092,6 +1319,9 @@ impl From<ParserError> for OptimizerError {
         match e {
             ParserError::TokenizerError(err) => OptimizerError::internal(format!("Tokenizer error: {}", err)),
             ParserError::ParserError(err) => OptimizerError::internal(format!("Parser error: {}", err)),
+            ParserError::RecursionLimitExceeded => {
+                OptimizerError::internal("Parser error: recursion limit exceeded".to_string())
+            }
         }
     }
 }

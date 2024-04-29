@@ -63,6 +63,21 @@ where
             let _ = resolve_expr_type(expr, column_registry)?;
             Ok(DataType::Bool)
         }
+        Expr::IsFalse { expr, .. } => {
+            let tpe = resolve_expr_type(expr, column_registry)?;
+            expect_type_or_null(&tpe, &DataType::Bool, &expr)?;
+            Ok(DataType::Bool)
+        }
+        Expr::IsTrue { expr, .. } => {
+            let tpe = resolve_expr_type(expr, column_registry)?;
+            expect_type_or_null(&tpe, &DataType::Bool, &expr)?;
+            Ok(DataType::Bool)
+        }
+        Expr::IsUnknown { expr, .. } => {
+            let tpe = resolve_expr_type(expr, column_registry)?;
+            expect_type_or_null(&tpe, &DataType::Bool, &expr)?;
+            Ok(DataType::Bool)
+        }
         Expr::Between { expr, low, high, .. } => {
             let tpe = resolve_expr_type(expr, column_registry)?;
             let low_type = resolve_expr_type(low, column_registry)?;
@@ -191,6 +206,15 @@ where
 
             let arg_types = arg_types?;
             func.get_return_type(&arg_types)
+        }
+        Expr::Like { expr, pattern, .. } => {
+            let expr_type = resolve_expr_type(expr, column_registry)?;
+            expect_type_or_null(&expr_type, &DataType::String, &expr)?;
+
+            let pattern_type = resolve_expr_type(pattern, column_registry)?;
+            expect_type_or_null(&pattern_type, &DataType::String, &expr)?;
+
+            Ok(DataType::Bool)
         }
         Expr::Aggregate { func, args, .. } => {
             let arg_types: Result<Vec<DataType>, _> =
@@ -343,9 +367,6 @@ where
         (Interval, Multiply | Divide, Null) => Ok(Interval),
         (Int32, Multiply, Interval) => Ok(Interval),
         (Null, Multiply, Interval) => Ok(Interval),
-
-        // String ops
-        (lhs, Like | NotLike, rhs) if support_string_ops(lhs, rhs) => Ok(Bool),
 
         // String Concat
         (String, Concat, _) => Ok(String),
@@ -890,18 +911,38 @@ mod test {
 
     #[test]
     fn test_string_ops() {
-        use BinaryOp::*;
         use DataType::*;
 
-        let ops = vec![Like, NotLike];
-        let str_tpes = vec![String];
+        fn make_like_expr(expr: DataType, pattern_type: DataType, escape_char: Option<char>, like: bool) -> Expr {
+            let expr = get_value_expr(expr);
+            let pattern = get_value_expr(pattern_type);
 
-        // every type must be either string like or null
+            if like {
+                expr.like(pattern, escape_char)
+            } else {
+                expr.ilike(pattern, escape_char)
+            }
+        }
+
+        // let ops = vec![Like, NotLike];
+        let str_tpes = vec![String];
+        // [like/ilike, escape]
+        let ops = vec![(false, None), (false, Some('c')), (true, None), (true, Some('c'))];
+
+        // every type must be either string or null
         for tpe in str_tpes.clone() {
-            for op in ops.clone() {
-                valid_bin_expr(tpe.clone(), op.clone(), tpe.clone(), Bool);
-                valid_bin_expr(tpe.clone(), op.clone(), Null, Bool);
-                valid_bin_expr(Null, op.clone(), tpe.clone(), Bool);
+            for (like, escape_char) in ops.clone() {
+                let expr = make_like_expr(String, String, escape_char, like);
+                expect_type(&expr, &Bool);
+
+                let expr = make_like_expr(String, Null, escape_char, like);
+                expect_type(&expr, &Bool);
+
+                let expr = make_like_expr(Null, String, escape_char, like);
+                expect_type(&expr, &Bool);
+
+                let expr = make_like_expr(Null, Null, escape_char, like);
+                expect_type(&expr, &Bool);
             }
         }
 
@@ -911,14 +952,16 @@ mod test {
             .filter(|tpe| tpe != &Null)
             .filter(|tpe| !str_tpes.contains(tpe))
         {
-            for op in ops.clone() {
-                invalid_bin_expr(tpe.clone(), op, tpe.clone());
-            }
-        }
+            for (like, escape_char) in ops.clone() {
+                let expr = make_like_expr(String, tpe.clone(), escape_char, like);
+                expect_not_resolved(&expr);
 
-        // operators are supported when both operands are null
-        for op in ops.clone() {
-            valid_bin_expr(Null, op, Null, Bool);
+                let expr = make_like_expr(tpe.clone(), String, escape_char, like);
+                expect_not_resolved(&expr);
+
+                let expr = make_like_expr(tpe.clone(), tpe.clone(), escape_char, like);
+                expect_not_resolved(&expr);
+            }
         }
     }
 
