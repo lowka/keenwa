@@ -78,7 +78,7 @@ impl Display for TestScalarExpr {
             }
             TestScalarExpr::SubQuery(rel_node) => match rel_node.state() {
                 MemoExprState::Owned(_) => {
-                    let ptr: *const TestExpr = &*rel_node.state().expr();
+                    let ptr: *const TestExpr = rel_node.state().expr();
                     write!(f, "SubQuery expr_ptr {:?}", ptr)
                 }
                 MemoExprState::Memo(state) => {

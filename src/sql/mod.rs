@@ -179,7 +179,7 @@ fn build_limit_offset_argument(operator: &str, expr: Expr, builder: OperatorBuil
             Ok(*value as usize)
         }
     } else {
-        return Err(OptimizerError::argument(format!("{}: invalid value expression: {}", operator, expr)));
+        Err(OptimizerError::argument(format!("{}: invalid value expression: {}", operator, expr)))
     }
 }
 
@@ -618,7 +618,7 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
             };
             let when_then_exprs: Result<Vec<(ScalarExpr, ScalarExpr)>, OptimizerError> = conditions
                 .into_iter()
-                .zip(results.into_iter())
+                .zip(results)
                 .map(|(when, then)| {
                     let when = build_scalar_expr(when, builder.clone())?;
                     let then = build_scalar_expr(then, builder.clone())?;

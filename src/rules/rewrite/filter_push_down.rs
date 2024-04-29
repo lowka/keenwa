@@ -390,12 +390,12 @@ fn rewrite_set_op(
     for (filter_expr, _) in state.filters {
         let left_filter = replace_columns(filter_expr.expr(), &left_mapping);
         let left_filter = ScalarNode::from(left_filter);
-        let left_columns: HashSet<ColumnId> = left_mapping.iter().map(|(_, v)| *v).collect();
+        let left_columns: HashSet<ColumnId> = left_mapping.values().copied().collect();
         left_filters.push((left_filter, left_columns));
 
         let right_filter = replace_columns(filter_expr.expr(), &right_mapping);
         let right_filter = ScalarNode::from(right_filter);
-        let right_columns: HashSet<ColumnId> = right_mapping.iter().map(|(_, v)| *v).collect();
+        let right_columns: HashSet<ColumnId> = right_mapping.values().copied().collect();
         right_filters.push((right_filter, right_columns));
     }
 

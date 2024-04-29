@@ -673,7 +673,7 @@ where
         log::debug!("Expr cost: {} ctx: {} expr: {} {}", cost, ctx, expr_id, expr);
 
         let candidate = BestExpr::new(expr, cost, inputs.inputs);
-        let mut state = runtime_state.state.init_or_get_state(&ctx);
+        let state = runtime_state.state.init_or_get_state(&ctx);
 
         state.mark_expr_optimized(expr_id);
 

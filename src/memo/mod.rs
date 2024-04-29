@@ -1423,7 +1423,7 @@ where
     }
 
     pub(crate) fn get_group(&self, group_id: &GroupId) -> Result<MemoGroupRef<E, T>, OptimizerError> {
-        match self.groups.get(group_id.index()).map(|(group_exprs, group_data)| {
+        let result = self.groups.get(group_id.index()).map(|(group_exprs, group_data)| {
             // A group always contains at least one expression and that expression always exists.
             let first_expr_id = group_exprs[0];
             let expr = self.exprs[first_expr_id.index()].clone();
@@ -1439,7 +1439,8 @@ where
                 exprs: group_exprs,
                 expr: first_expr,
             }
-        }) {
+        });
+        match result {
             Some(group) => Ok(group),
             None => Err(OptimizerError::internal("Unexpected group id")),
         }

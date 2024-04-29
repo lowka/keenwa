@@ -720,9 +720,9 @@ mod test {
                 RelNode::from(TestRelExpr::Node {
                     input: RelNode::from(TestRelExpr::Leaf("a")),
                 }),
-                RelNode::from(TestRelExpr::Leaf("b")).into(),
+                RelNode::from(TestRelExpr::Leaf("b")),
                 RelNode::from(TestRelExpr::Node {
-                    input: RelNode::from(TestRelExpr::Leaf("a")).into(),
+                    input: RelNode::from(TestRelExpr::Leaf("a")),
                 }),
             ],
         });

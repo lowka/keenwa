@@ -23,11 +23,11 @@ use crate::rules::rewrite::rewrite_rel_inputs;
 /// The implementation does not rely on logical properties because logical properties are not set
 /// for new expressions created by this rule.
 pub fn remove_redundant_projections(expr: &RelNode) -> Result<Option<RelNode>, OptimizerError> {
-    let expr = rewrite(expr, true)?;
+    let expr = rewrite(expr)?;
     Ok(Some(expr))
 }
 
-fn rewrite(expr: &RelNode, keep_projection: bool) -> Result<RelNode, OptimizerError> {
+fn rewrite(expr: &RelNode) -> Result<RelNode, OptimizerError> {
     if let LogicalExpr::Projection(projection) = expr.expr().logical() {
         // We exploit the fact that output columns of a projection ([col:1, col:2, col:2 as c3]) are [col:1, col:2, col:3]
         // Because of that we can simply compare output columns of a projection operator and its child operator
@@ -62,7 +62,7 @@ fn rewrite(expr: &RelNode, keep_projection: bool) -> Result<RelNode, OptimizerEr
                     let new_projection = RelNode::from(LogicalExpr::Projection(new_projection));
                     // if expr is the root operator, rewrite inputs of a new projection operator
                     // as if it were the root operator.
-                    rewrite(&new_projection, keep_projection)
+                    rewrite(&new_projection)
                 } else {
                     rewrite_inputs(expr)
                 }
@@ -108,7 +108,7 @@ fn rewrite(expr: &RelNode, keep_projection: bool) -> Result<RelNode, OptimizerEr
 
 fn rewrite_inputs(expr: &RelNode) -> Result<RelNode, OptimizerError> {
     fn rewrite_non_root(expr: &RelNode) -> Result<RelNode, OptimizerError> {
-        rewrite(expr, false)
+        rewrite(expr)
     }
     rewrite_rel_inputs(expr, rewrite_non_root)
 }

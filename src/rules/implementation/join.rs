@@ -362,7 +362,7 @@ mod test {
     fn test_join_expr_comparison_type() {
         let metadata = test_metadata();
 
-        for op in vec![BinaryOp::Gt, BinaryOp::Lt, BinaryOp::GtEq, BinaryOp::LtEq] {
+        for op in [BinaryOp::Gt, BinaryOp::Lt, BinaryOp::GtEq, BinaryOp::LtEq] {
             let expr = col("A:a1").binary_expr(op, col("B:b1"));
             expect_condition_type(&metadata, expr, JoinExprOpType::Comparison);
         }
@@ -465,7 +465,7 @@ HashJoin type=Inner on=:expr
     fn test_hash_join_can_not_be_used_with_non_eq_conditions() {
         let metadata = test_metadata();
 
-        for op in vec![BinaryOp::Or, BinaryOp::Gt, BinaryOp::Lt, BinaryOp::GtEq, BinaryOp::LtEq] {
+        for op in [BinaryOp::Or, BinaryOp::Gt, BinaryOp::Lt, BinaryOp::GtEq, BinaryOp::LtEq] {
             let on_expr = col("A:a1").binary_expr(op, col("B:b2"));
             let condition = JoinCondition::On(JoinOn::new(on_expr.into()));
 
@@ -511,7 +511,7 @@ MergeSortJoin type=Inner on=:expr left_ord=[+1] right_ord=[+3]
 
         let metadata = test_metadata();
 
-        for op in vec![BinaryOp::Eq, BinaryOp::Gt, BinaryOp::Lt, BinaryOp::GtEq, BinaryOp::LtEq] {
+        for op in [BinaryOp::Eq, BinaryOp::Gt, BinaryOp::Lt, BinaryOp::GtEq, BinaryOp::LtEq] {
             let on_expr = col("A:a1").binary_expr(op, col("B:b1"));
             condition_matches(&metadata, on_expr);
         }
@@ -526,7 +526,7 @@ MergeSortJoin type=Inner on=:expr left_ord=[+1] right_ord=[+3]
 
         fn rewrite(&mut self, expr: ScalarExpr) -> Result<ScalarExpr, Self::Error> {
             if let ScalarExpr::ColumnName(name) = expr {
-                let (table, col) = name.split_once(":").expect("Name should be the table:col format");
+                let (table, col) = name.split_once(':').expect("Name should be the table:col format");
                 let col_id = self.metadata.find_column(table, col);
                 Ok(ScalarExpr::Column(col_id))
             } else {

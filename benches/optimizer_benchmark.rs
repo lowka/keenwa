@@ -14,7 +14,7 @@ use keenwa::operators::builder::{MemoizeOperators, OperatorBuilder, OrderingOpti
 use keenwa::operators::relational::join::JoinType;
 use keenwa::operators::scalar::{col, scalar};
 use keenwa::operators::{Operator, OperatorMemoBuilder, OuterScope};
-use keenwa::optimizer::{DefaultOptimizedExprCallback, Optimizer};
+use keenwa::optimizer::Optimizer;
 use keenwa::rules::implementation::{GetToScanRule, HashJoinRule, SelectRule};
 use keenwa::rules::transformation::JoinCommutativityRule;
 use keenwa::rules::{Rule, StaticRuleSet, StaticRuleSetBuilder};
@@ -33,35 +33,41 @@ fn memo_bench(c: &mut Criterion) {
                 for _i in 0..iters {
                     let catalog = Arc::new(MutableCatalog::new());
 
-                    catalog.add_table(
-                        DEFAULT_SCHEMA,
-                        TableBuilder::new("A")
-                            .add_column("a1", DataType::Int32)
-                            .add_column("a2", DataType::Int32)
-                            .add_row_count(100)
-                            .build()
-                            .expect("Table A"),
-                    );
+                    catalog
+                        .add_table(
+                            DEFAULT_SCHEMA,
+                            TableBuilder::new("A")
+                                .add_column("a1", DataType::Int32)
+                                .add_column("a2", DataType::Int32)
+                                .add_row_count(100)
+                                .build()
+                                .expect("Table A"),
+                        )
+                        .expect("Cannot add table A");
 
-                    catalog.add_table(
-                        DEFAULT_SCHEMA,
-                        TableBuilder::new("B")
-                            .add_column("b1", DataType::Int32)
-                            .add_column("b2", DataType::Int32)
-                            .add_row_count(100)
-                            .build()
-                            .expect("Table B"),
-                    );
+                    catalog
+                        .add_table(
+                            DEFAULT_SCHEMA,
+                            TableBuilder::new("B")
+                                .add_column("b1", DataType::Int32)
+                                .add_column("b2", DataType::Int32)
+                                .add_row_count(100)
+                                .build()
+                                .expect("Table B"),
+                        )
+                        .expect("Cannot add table B");
 
-                    catalog.add_table(
-                        DEFAULT_SCHEMA,
-                        TableBuilder::new("C")
-                            .add_column("c1", DataType::Int32)
-                            .add_column("c2", DataType::Int32)
-                            .add_row_count(100)
-                            .build()
-                            .expect("Table C"),
-                    );
+                    catalog
+                        .add_table(
+                            DEFAULT_SCHEMA,
+                            TableBuilder::new("C")
+                                .add_column("c1", DataType::Int32)
+                                .add_column("c2", DataType::Int32)
+                                .add_row_count(100)
+                                .build()
+                                .expect("Table C"),
+                        )
+                        .expect("Cannot add table C");
 
                     let metadata = Rc::new(MutableMetadata::new());
                     let selectivity_provider = Rc::new(PrecomputedSelectivityStatistics::new());

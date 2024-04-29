@@ -166,7 +166,7 @@ where
         let rows = rows as f64;
         let rows = if rows > input_rows { input_rows } else { rows };
 
-        Ok(Some(Statistics::from_row_count(rows as f64)))
+        Ok(Some(Statistics::from_row_count(rows)))
     }
 
     fn build_offset(&self, input: &RelNode, rows: usize) -> Result<Option<Statistics>, OptimizerError> {

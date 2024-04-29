@@ -240,8 +240,8 @@ impl Display for ScalarValue {
             ScalarValue::Interval(Some(Interval::DaySecond(days, time_in_seconds))) => {
                 let sign = if *days < 0 || *time_in_seconds < 0 { "-" } else { "" };
 
-                let days = days.abs() as u32;
-                let time_in_seconds = time_in_seconds.abs() as u32;
+                let days = days.unsigned_abs();
+                let time_in_seconds = time_in_seconds.unsigned_abs();
                 let hours = time_in_seconds / MINUTE_IN_HOUR / SECONDS_IN_MINUTE;
                 let hours_in_seconds = hours * MINUTE_IN_HOUR * SECONDS_IN_MINUTE;
                 let minutes = (time_in_seconds - hours_in_seconds) / MINUTE_IN_HOUR;
@@ -500,10 +500,6 @@ mod test {
         format_ts(-100, None, "Invalid timestamp: -100 millis");
         format_ts(-100, Some(60 + 10), "Invalid timestamp: -100 millis [offset 70 seconds]");
         format_ts(-100, Some(24 * 60 * 60 + 1), "Invalid timestamp: -100 millis [invalid offset: 86401 seconds]");
-        format_ts(
-            -100,
-            Some((24 * 60 * 60 + 1) * -1),
-            "Invalid timestamp: -100 millis [invalid offset: -86401 seconds]",
-        );
+        format_ts(-100, Some(-(24 * 60 * 60 + 1)), "Invalid timestamp: -100 millis [invalid offset: -86401 seconds]");
     }
 }

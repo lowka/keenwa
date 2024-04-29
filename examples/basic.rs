@@ -99,7 +99,7 @@ fn create_optimizer(catalog: CatalogRef) -> Optimizer<StaticRuleSet, SimpleCostE
 }
 
 fn expect_plan(operator: &Operator, plan_type: &str, expected_plan: &str) {
-    let actual_plan = format_operator_tree(&operator);
+    let actual_plan = format_operator_tree(operator);
     println!("{}:\n{}", plan_type, actual_plan);
     println!("-----");
 

@@ -294,7 +294,7 @@ impl OperatorScope {
             let column = metadata.get_column(id);
             let mut columns = vec![*id];
             if let Some(expr) = column.expr() {
-                columns.extend(exprs::collect_columns(expr).into_iter());
+                columns.extend(exprs::collect_columns(expr));
             }
             columns
         }));
@@ -427,8 +427,6 @@ impl RelationInScope {
 
     fn find_column_by_name(&self, name: &str) -> Option<ColumnId> {
         if let Some((table, name)) = name.split_once('.') {
-            let table = table;
-            let name = name;
             match table {
                 _ if self.name != table => None,
                 _ if self.alias.as_ref().map(|a| a == table) == Some(false) => None,

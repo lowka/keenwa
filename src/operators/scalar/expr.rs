@@ -420,7 +420,7 @@ where
             Expr::InList { expr, exprs, .. } => {
                 let mut result = Vec::with_capacity(1 + exprs.len());
                 result.push(*expr.clone());
-                result.extend(exprs.clone().into_iter());
+                result.extend(exprs.clone());
                 result
             }
             Expr::IsNull { expr, .. } => vec![expr.as_ref().clone()],
@@ -432,7 +432,7 @@ where
             Expr::ArrayIndex { array, indexes } => {
                 let mut result = Vec::with_capacity(1 + indexes.len());
                 result.push(*array.clone());
-                result.extend(indexes.clone().into_iter());
+                result.extend(indexes.clone());
                 result
             }
             Expr::ScalarFunction { args, .. } => args.clone(),
@@ -937,9 +937,9 @@ where
                 }
                 write!(f, ")")
             }
-            Expr::Not(expr) => write!(f, "NOT {}", &*expr),
-            Expr::Negation(expr) => write!(f, "-{}", &*expr),
-            Expr::Alias(expr, name) => write!(f, "{} AS {}", &*expr, name),
+            Expr::Not(expr) => write!(f, "NOT {}", expr),
+            Expr::Negation(expr) => write!(f, "-{}", expr),
+            Expr::Alias(expr, name) => write!(f, "{} AS {}", expr, name),
             Expr::Case {
                 expr,
                 when_then_exprs,
@@ -968,9 +968,9 @@ where
             }
             Expr::InList { not, expr, exprs } => {
                 if *not {
-                    write!(f, "{} NOT IN (", &*expr)?;
+                    write!(f, "{} NOT IN (", expr)?;
                 } else {
-                    write!(f, "{} IN (", &*expr)?;
+                    write!(f, "{} IN (", expr)?;
                 }
                 for (i, expr) in exprs.iter().enumerate() {
                     if i > 0 {
@@ -982,16 +982,16 @@ where
             }
             Expr::IsNull { not, expr } => {
                 if *not {
-                    write!(f, "{} IS NOT NULL", &*expr)
+                    write!(f, "{} IS NOT NULL", expr)
                 } else {
-                    write!(f, "{} IS NULL", &*expr)
+                    write!(f, "{} IS NULL", expr)
                 }
             }
             Expr::Between { not, expr, low, high } => {
                 if *not {
-                    write!(f, "{} NOT BETWEEN {} AND {}", &*expr, &*low, &*high)
+                    write!(f, "{} NOT BETWEEN {} AND {}", expr, low, high)
                 } else {
-                    write!(f, "{} BETWEEN {} AND {}", &*expr, &*low, &*high)
+                    write!(f, "{} BETWEEN {} AND {}", expr, low, high)
                 }
             }
             Expr::Tuple(exprs) => {
@@ -1012,7 +1012,7 @@ where
                 descending,
                 nulls_first: nulls,
             } => {
-                write!(f, "{}", &*expr)?;
+                write!(f, "{}", expr)?;
                 if *descending {
                     write!(f, " DESC")?;
                 }
@@ -1666,7 +1666,7 @@ mod test {
 
         let mut rewriter = FailingRewriter::default();
         let result = expr.rewrite(&mut rewriter);
-        let _ = result.expect_err("Expected an error");
+        result.expect_err("Expected an error");
 
         assert_eq!(rewriter.visited, 2);
         assert_eq!(rewriter.rewritten, 1);

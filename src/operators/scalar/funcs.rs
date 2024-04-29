@@ -92,7 +92,7 @@ pub mod testing {
             $crate::test_from_str!($func_type, $func_var, $expected_name);
 
             fn expect_signature(f: &$func_type, expected: &str) {
-                use crate::operators::scalar::funcs::testing::signature_to_test_string;
+                use $crate::operators::scalar::funcs::testing::signature_to_test_string;
 
                 let signature = f.get_signature();
                 let actual_signature = signature_to_test_string(&signature);

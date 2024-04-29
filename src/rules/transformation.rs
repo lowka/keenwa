@@ -45,9 +45,7 @@ impl Rule for JoinCommutativityRule {
                         join_type: join_type.clone(),
                         left: right.clone(),
                         right: left.clone(),
-                        condition: JoinCondition::using(
-                            right_columns.into_iter().zip(left_columns.into_iter()).collect(),
-                        ),
+                        condition: JoinCondition::using(right_columns.into_iter().zip(left_columns).collect()),
                     });
 
                     Ok(Some(RuleResult::Substitute(expr)))
@@ -79,10 +77,9 @@ impl JoinAssociativityRule {
             JoinCondition::On(_) => return None,
         };
 
-        let inner =
-            JoinCondition::using(inner_right_columns.clone().into_iter().zip(top_right_columns.into_iter()).collect());
+        let inner = JoinCondition::using(inner_right_columns.clone().into_iter().zip(top_right_columns).collect());
 
-        let top = JoinCondition::using(inner_left_columns.into_iter().zip(inner_right_columns.into_iter()).collect());
+        let top = JoinCondition::using(inner_left_columns.into_iter().zip(inner_right_columns).collect());
 
         Some((top, inner))
     }
@@ -101,10 +98,8 @@ impl JoinAssociativityRule {
             JoinCondition::On(_) => return None,
         };
 
-        let inner =
-            JoinCondition::using(top_left_columns.clone().into_iter().zip(inner_left_columns.into_iter()).collect());
-
-        let top = JoinCondition::using(top_left_columns.into_iter().zip(inner_right_columns.into_iter()).collect());
+        let inner = JoinCondition::using(top_left_columns.clone().into_iter().zip(inner_left_columns).collect());
+        let top = JoinCondition::using(top_left_columns.into_iter().zip(inner_right_columns).collect());
 
         Some((top, inner))
     }

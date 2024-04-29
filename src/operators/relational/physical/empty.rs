@@ -43,6 +43,6 @@ impl Empty {
         F: MemoExprFormatter,
     {
         f.write_name("Empty");
-        f.write_value("return_one_row", &self.return_one_row)
+        f.write_value("return_one_row", self.return_one_row)
     }
 }
