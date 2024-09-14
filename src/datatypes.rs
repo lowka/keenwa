@@ -57,4 +57,19 @@ impl Display for DataType {
 impl DataType {
     /// The numeric data types.
     pub(crate) const NUMERIC_TYPES: [DataType; 2] = [DataType::Int32, DataType::Float32];
+
+    /// Creates an array data type with the given element type.
+    pub(crate) fn array(element_type: DataType) -> DataType {
+        DataType::Array(Box::new(element_type))
+    }
+
+    /// Returns an option that contains an element of an array data type
+    /// or `None` if this type is not an array.
+    pub(crate) fn element_type(&self) -> Option<&DataType> {
+        if let DataType::Array(element_type) = self {
+            Some(&element_type)
+        } else {
+            None
+        }
+    }
 }

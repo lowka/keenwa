@@ -53,10 +53,31 @@ where
         }
         Expr::Alias(expr, _) => resolve_expr_type(expr, column_registry),
         Expr::InList { expr, exprs, .. } => {
-            let _ = resolve_expr_type(expr, column_registry)?;
-            for expr in exprs {
-                let _ = resolve_expr_type(expr, column_registry)?;
+            let lhs_type = resolve_expr_type(expr, column_registry)?;
+            let mut n = 0;
+            let mut first_not_null = None;
+
+            if &lhs_type == &DataType::Null {
+                if let Some((i, first_tpe)) = first_not_null_type(&exprs, column_registry)? {
+                    n = i + 1;
+                    first_not_null = Some(first_tpe);
+                } else {
+                    // All items are NULL, there is nothing to type check.
+                    return Ok(DataType::Bool);
+                }
+            } else {
+                // lhs is not null, we should check all elements.
+                n = 0;
+                first_not_null = Some(lhs_type);
             }
+
+            let first_not_null = first_not_null.expect("Should be set");
+
+            for expr in exprs.iter().skip(n) {
+                let item_tpe = resolve_expr_type(expr, column_registry)?;
+                expect_type_or_null(&item_tpe, &first_not_null, &expr)?;
+            }
+
             Ok(DataType::Bool)
         }
         Expr::IsNull { expr, .. } => {
@@ -168,18 +189,21 @@ where
             }
 
             let mut element_type = None;
-            for expr_type in expr_types.iter() {
-                if expr_type != &DataType::Null {
-                    if element_type.is_none() {
-                        element_type = Some(expr_type.clone())
-                    } else if Some(expr_type) != element_type.as_ref() {
-                        return Err(OptimizerError::argument("Array with elements of different types"));
-                    }
-                }
-            }
 
+            if let Some((i, first_type)) = first_not_null_type(exprs, column_registry)? {
+                for item_expr in exprs.iter().skip(i + 1) {
+                    let item_type = resolve_expr_type(item_expr, column_registry)?;
+
+                    expect_type_or_null_with_error(&item_type, &first_type, || {
+                        return OptimizerError::argument("Array with elements of different types");
+                    })?;
+                }
+
+                element_type = Some(first_type);
+            } else {
+                element_type = Some(DataType::Null);
+            }
             match element_type {
-                Some(DataType::Array(element_type)) => Ok(DataType::Array(element_type)),
                 Some(element_type) => Ok(DataType::Array(Box::new(element_type))),
                 None => {
                     Err(type_error(format!("Unable to resolve array element type: [{}]", expr_types.iter().join(", "))))
@@ -189,13 +213,21 @@ where
         Expr::ArrayIndex { array, indexes } => {
             let arr_type = resolve_expr_type(array, column_registry)?;
             if let DataType::Array(element_type) = arr_type {
-                for expr in indexes {
+                let mut item_type = *element_type;
+                for (i, expr) in indexes.iter().enumerate() {
                     let index_type = resolve_expr_type(expr, column_registry)?;
                     if index_type != DataType::Int32 {
                         return Err(type_error(format!("Invalid array index type {}", index_type)));
                     }
+
+                    if i > 0 {
+                        match item_type.element_type() {
+                            Some(elem) => item_type = elem.clone(),
+                            None => return Err(type_error(format!("Expected nested array but got {}", item_type))),
+                        }
+                    }
                 }
-                Ok(*element_type)
+                Ok(item_type)
             } else {
                 Err(type_error(format!("Expected array but got {}", arr_type)))
             }
@@ -387,13 +419,27 @@ fn are_numeric_types(lhs: &DataType, rhs: &DataType) -> bool {
     DataType::NUMERIC_TYPES.contains(lhs) && DataType::NUMERIC_TYPES.contains(rhs)
 }
 
-fn expect_type_or_null<T>(tpe: &DataType, expected: &DataType, expr: &Expr<T>) -> Result<(), OptimizerError>
+fn expect_type_or_null<T>(actual: &DataType, expected: &DataType, expr: &Expr<T>) -> Result<(), OptimizerError>
 where
     T: NestedExpr,
 {
-    if tpe != &DataType::Null && tpe != expected {
-        let message = format!("Expr: {}. Expected type {} but got {}", expr, expected, tpe);
-        Err(type_error(message))
+    expect_type_or_null_with_error(actual, expected, || {
+        let message = format!("Expr: {}. Expected type {} but got {}", expr, expected, actual);
+        return type_error(message);
+    })
+}
+
+fn expect_type_or_null_with_error<F>(
+    actual: &DataType,
+    expected: &DataType,
+    error_reporter: F,
+) -> Result<(), OptimizerError>
+where
+    F: Fn() -> OptimizerError,
+{
+    if actual != &DataType::Null && actual != expected {
+        let error = error_reporter();
+        Err(error)
     } else {
         Ok(())
     }
@@ -404,6 +450,24 @@ where
     T: Into<String>,
 {
     OptimizerError::internal(format!("Type error: {}", message.into()))
+}
+
+fn first_not_null_type<T, R>(
+    exprs: &[Expr<T>],
+    column_registry: &R,
+) -> Result<Option<(usize, DataType)>, OptimizerError>
+where
+    T: NestedExpr,
+    R: ColumnTypeRegistry + ?Sized,
+{
+    for (i, expr) in exprs.iter().enumerate() {
+        let expr_type = resolve_expr_type(expr, column_registry)?;
+        if &expr_type != &DataType::Null {
+            return Ok(Some((i, expr_type)));
+        }
+    }
+
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -642,58 +706,154 @@ mod test {
     fn test_is_null() {
         for tpe in get_data_types() {
             let value = get_value_expr(tpe.clone());
-            expect_type(
-                &Expr::IsNull {
-                    not: true,
-                    expr: Box::new(value),
-                },
-                &DataType::Bool,
-            );
+            expect_type(&value.is_null(), &DataType::Bool);
         }
     }
 
     #[test]
-    fn in_list() {
+    fn test_in_list() {
+        for tpe in get_data_types_expect_null() {
+            // Allow TYPE IN [TYPE]
+            expect_type(
+                &Expr::InList {
+                    not: false,
+                    expr: Box::new(get_value_expr(tpe.clone())),
+                    exprs: vec![get_value_expr(tpe.clone())],
+                },
+                &DataType::Bool,
+            );
+
+            // Allow TYPE IN [TYPE, NULL]
+            expect_type(
+                &Expr::InList {
+                    not: false,
+                    expr: Box::new(get_value_expr(tpe.clone())),
+                    exprs: vec![get_value_expr(tpe.clone()), null_value()],
+                },
+                &DataType::Bool,
+            );
+
+            // Allow TYPE IN [NULL, TYPE]
+            expect_type(
+                &Expr::InList {
+                    not: false,
+                    expr: Box::new(get_value_expr(tpe.clone())),
+                    exprs: vec![null_value(), get_value_expr(tpe.clone())],
+                },
+                &DataType::Bool,
+            );
+        }
+
+        for tpe in get_data_types_expect_null() {
+            // Allow NULL IN [TYPE, ... ]
+            expect_type(
+                &Expr::InList {
+                    not: false,
+                    expr: Box::new(null_value()),
+                    exprs: vec![get_value_expr(tpe.clone())],
+                },
+                &DataType::Bool,
+            );
+
+            // Allow NULL IN [TYPE, NULL, ... ]
+            expect_type(
+                &Expr::InList {
+                    not: false,
+                    expr: Box::new(null_value()),
+                    exprs: vec![get_value_expr(tpe.clone()), null_value()],
+                },
+                &DataType::Bool,
+            );
+
+            // Allow NULL IN [NULL, TYPE, ... ]
+            expect_type(
+                &Expr::InList {
+                    not: false,
+                    expr: Box::new(null_value()),
+                    exprs: vec![null_value(), get_value_expr(tpe.clone())],
+                },
+                &DataType::Bool,
+            );
+        }
+
+        // Allow NULL IN [NULL, NULL, ...]
         expect_type(
             &Expr::InList {
-                not: true,
-                expr: Box::new(str_value()),
-                exprs: vec![str_value(), bool_value()],
+                not: false,
+                expr: Box::new(null_value()),
+                exprs: vec![null_value(), null_value()],
             },
             &DataType::Bool,
         );
+
+        for expr_tpe in get_data_types_expect_null() {
+            let other_types: Vec<_> = get_data_types_expect_null().into_iter().filter(|tpe| tpe != &expr_tpe).collect();
+
+            for item_tpe in other_types {
+                println!("item {} IN [{}]", expr_tpe, item_tpe);
+
+                // Reject if types do not match TYPE1 IN [TYPE2, ... ]
+                expect_not_resolved(&Expr::InList {
+                    not: false,
+                    expr: Box::new(get_value_expr(item_tpe.clone())),
+                    exprs: vec![get_value_expr(expr_tpe.clone())],
+                });
+
+                // Reject NULL IN [TYPE1, TYPE2, ... ]
+                expect_not_resolved(&Expr::InList {
+                    not: false,
+                    expr: Box::new(null_value()),
+                    exprs: vec![get_value_expr(expr_tpe.clone()), get_value_expr(item_tpe.clone())],
+                });
+
+                // Reject TYPE1 IN [NULL, TYPE2, ... ]
+                expect_not_resolved(&Expr::InList {
+                    not: false,
+                    expr: Box::new(get_value_expr(expr_tpe.clone())),
+                    exprs: vec![null_value(), get_value_expr(item_tpe.clone())],
+                });
+
+                // Reject TYPE1 IN [TYPE2, NULL, ... ]
+                expect_not_resolved(&Expr::InList {
+                    not: false,
+                    expr: Box::new(get_value_expr(expr_tpe.clone())),
+                    exprs: vec![get_value_expr(item_tpe.clone()), null_value()],
+                });
+            }
+        }
     }
 
     #[test]
     fn test_array() {
         let expr = Expr::Array(vec![int_value(), int_value()]);
-        expect_type(&expr, &DataType::Array(Box::new(DataType::Int32)));
+        expect_type(&expr, &DataType::array(DataType::Int32));
 
         let expr = Expr::Array(vec![int_value(), null_value()]);
-        expect_type(&expr, &DataType::Array(Box::new(DataType::Int32)));
+        expect_type(&expr, &DataType::array(DataType::Int32));
 
         let expr = Expr::Array(vec![null_value(), int_value()]);
-        expect_type(&expr, &DataType::Array(Box::new(DataType::Int32)));
+        expect_type(&expr, &DataType::array(DataType::Int32));
 
-        // multidimensional array
+        // multidimensional arrays
+        // array of arrays of ints
         let expr = Expr::Array(vec![Expr::Array(vec![int_value()]), Expr::Array(vec![int_value()])]);
-        expect_type(&expr, &DataType::Array(Box::new(DataType::Int32)));
+        expect_type(&expr, &DataType::array(DataType::array(DataType::Int32)));
 
+        // array of arrays of arrays ints
         let expr = Expr::Array(vec![
             Expr::Array(vec![Expr::Array(vec![int_value()])]),
             Expr::Array(vec![Expr::Array(vec![int_value()])]),
         ]);
-        expect_type(&expr, &DataType::Array(Box::new(DataType::Int32)));
+        expect_type(&expr, &DataType::array(DataType::array(DataType::array(DataType::Int32))));
+
+        let expr = Expr::Array(vec![null_value(), null_value()]);
+        expect_type(&expr, &DataType::array(DataType::Null));
 
         // array elements must be of the same type
         let expr = Expr::Array(vec![int_value(), bool_value()]);
         expect_not_resolved(&expr);
 
         let expr = Expr::Array(vec![null_value(), int_value(), bool_value()]);
-        expect_not_resolved(&expr);
-
-        // FIXME: array with all elements of null type.
-        let expr = Expr::Array(vec![null_value(), null_value()]);
         expect_not_resolved(&expr);
 
         // multidimensional array
@@ -715,6 +875,13 @@ mod test {
             array: Box::new(arr_expr),
             indexes: vec![int_value()],
         };
+        expect_type(&expr, &DataType::array(DataType::Bool));
+
+        let arr_expr = Expr::Array(vec![Expr::Array(vec![bool_value()]), Expr::Array(vec![bool_value()])]);
+        let expr = Expr::ArrayIndex {
+            array: Box::new(arr_expr),
+            indexes: vec![int_value(), int_value()],
+        };
         expect_type(&expr, &DataType::Bool);
 
         // invalid index type
@@ -723,7 +890,23 @@ mod test {
             array: Box::new(arr_expr),
             indexes: vec![bool_value()],
         };
-        expect_not_resolved(&expr)
+        expect_not_resolved(&expr);
+
+        // Reject arr[i][j] when array contains no nested arrays
+        let arr_expr = Expr::Array(vec![bool_value()]);
+        let expr = Expr::ArrayIndex {
+            array: Box::new(arr_expr),
+            indexes: vec![int_value(), int_value()],
+        };
+        expect_not_resolved(&expr);
+
+        // Reject arr[i][j][k] when array contains only one level of nested arrays [[a], [b]]
+        let arr_expr = Expr::Array(vec![Expr::Array(vec![bool_value()]), Expr::Array(vec![bool_value()])]);
+        let expr = Expr::ArrayIndex {
+            array: Box::new(arr_expr),
+            indexes: vec![int_value(), int_value(), int_value()],
+        };
+        expect_not_resolved(&expr);
     }
 
     #[test]
@@ -1166,6 +1349,10 @@ mod test {
             DataType::Tuple(vec![DataType::String]),
             DataType::Array(Box::new(DataType::String)),
         ]
+    }
+
+    fn get_data_types_expect_null() -> Vec<DataType> {
+        get_data_types().into_iter().filter(|tpe| tpe != &DataType::Null).collect()
     }
 
     fn valid_bin_expr(lhs_type: DataType, op: BinaryOp, rhs_type: DataType, expected_type: DataType) {
