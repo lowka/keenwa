@@ -15,7 +15,7 @@ jobs:
         arch: [ amd64 ]
         rust: [ stable ]
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Build
         run: cargo build --verbose
       - name: Run tests
@@ -31,7 +31,7 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
       - name: Add rust fmt
         run: rustup component add rustfmt
       # run rustdoc lints.
