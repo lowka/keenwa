@@ -1329,7 +1329,52 @@ where
     type Output = Self;
 
     fn not(self) -> Self::Output {
-        Expr::Not(Box::new(self))
+        match self {
+            Expr::Column(_) => Expr::Not(Box::new(self)),
+            Expr::ColumnName(_) => Expr::Not(Box::new(self)),
+            Expr::Scalar(_) => Expr::Not(Box::new(self)),
+            Expr::BinaryExpr { .. } => Expr::Not(Box::new(self)),
+            Expr::Cast { .. } => Expr::Not(Box::new(self)),
+            Expr::Not(_) => Expr::Not(Box::new(self)),
+            Expr::Negation(_) => Expr::Not(Box::new(self)),
+            Expr::InList { not, expr, exprs } => Expr::InList { not: !not, expr, exprs },
+            Expr::IsNull { not, expr } => Expr::IsNull { not: !not, expr },
+            Expr::IsFalse { not, expr } => Expr::IsFalse { not: !not, expr },
+            Expr::IsTrue { not, expr } => Expr::IsTrue { not: !not, expr },
+            Expr::IsUnknown { not, expr } => Expr::IsUnknown { not: !not, expr },
+            Expr::Between { not, expr, low, high } => Expr::Between {
+                not: !not,
+                expr,
+                low,
+                high,
+            },
+            Expr::Alias(_, _) => Expr::Not(Box::new(self)),
+            Expr::Case { .. } => Expr::Not(Box::new(self)),
+            Expr::Tuple(_) => Expr::Not(Box::new(self)),
+            Expr::Array(_) => Expr::Not(Box::new(self)),
+            Expr::ArrayIndex { .. } => Expr::Not(Box::new(self)),
+            Expr::ScalarFunction { .. } => Expr::Not(Box::new(self)),
+            Expr::Like {
+                not,
+                expr,
+                pattern,
+                escape_char,
+                case_insensitive,
+            } => Expr::Like {
+                not: !not,
+                expr,
+                pattern,
+                escape_char,
+                case_insensitive,
+            },
+            Expr::Aggregate { .. } => Expr::Not(Box::new(self)),
+            Expr::WindowAggregate { .. } => Expr::Not(Box::new(self)),
+            Expr::Ordering { .. } => Expr::Not(Box::new(self)),
+            Expr::SubQuery(_) => Expr::Not(Box::new(self)),
+            Expr::Exists { not, query } => Expr::Exists { not: !not, query },
+            Expr::InSubQuery { not, expr, query } => Expr::InSubQuery { not: !not, expr, query },
+            Expr::Wildcard(_) => Expr::Not(Box::new(self)),
+        }
     }
 }
 
@@ -1475,9 +1520,21 @@ mod test {
     }
 
     #[test]
+    fn is_not_null_expr_traversal() {
+        let expr = bool_val(true).is_null().not();
+        expect_traversal_order(&expr, vec!["pre:true IS NOT NULL", "pre:true", "post:true", "post:true IS NOT NULL"])
+    }
+
+    #[test]
     fn is_false_expr_traversal() {
         let expr = bool_val(true).is_false();
         expect_traversal_order(&expr, vec!["pre:true IS FALSE", "pre:true", "post:true", "post:true IS FALSE"])
+    }
+
+    #[test]
+    fn is_not_false_expr_traversal() {
+        let expr = bool_val(true).is_false().not();
+        expect_traversal_order(&expr, vec!["pre:true IS NOT FALSE", "pre:true", "post:true", "post:true IS NOT FALSE"])
     }
 
     #[test]
@@ -1487,9 +1544,24 @@ mod test {
     }
 
     #[test]
+    fn is_not_true_expr_traversal() {
+        let expr = bool_val(true).is_true().not();
+        expect_traversal_order(&expr, vec!["pre:true IS NOT TRUE", "pre:true", "post:true", "post:true IS NOT TRUE"])
+    }
+
+    #[test]
     fn is_unknown_expr_traversal() {
         let expr = bool_val(true).is_unknown();
         expect_traversal_order(&expr, vec!["pre:true IS UNKNOWN", "pre:true", "post:true", "post:true IS UNKNOWN"])
+    }
+
+    #[test]
+    fn is_not_unknown_expr_traversal() {
+        let expr = bool_val(true).is_unknown().not();
+        expect_traversal_order(
+            &expr,
+            vec!["pre:true IS NOT UNKNOWN", "pre:true", "post:true", "post:true IS NOT UNKNOWN"],
+        )
     }
 
     #[test]
@@ -1507,18 +1579,17 @@ mod test {
     }
 
     #[test]
-    fn is_not_null_expr_traversal() {
-        let expr = bool_val(true).is_null().not();
-        expect_traversal_order(
+    fn not_in_list_expr_traversal() {
+        let expr = Expr::InList {
+            not: false,
+            expr: Box::new(bool_val(false)),
+            exprs: vec![bool_val(true), int_val(1)],
+        }
+        .not();
+        expect_traversal_order_with_depth(
             &expr,
-            vec![
-                "pre:NOT true IS NULL",
-                "pre:true IS NULL",
-                "pre:true",
-                "post:true",
-                "post:true IS NULL",
-                "post:NOT true IS NULL",
-            ],
+            1,
+            vec!["pre:false NOT IN (true, 1)", "false", "true", "1", "post:false NOT IN (true, 1)"],
         )
     }
 
@@ -1589,6 +1660,28 @@ mod test {
     }
 
     #[test]
+    fn not_like_expr_traversal() {
+        let expr = str_val("str").like(str_val("p"), None).not();
+        expect_traversal_order(
+            &expr,
+            vec!["pre:str NOT LIKE p", "pre:str", "post:str", "pre:p", "post:p", "post:str NOT LIKE p"],
+        );
+
+        let expr = str_val("str").like(str_val("p"), Some('c')).not();
+        expect_traversal_order(
+            &expr,
+            vec![
+                "pre:str NOT LIKE p ESCAPE c",
+                "pre:str",
+                "post:str",
+                "pre:p",
+                "post:p",
+                "post:str NOT LIKE p ESCAPE c",
+            ],
+        )
+    }
+
+    #[test]
     fn ilike_expr_traversal() {
         let expr = str_val("str").ilike(str_val("p"), None);
         expect_traversal_order(
@@ -1606,6 +1699,28 @@ mod test {
                 "pre:p",
                 "post:p",
                 "post:str ILIKE p ESCAPE c",
+            ],
+        )
+    }
+
+    #[test]
+    fn not_ilike_expr_traversal() {
+        let expr = str_val("str").ilike(str_val("p"), None).not();
+        expect_traversal_order(
+            &expr,
+            vec!["pre:str NOT ILIKE p", "pre:str", "post:str", "pre:p", "post:p", "post:str NOT ILIKE p"],
+        );
+
+        let expr = str_val("str").ilike(str_val("p"), Some('c')).not();
+        expect_traversal_order(
+            &expr,
+            vec![
+                "pre:str NOT ILIKE p ESCAPE c",
+                "pre:str",
+                "post:str",
+                "pre:p",
+                "post:p",
+                "post:str NOT ILIKE p ESCAPE c",
             ],
         )
     }
@@ -1681,19 +1796,27 @@ mod test {
             low: Box::new(int_val(2)),
             high: Box::new(int_val(4)),
         };
-        expect_traversal_order(
-            &expr,
-            vec![
-                "pre:col:a1 NOT BETWEEN 2 AND 4",
-                "pre:col:a1",
-                "post:col:a1",
-                "pre:2",
-                "post:2",
-                "pre:4",
-                "post:4",
-                "post:col:a1 NOT BETWEEN 2 AND 4",
-            ],
-        )
+
+        let expected = vec![
+            "pre:col:a1 NOT BETWEEN 2 AND 4",
+            "pre:col:a1",
+            "post:col:a1",
+            "pre:2",
+            "post:2",
+            "pre:4",
+            "post:4",
+            "post:col:a1 NOT BETWEEN 2 AND 4",
+        ];
+        expect_traversal_order(&expr, expected.clone());
+
+        let expr = Expr::Between {
+            not: false,
+            expr: Box::new(col("a1")),
+            low: Box::new(int_val(2)),
+            high: Box::new(int_val(4)),
+        }
+        .not();
+        expect_traversal_order(&expr, expected)
     }
 
     #[test]
@@ -1831,6 +1954,57 @@ mod test {
             &expr,
             vec!["pre:col:a1 DESC NULLS FIRST", "pre:col:a1", "post:col:a1", "post:col:a1 DESC NULLS FIRST"],
         );
+    }
+
+    #[test]
+    fn in_subquery_traversal() {
+        let expr = Expr::InSubQuery {
+            not: false,
+            expr: Box::new(col("a1")),
+            query: DummyRelExpr,
+        };
+        expect_traversal_order(
+            &expr,
+            vec!["pre:col:a1 IN DummyRelExpr", "pre:col:a1", "post:col:a1", "post:col:a1 IN DummyRelExpr"],
+        );
+    }
+
+    #[test]
+    fn not_in_subquery_traversal() {
+        let expr = Expr::InSubQuery {
+            not: false,
+            expr: Box::new(col("a1")),
+            query: DummyRelExpr,
+        }
+        .not();
+        expect_traversal_order(
+            &expr,
+            vec![
+                "pre:col:a1 NOT IN DummyRelExpr",
+                "pre:col:a1",
+                "post:col:a1",
+                "post:col:a1 NOT IN DummyRelExpr",
+            ],
+        );
+    }
+
+    #[test]
+    fn exists_traversal() {
+        let expr = Expr::Exists {
+            not: false,
+            query: DummyRelExpr,
+        };
+        expect_traversal_order(&expr, vec!["pre:EXISTS DummyRelExpr", "post:EXISTS DummyRelExpr"]);
+    }
+
+    #[test]
+    fn not_exists_traversal() {
+        let expr = Expr::Exists {
+            not: false,
+            query: DummyRelExpr,
+        }
+        .not();
+        expect_traversal_order(&expr, vec!["pre:NOT EXISTS DummyRelExpr", "post:NOT EXISTS DummyRelExpr"]);
     }
 
     #[test]
