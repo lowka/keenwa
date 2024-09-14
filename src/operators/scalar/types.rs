@@ -32,7 +32,7 @@ where
         Expr::BinaryExpr { lhs, op, rhs } => {
             let left_tpe = resolve_expr_type(lhs, column_registry)?;
             let right_tpe = resolve_expr_type(rhs, column_registry)?;
-            resolve_binary_expr_type(expr, op, left_tpe, right_tpe)
+            resolve_binary_expr_type(expr, op, &left_tpe, &right_tpe)
         }
         Expr::Cast { data_type, .. } => Ok(data_type.clone()),
         Expr::Not(expr) => {
@@ -286,8 +286,8 @@ where
 fn resolve_binary_expr_type<T>(
     expr: &Expr<T>,
     op: &BinaryOp,
-    lhs: DataType,
-    rhs: DataType,
+    lhs: &DataType,
+    rhs: &DataType,
 ) -> Result<DataType, OptimizerError>
 where
     T: NestedExpr,
@@ -295,28 +295,13 @@ where
     use BinaryOp::*;
     use DataType::*;
 
-    fn is_comparable_type(tpe: &DataType) -> bool {
-        match tpe {
-            Null => true,
-            Bool => false,
-            Int32 => true,
-            Float32 => true,
-            String => false,
-            Date => true,
-            Time => true,
-            Timestamp(_) => true,
-            Interval => true,
-            Tuple(_) => false,
-            Array(_) => false,
-        }
-    }
-
     fn support_comparison_ops(lhs: &DataType, rhs: &DataType) -> bool {
         match (lhs, rhs) {
-            _ if is_comparable_type(lhs) && is_comparable_type(rhs) && lhs == rhs => true,
-            _ if is_comparable_type(lhs) && rhs == &Null => true,
-            _ if lhs == &Null && is_comparable_type(rhs) => true,
+            _ if lhs == &Null || rhs == &Null || lhs == rhs => true,
             _ if are_numeric_types(lhs, rhs) => true,
+            (Timestamp(_), Timestamp(_)) => true,
+            (Array(l), Array(r)) if l == r => true,
+            (Tuple(l), Tuple(r)) if l == r => true,
             _ => false,
         }
     }
@@ -1050,15 +1035,16 @@ mod test {
 
     #[test]
     fn test_comparison() {
-        use BinaryOp::*;
         use DataType::*;
 
-        let comparable_types = vec![Int32, Float32, Date, Time, Interval, Timestamp(true), Timestamp(false)];
-        let ops = vec![Lt, Gt, LtEq, GtEq];
+        let simple_types: Vec<_> = get_data_types_expect_null()
+            .into_iter()
+            .filter(|t| !matches!(t, Tuple(_) | Array(_)))
+            .collect();
 
         // comparable types can be compared with the same type or with null
-        for tpe in comparable_types.clone() {
-            for op in ops.clone() {
+        for tpe in simple_types.clone() {
+            for op in get_cmp_ops() {
                 valid_bin_expr(tpe.clone(), op.clone(), tpe.clone(), Bool);
                 // rhs is NULL
                 valid_bin_expr(tpe.clone(), op.clone(), Null, Bool);
@@ -1077,15 +1063,104 @@ mod test {
             let lhs = vals.swap_remove(0);
             let rhs = vals.swap_remove(0);
 
-            for op in ops.clone() {
+            for op in get_cmp_ops() {
                 valid_bin_expr(lhs.clone(), op, rhs.clone(), Bool);
             }
         }
+    }
 
-        // not supported
-        for tpe in [DataType::Tuple(vec![String]), DataType::Array(Box::new(String))] {
-            for op in ops.clone() {
-                invalid_bin_expr(tpe.clone(), op, tpe.clone())
+    #[test]
+    fn test_array_comparison() {
+        use DataType::*;
+
+        // Allow array[type1] <cmp> array[type2] if type1 = type2
+        for element_type in get_data_types() {
+            let arr_type = DataType::array(element_type);
+
+            for op in get_cmp_ops() {
+                valid_bin_expr(arr_type.clone(), op, arr_type.clone(), Bool)
+            }
+        }
+
+        // Reject array[type] <cmp> type and vice versa
+        for element_type in get_data_types_expect_null().into_iter().filter(|t| !matches!(t, Array(_))) {
+            let arr_type = DataType::array(element_type.clone());
+
+            for op in get_cmp_ops() {
+                invalid_bin_expr(arr_type.clone(), op.clone(), element_type.clone());
+                invalid_bin_expr(element_type.clone(), op.clone(), arr_type.clone());
+            }
+        }
+
+        // Reject array[type1] <cmp> array[type2] if type != type2
+        for element_type in get_data_types() {
+            for another_type in get_data_types().into_iter().filter(|t| t != &element_type) {
+                let arr_type1 = DataType::array(element_type.clone());
+                let arr_type2 = DataType::array(another_type);
+
+                for op in get_cmp_ops() {
+                    invalid_bin_expr(arr_type1.clone(), op, arr_type2.clone())
+                }
+            }
+        }
+
+        // Reject multidimensional arrays with different dimensions
+        for element_type in get_data_types() {
+            let arr_type1 = DataType::array(element_type.clone());
+            let arr_type2 = DataType::array(DataType::array(element_type.clone()));
+            let arr_type3 = DataType::array(DataType::array(DataType::array(element_type)));
+
+            for op in get_cmp_ops() {
+                invalid_bin_expr(arr_type1.clone(), op.clone(), arr_type2.clone());
+                invalid_bin_expr(arr_type1.clone(), op.clone(), arr_type3.clone());
+                invalid_bin_expr(arr_type2.clone(), op.clone(), arr_type3.clone());
+            }
+        }
+    }
+
+    #[test]
+    fn test_tuple_comparison() {
+        use BinaryOp::*;
+        use DataType::*;
+
+        // Allow tuple[type1] <cmp> tuple[type2] if type1 = type2
+        for element_type in get_data_types() {
+            let tuple_type = Tuple(vec![element_type]);
+
+            for op in get_cmp_ops() {
+                valid_bin_expr(tuple_type.clone(), op, tuple_type.clone(), Bool)
+            }
+        }
+
+        // Reject tuple[type] <cmp> type and vice versa
+        for element_type in get_data_types_expect_null().into_iter().filter(|t| !matches!(t, Tuple(_))) {
+            let tuple_type = Tuple(vec![element_type.clone()]);
+
+            for op in get_cmp_ops() {
+                invalid_bin_expr(tuple_type.clone(), op.clone(), element_type.clone());
+                invalid_bin_expr(element_type.clone(), op.clone(), tuple_type.clone());
+            }
+        }
+
+        // Reject tuple[type1] <cmp> tuple[type2] if type1 != type2
+        for element_type in get_data_types() {
+            for another_type in get_data_types().into_iter().filter(|t| t != &element_type) {
+                let tuple_type1 = Tuple(vec![element_type.clone()]);
+                let tuple_type2 = Tuple(vec![another_type]);
+
+                for op in get_cmp_ops() {
+                    invalid_bin_expr(tuple_type1.clone(), op, tuple_type2.clone())
+                }
+            }
+        }
+
+        // Reject tuple1 <cmp> tuple2 if tuple types have different number of fields
+        for element_type in get_data_types() {
+            let tuple_type1 = Tuple(vec![element_type.clone()]);
+            let tuple_type2 = Tuple(vec![element_type.clone(), element_type.clone()]);
+
+            for op in get_cmp_ops() {
+                invalid_bin_expr(tuple_type1.clone(), op, tuple_type2.clone())
             }
         }
     }
@@ -1163,11 +1238,7 @@ mod test {
         }
 
         // no operator for non string types
-        for tpe in get_data_types()
-            .into_iter()
-            .filter(|tpe| tpe != &Null)
-            .filter(|tpe| !str_tpes.contains(tpe))
-        {
+        for tpe in get_data_types_expect_null().into_iter().filter(|tpe| !str_tpes.contains(tpe)) {
             for (like, escape_char) in ops.clone() {
                 let expr = make_like_expr(String, tpe.clone(), escape_char, like);
                 expect_not_resolved(&expr);
@@ -1192,16 +1263,18 @@ mod test {
             valid_bin_expr(tpe.clone(), Concat, String, String);
         }
 
+        valid_bin_expr(Null, Concat, Null, String);
+
         // no concat operator for non-string types (except for the case when both types are null)
-        for mut types in get_data_types().into_iter().filter(|tpe| tpe != &String).combinations_with_replacement(2) {
+        for mut types in get_data_types_expect_null()
+            .into_iter()
+            .filter(|tpe| tpe != &String)
+            .combinations_with_replacement(2)
+        {
             let lhs = types.swap_remove(0);
             let rhs = types.swap_remove(0);
 
-            if lhs == Null && rhs == Null {
-                valid_bin_expr(Null, Concat, Null, String);
-            } else {
-                invalid_bin_expr(lhs, Concat, rhs);
-            }
+            invalid_bin_expr(lhs, Concat, rhs);
         }
     }
 
@@ -1369,7 +1442,7 @@ mod test {
     }
 
     fn get_data_types() -> Vec<DataType> {
-        vec![
+        let mut types = vec![
             DataType::Null,
             DataType::Bool,
             DataType::Int32,
@@ -1379,20 +1452,27 @@ mod test {
             DataType::Time,
             DataType::Timestamp(true),
             DataType::Timestamp(false),
-            DataType::Tuple(vec![DataType::String]),
-            DataType::Array(Box::new(DataType::String)),
-        ]
+        ];
+
+        types.extend(types.clone().into_iter().map(|t| DataType::array(t)));
+        types.extend(types.clone().into_iter().map(|t| DataType::Tuple(vec![t])));
+
+        types
     }
 
     fn get_data_types_expect_null() -> Vec<DataType> {
         get_data_types().into_iter().filter(|tpe| tpe != &DataType::Null).collect()
     }
 
+    fn get_cmp_ops() -> Vec<BinaryOp> {
+        vec![BinaryOp::Lt, BinaryOp::Gt, BinaryOp::LtEq, BinaryOp::GtEq]
+    }
+
     fn valid_bin_expr(lhs_type: DataType, op: BinaryOp, rhs_type: DataType, expected_type: DataType) {
         let lhs = get_value_expr(lhs_type.clone());
         let rhs = get_value_expr(rhs_type.clone());
         let bin_expr = lhs.binary_expr(op.clone(), rhs);
-        let expr_type = resolve_binary_expr_type(&bin_expr, &op, lhs_type, rhs_type);
+        let expr_type = resolve_binary_expr_type(&bin_expr, &op, &lhs_type, &rhs_type);
 
         match expr_type {
             Ok(actual_type) => assert_eq!(actual_type, expected_type, "type does not match. Expr: {}", bin_expr),
@@ -1404,7 +1484,7 @@ mod test {
         let lhs = get_value_expr(lhs_type.clone());
         let rhs = get_value_expr(rhs_type.clone());
         let bin_expr = lhs.binary_expr(op.clone(), rhs);
-        let expr_type = resolve_binary_expr_type(&bin_expr, &op, lhs_type.clone(), rhs_type.clone());
+        let expr_type = resolve_binary_expr_type(&bin_expr, &op, &lhs_type, &rhs_type);
 
         match expr_type {
             Ok(actual_type) => {
