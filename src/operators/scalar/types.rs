@@ -711,6 +711,39 @@ mod test {
     }
 
     #[test]
+    fn test_is_false() {
+        expect_type(&get_value_expr(DataType::Bool).is_false(), &DataType::Bool);
+        expect_type(&get_value_expr(DataType::Null).is_false(), &DataType::Bool);
+
+        for tpe in get_data_types_expect_null().into_iter().filter(|tpe| tpe != &DataType::Bool) {
+            let value = get_value_expr(tpe.clone()).is_false();
+            expect_not_resolved(&value)
+        }
+    }
+
+    #[test]
+    fn test_is_true() {
+        expect_type(&get_value_expr(DataType::Bool).is_true(), &DataType::Bool);
+        expect_type(&get_value_expr(DataType::Null).is_true(), &DataType::Bool);
+
+        for tpe in get_data_types_expect_null().into_iter().filter(|tpe| tpe != &DataType::Bool) {
+            let value = get_value_expr(tpe.clone()).is_true();
+            expect_not_resolved(&value)
+        }
+    }
+
+    #[test]
+    fn test_is_unknown() {
+        expect_type(&get_value_expr(DataType::Bool).is_unknown(), &DataType::Bool);
+        expect_type(&get_value_expr(DataType::Null).is_unknown(), &DataType::Bool);
+
+        for tpe in get_data_types_expect_null().into_iter().filter(|tpe| tpe != &DataType::Bool) {
+            let value = get_value_expr(tpe.clone()).is_unknown();
+            expect_not_resolved(&value)
+        }
+    }
+
+    #[test]
     fn test_in_list() {
         for tpe in get_data_types_expect_null() {
             // Allow TYPE IN [TYPE]
