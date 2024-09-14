@@ -879,10 +879,7 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
         Expr::ArraySubquery(_) => not_implemented!("Array subquery expression"),
         Expr::ArrayAgg(_) => not_implemented!("ArrayAgg expression"),
         Expr::Struct { .. } => not_supported!("Struct expression. BigQuery specific"),
-        Expr::Named { expr, name } => {
-            let expr = Box::new(build_scalar_expr(*expr, builder.clone())?);
-            ScalarExpr::Alias(expr, name.value)
-        }
+        Expr::Named { .. } => not_supported!("Named expression in a typeless struct. BigQuery specific"),
         Expr::Dictionary(_) => not_supported!("Literal struct expression. Duckdb specific"),
         Expr::MatchAgainst { .. } => not_implemented!("MATCH (<col>, <col>, ...) AGAINST (<expr> [<search modifier>])"),
         Expr::Wildcard => ScalarExpr::Wildcard(None),
