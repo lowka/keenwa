@@ -23,7 +23,7 @@ impl AggregateFunction {
     }
 
     fn get_signature(&self) -> FunctionSignature {
-        fn func() -> FunctionSignatureBuilder {
+        fn numeric() -> FunctionSignatureBuilder {
             let arg_lists: Vec<_> = DataType::NUMERIC_TYPES.iter().map(|tpe| vec![tpe.clone()]).collect();
             FunctionSignatureBuilder::one_of(arg_lists)
         }
@@ -34,11 +34,11 @@ impl AggregateFunction {
         }
 
         match self {
-            AggregateFunction::Avg => func().return_mirrors(),
+            AggregateFunction::Avg => numeric().return_mirrors(),
             AggregateFunction::Count => any(1).return_type(DataType::Int32),
-            AggregateFunction::Max => func().return_mirrors(),
-            AggregateFunction::Min => func().return_mirrors(),
-            AggregateFunction::Sum => func().return_mirrors(),
+            AggregateFunction::Max => any(1).return_mirrors(),
+            AggregateFunction::Min => any(1).return_mirrors(),
+            AggregateFunction::Sum => numeric().return_mirrors(),
         }
     }
 }
@@ -202,12 +202,12 @@ mod test {
 
     #[test]
     fn min() {
-        test_aggregate_function(AggregateFunction::Min, "min", "one of [int32], [float32] -> <mirrors> immutable");
+        test_aggregate_function(AggregateFunction::Min, "min", "any <1> -> <mirrors> immutable");
     }
 
     #[test]
     fn max() {
-        test_aggregate_function(AggregateFunction::Max, "max", "one of [int32], [float32] -> <mirrors> immutable");
+        test_aggregate_function(AggregateFunction::Max, "max", "any <1> -> <mirrors> immutable");
     }
 
     #[test]
