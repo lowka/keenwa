@@ -204,17 +204,18 @@ impl Display for ScalarValue {
                 let millis = *value - 1000 * secs;
 
                 let timezone = tz.map(|tz| FixedOffset::east_opt(tz).map(Ok).unwrap_or(Err(tz)));
-                let datetime = NaiveDateTime::from_timestamp_opt(secs, (millis * 1_000_000) as u32)
-                    .map(Ok)
-                    .unwrap_or(Err(millis));
+                let datetime =
+                    DateTime::from_timestamp(secs, (millis * 1_000_000) as u32).map(Ok).unwrap_or(Err(millis));
 
                 match (datetime, timezone) {
                     (Ok(timestamp), Some(Ok(offset))) => {
-                        let timestamp: DateTime<FixedOffset> = DateTime::from_utc(timestamp, offset);
+                        let timestamp: DateTime<FixedOffset> =
+                            DateTime::from_naive_utc_and_offset(timestamp.naive_utc(), offset);
                         write!(f, "{}", timestamp.format("%Y-%m-%dT%H:%M:%S%.3f%Z"))?;
                     }
                     (Ok(timestamp), None) => {
-                        let timestamp: DateTime<FixedOffset> = DateTime::from_utc(timestamp, FixedOffset::east(0));
+                        let timestamp: DateTime<FixedOffset> =
+                            DateTime::from_naive_utc_and_offset(timestamp.naive_utc(), FixedOffset::east(0));
                         write!(f, "{}", timestamp.format("%Y-%m-%dT%H:%M:%S%.3f"))?;
                     }
                     (_, offset) => {
@@ -473,12 +474,11 @@ mod test {
 
         format_time(0, 0, "00:00:00.000");
         format_time(0, 10_000_000, "00:00:00.010");
-        format_time(0, 1_000_000_000, "00:00:01.000");
-
+        format_time(0, 999_999_999, "00:00:00.999");
         format_time(4 * 60 * 60 + 12 * 60, 0, "04:12:00.000");
 
+        format_time(0, 1_000_000_000, "Invalid time: 0 secs 1000000000 nanos");
         format_time(24 * 60 * 60 + 1, 0, "Invalid time: 86401 secs 0 nanos");
-
         format_time(1000000, 1_000_000_000, "Invalid time: 1000000 secs 1000000000 nanos");
         format_time(1000000, 0, "Invalid time: 1000000 secs 0 nanos");
     }
@@ -496,6 +496,7 @@ mod test {
         format_ts(100000, None, "1970-01-01T00:01:40.000");
         format_ts(100000, Some(60 + 15), "1970-01-01T00:02:55.000+00:01:15");
         format_ts(100000, Some(-160 + 15), "1969-12-31T23:59:15.000-00:02:25");
+        format_ts(100000, Some(-(24 * 60 * 60 - 1)), "1969-12-31T00:01:41.000-23:59:59");
 
         format_ts(-100, None, "Invalid timestamp: -100 millis");
         format_ts(-100, Some(60 + 10), "Invalid timestamp: -100 millis [offset 70 seconds]");
