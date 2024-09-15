@@ -351,26 +351,18 @@ where
         (Time, Plus, Interval) => Ok(Time),
         (Time, Minus, Interval) => Ok(Interval),
         (Interval, Minus, Time) => Ok(Interval),
-        (Time, Minus, Null) => Ok(Interval),
-        (Null, Minus, Time) => Ok(Interval),
 
         // Timestamp
         (Timestamp(tz), Plus | Minus, Interval) => Ok(Timestamp(*tz)),
-        (Timestamp(tz), Plus | Minus, Null) => Ok(Timestamp(*tz)),
-        (Null, Plus | Minus, Timestamp(tz)) => Ok(Timestamp(*tz)),
 
         // Interval
         (Interval, Plus | Minus, Interval) => Ok(Interval),
         (Interval, Plus, Date) => Ok(Date),
         (Interval, Plus, Time) => Ok(Time),
-        (Interval, Plus | Minus, Null) => Ok(Interval),
-        (Null, Plus | Minus, Interval) => Ok(Interval),
 
         // <interval> mul/div <num>
         (Interval, Multiply | Divide, Int32) => Ok(Interval),
-        (Interval, Multiply | Divide, Null) => Ok(Interval),
         (Int32, Multiply, Interval) => Ok(Interval),
-        (Null, Multiply, Interval) => Ok(Interval),
 
         // String Concat
         (String, Concat, _) => Ok(String),
@@ -1225,30 +1217,39 @@ mod test {
         valid_bin_expr(&Date, Minus, &Interval, &Date);
         valid_bin_expr(&Interval, Plus, &Date, &Date);
 
-        invalid_bin_expr(&Date, Plus, &Null);
-        invalid_bin_expr(&Date, Minus, &Null);
-        invalid_bin_expr(&Null, Plus, &Date);
-
         valid_bin_expr(&Time, Minus, &Time, &Interval);
         valid_bin_expr(&Time, Plus, &Interval, &Time);
         valid_bin_expr(&Time, Minus, &Interval, &Interval);
-
-        valid_bin_expr(&Time, Minus, &Null, &Interval);
-        valid_bin_expr(&Null, Minus, &Time, &Interval);
-
-        invalid_bin_expr(&Time, Plus, &Null);
-        invalid_bin_expr(&Null, Plus, &Time);
 
         valid_bin_expr(&Interval, Plus, &Interval, &Interval);
         valid_bin_expr(&Interval, Minus, &Interval, &Interval);
 
         valid_bin_expr(&Interval, Multiply, &Int32, &Interval);
         valid_bin_expr(&Interval, Divide, &Int32, &Interval);
-        valid_bin_expr(&Interval, Multiply, &Null, &Interval);
-        valid_bin_expr(&Interval, Divide, &Null, &Interval);
 
-        valid_bin_expr(&Interval, Minus, &Null, &Interval);
-        valid_bin_expr(&Interval, Plus, &Null, &Interval);
+        invalid_bin_expr(&Date, Plus, &Null);
+        invalid_bin_expr(&Null, Plus, &Date);
+
+        invalid_bin_expr(&Date, Minus, &Null);
+        invalid_bin_expr(&Date, Plus, &Null);
+
+        invalid_bin_expr(&Time, Minus, &Null);
+        invalid_bin_expr(&Null, Minus, &Time);
+
+        invalid_bin_expr(&Time, Plus, &Null);
+        invalid_bin_expr(&Null, Plus, &Time);
+
+        invalid_bin_expr(&Interval, Minus, &Null);
+        invalid_bin_expr(&Null, Minus, &Interval);
+
+        invalid_bin_expr(&Interval, Plus, &Null);
+        invalid_bin_expr(&Null, Plus, &Interval);
+
+        invalid_bin_expr(&Interval, Multiply, &Null);
+        invalid_bin_expr(&Null, Multiply, &Interval);
+
+        invalid_bin_expr(&Interval, Divide, &Null);
+        invalid_bin_expr(&Null, Divide, &Interval);
     }
 
     #[test]
