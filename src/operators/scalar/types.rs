@@ -1,7 +1,6 @@
 use crate::datatypes::DataType;
 use crate::error::OptimizerError;
 use crate::meta::ColumnId;
-use crate::not_supported;
 use crate::operators::scalar::expr::{BinaryOp, Expr, NestedExpr};
 use itertools::Itertools;
 
@@ -38,7 +37,7 @@ where
         Expr::Not(expr) => {
             let tpe = resolve_expr_type(expr, column_registry)?;
             expect_type_or_null(&tpe, &DataType::Bool, expr)?;
-            Ok(tpe)
+            Ok(DataType::Bool)
         }
         Expr::Negation(expr) => {
             let tpe = resolve_expr_type(expr, column_registry)?;
@@ -222,7 +221,7 @@ where
                     if i > 0 {
                         match item_type.element_type() {
                             Some(elem) => item_type = elem.clone(),
-                            None => return Err(type_error(format!("Expected nested array but got {}", item_type))),
+                            None => return Err(type_error(format!("Expected a nested array but got {}", item_type))),
                         }
                     }
                 }
@@ -578,7 +577,7 @@ mod test {
     #[test]
     fn test_column_name_type_should_not_be_resolved() {
         let col = Expr::ColumnName("a".into());
-        expect_not_resolved2(&col, "Internal error: Expr col:a should have been replaced with Column(id)")
+        expect_not_resolved(&col, "Internal error: Expr col:a should have been replaced with Column(id)")
     }
 
     #[test]
@@ -658,9 +657,13 @@ mod test {
     #[test]
     fn test_not_type() {
         expect_type(&!bool_value(), &DataType::Bool);
+        expect_type(&!null_value(), &DataType::Bool);
 
-        expect_not_resolved(&!int_value());
-        expect_not_resolved(&!str_value());
+        for tpe in get_data_types_expect_null().into_iter().filter(|t| t != &DataType::Bool) {
+            let mismatch_err = mismatch_error(&DataType::Bool, &tpe);
+            let expr = get_value_expr(tpe);
+            expect_not_resolved(&!expr, &mismatch_err)
+        }
     }
 
     #[test]
@@ -676,7 +679,8 @@ mod test {
             if DataType::NUMERIC_TYPES.contains(&tpe) {
                 expect_type(&value_expr.negate(), &tpe);
             } else {
-                expect_not_resolved(&value_expr.negate());
+                let mismatch_err = format!("No operator for type {}", tpe);
+                expect_not_resolved(&value_expr.negate(), &mismatch_err);
             }
         }
     }
@@ -704,7 +708,9 @@ mod test {
 
         for tpe in get_data_types_expect_null().into_iter().filter(|tpe| tpe != &DataType::Bool) {
             let value = get_value_expr(tpe.clone()).is_false();
-            expect_not_resolved(&value)
+            let mismatch_err = mismatch_error(&DataType::Bool, &tpe);
+
+            expect_not_resolved(&value, &mismatch_err)
         }
     }
 
@@ -715,7 +721,9 @@ mod test {
 
         for tpe in get_data_types_expect_null().into_iter().filter(|tpe| tpe != &DataType::Bool) {
             let value = get_value_expr(tpe.clone()).is_true();
-            expect_not_resolved(&value)
+            let mismatch_err = mismatch_error(&DataType::Bool, &tpe);
+
+            expect_not_resolved(&value, &mismatch_err)
         }
     }
 
@@ -726,7 +734,9 @@ mod test {
 
         for tpe in get_data_types_expect_null().into_iter().filter(|tpe| tpe != &DataType::Bool) {
             let value = get_value_expr(tpe.clone()).is_unknown();
-            expect_not_resolved(&value)
+            let mismatch_err = mismatch_error(&DataType::Bool, &tpe);
+
+            expect_not_resolved(&value, &mismatch_err)
         }
     }
 
@@ -810,35 +820,37 @@ mod test {
             let other_types: Vec<_> = get_data_types_expect_null().into_iter().filter(|tpe| tpe != &expr_tpe).collect();
 
             for item_tpe in other_types {
-                println!("item {} IN [{}]", expr_tpe, item_tpe);
-
                 // Reject if types do not match TYPE1 IN [TYPE2, ... ]
-                expect_not_resolved(&Expr::InList {
-                    not: false,
-                    expr: Box::new(get_value_expr(item_tpe.clone())),
-                    exprs: vec![get_value_expr(expr_tpe.clone())],
-                });
+                let mismatch_err = mismatch_error(&item_tpe, &expr_tpe);
+
+                expect_not_resolved(
+                    &Expr::InList {
+                        not: false,
+                        expr: Box::new(get_value_expr(item_tpe.clone())),
+                        exprs: vec![get_value_expr(expr_tpe.clone())],
+                    },
+                    &mismatch_err,
+                );
 
                 // Reject NULL IN [TYPE1, TYPE2, ... ]
-                expect_not_resolved(&Expr::InList {
-                    not: false,
-                    expr: Box::new(null_value()),
-                    exprs: vec![get_value_expr(expr_tpe.clone()), get_value_expr(item_tpe.clone())],
-                });
-
-                // Reject TYPE1 IN [NULL, TYPE2, ... ]
-                expect_not_resolved(&Expr::InList {
-                    not: false,
-                    expr: Box::new(get_value_expr(expr_tpe.clone())),
-                    exprs: vec![null_value(), get_value_expr(item_tpe.clone())],
-                });
+                expect_not_resolved(
+                    &Expr::InList {
+                        not: false,
+                        expr: Box::new(null_value()),
+                        exprs: vec![get_value_expr(item_tpe.clone()), get_value_expr(expr_tpe.clone())],
+                    },
+                    &mismatch_err,
+                );
 
                 // Reject TYPE1 IN [TYPE2, NULL, ... ]
-                expect_not_resolved(&Expr::InList {
-                    not: false,
-                    expr: Box::new(get_value_expr(expr_tpe.clone())),
-                    exprs: vec![get_value_expr(item_tpe.clone()), null_value()],
-                });
+                expect_not_resolved(
+                    &Expr::InList {
+                        not: false,
+                        expr: Box::new(get_value_expr(item_tpe.clone())),
+                        exprs: vec![get_value_expr(expr_tpe.clone()), null_value()],
+                    },
+                    &mismatch_err,
+                );
             }
         }
     }
@@ -870,19 +882,21 @@ mod test {
         expect_type(&expr, &DataType::array(DataType::Null));
 
         // array elements must be of the same type
+        let diff_elem_type_error = "Array with elements of different types";
+
         let expr = Expr::Array(vec![int_value(), bool_value()]);
-        expect_not_resolved(&expr);
+        expect_not_resolved(&expr, diff_elem_type_error);
 
         let expr = Expr::Array(vec![null_value(), int_value(), bool_value()]);
-        expect_not_resolved(&expr);
+        expect_not_resolved(&expr, diff_elem_type_error);
 
         // multidimensional array
         let expr = Expr::Array(vec![Expr::Array(vec![int_value()]), Expr::Array(vec![bool_value()])]);
-        expect_not_resolved(&expr);
+        expect_not_resolved(&expr, diff_elem_type_error);
 
         // empty array
         let expr = Expr::Array(vec![]);
-        expect_not_resolved(&expr);
+        expect_not_resolved(&expr, "Cannot determine type of empty array");
     }
 
     #[test]
@@ -914,7 +928,7 @@ mod test {
             array: Box::new(arr_expr),
             indexes: vec![bool_value()],
         };
-        expect_not_resolved(&expr);
+        expect_not_resolved(&expr, "Invalid array index type Bool");
 
         // Reject arr[i][j] when array contains no nested arrays
         let arr_expr = Expr::Array(vec![bool_value()]);
@@ -922,7 +936,7 @@ mod test {
             array: Box::new(arr_expr),
             indexes: vec![int_value(), int_value()],
         };
-        expect_not_resolved(&expr);
+        expect_not_resolved(&expr, "Expected a nested array but got Bool");
 
         // Reject arr[i][j][k] when array contains only one level of nested arrays [[a], [b]]
         let arr_expr = Expr::Array(vec![Expr::Array(vec![bool_value()]), Expr::Array(vec![bool_value()])]);
@@ -930,7 +944,7 @@ mod test {
             array: Box::new(arr_expr),
             indexes: vec![int_value(), int_value(), int_value()],
         };
-        expect_not_resolved(&expr);
+        expect_not_resolved(&expr, "Expected a nested array but got Bool");
     }
 
     #[test]
@@ -944,26 +958,41 @@ mod test {
             }
         }
 
-        fn expect_aggr_invalid_args(expr: Expr) {
-            expect_not_resolved(&aggr("min", vec![expr.clone()]));
-            expect_not_resolved(&aggr("max", vec![expr.clone()]));
-            expect_not_resolved(&aggr("avg", vec![expr.clone()]));
-            expect_not_resolved(&aggr("sum", vec![expr.clone()]));
+        for tpe in get_data_types() {
+            let val = get_value_expr(tpe.clone());
+            expect_type(&aggr("min", vec![val.clone()]), &tpe);
+            expect_type(&aggr("max", vec![val.clone()]), &tpe);
+            expect_type(&aggr("count", vec![val]), &DataType::Int32);
         }
 
-        let types = vec![(int_value(), &DataType::Int32), (fp_value(), &DataType::Float32)];
-        for (val, tpe) in types {
-            expect_type(&aggr("min", vec![val.clone()]), tpe);
-            expect_type(&aggr("max", vec![val.clone()]), tpe);
-            expect_type(&aggr("avg", vec![val.clone()]), tpe);
-            expect_type(&aggr("sum", vec![val.clone()]), tpe);
+        let allow_sum = vec![DataType::Int32, DataType::Float32];
+
+        for tpe in allow_sum.clone() {
+            let val = get_value_expr(tpe.clone());
+            expect_type(&aggr("sum", vec![val]), &tpe);
         }
 
-        expect_type(&aggr("count", vec![int_value()]), &DataType::Int32);
-        expect_type(&aggr("count", vec![fp_value()]), &DataType::Int32);
+        for tpe in get_data_types().into_iter().filter(|t| !allow_sum.contains(&t)) {
+            let val = get_value_expr(tpe.clone());
+            let mismatch_err = format!("No function sum({})", tpe);
+            expect_not_resolved(&aggr("sum", vec![val]), &mismatch_err)
+        }
 
-        expect_aggr_invalid_args(str_value());
-        expect_aggr_invalid_args(bool_value());
+        let allow_avg: Vec<_> = get_data_types()
+            .into_iter()
+            .filter(|t| matches!(t, DataType::Int32 | DataType::Float32))
+            .collect();
+
+        for tpe in allow_avg.clone() {
+            let val = get_value_expr(tpe.clone());
+            expect_type(&aggr("avg", vec![val]), &tpe);
+        }
+
+        for tpe in get_data_types().into_iter().filter(|t| !allow_avg.contains(&t)) {
+            let val = get_value_expr(tpe.clone());
+            let mismatch_err = format!("No function avg({})", tpe);
+            expect_not_resolved(&aggr("avg", vec![val]), &mismatch_err)
+        }
     }
 
     // binary expressions
@@ -1247,13 +1276,14 @@ mod test {
         for tpe in get_data_types_expect_null().into_iter().filter(|tpe| !str_tpes.contains(tpe)) {
             for (like, escape_char) in ops.clone() {
                 let expr = make_like_expr(String, tpe.clone(), escape_char, like);
-                expect_not_resolved(&expr);
+                let mismatch_err = mismatch_error(&String, &tpe);
+                expect_not_resolved(&expr, &mismatch_err);
 
                 let expr = make_like_expr(tpe.clone(), String, escape_char, like);
-                expect_not_resolved(&expr);
+                expect_not_resolved(&expr, &mismatch_err);
 
                 let expr = make_like_expr(tpe.clone(), tpe.clone(), escape_char, like);
-                expect_not_resolved(&expr);
+                expect_not_resolved(&expr, &mismatch_err);
             }
         }
     }
@@ -1366,7 +1396,8 @@ mod test {
             when_then_exprs: vec![(bool_value(), int_value()), (bool_value(), int_value())],
             else_expr: None,
         };
-        expect_not_resolved(&expr);
+        let mismatch_err = mismatch_error(&DataType::String, &DataType::Bool);
+        expect_not_resolved(&expr, &mismatch_err);
     }
 
     #[test]
@@ -1396,24 +1427,20 @@ mod test {
 
     fn expect_resolved(expr: &Expr, metadata: &MockColumnTypeRegistry, expected_type: &DataType) {
         match resolve_expr_type(expr, metadata) {
-            Ok(actual) => assert_eq!(&actual, expected_type),
+            Ok(actual) => assert_eq!(&actual, expected_type, "Expected type does not match"),
             Err(err) => panic!("Failed to resolve expression type: {}", err),
         }
     }
 
-    fn expect_not_resolved(expr: &Expr) {
-        let registry = MockColumnTypeRegistry::new();
-        let expr_str = format!("{}", expr);
-        let result = resolve_expr_type(expr, &registry);
-        assert!(result.is_err(), "Expected an error. Expr: {}. Result: {:?}", expr_str, result)
+    fn mismatch_error(expected: &DataType, actual: &DataType) -> String {
+        format!("Expected type {} but got {}", expected, actual)
     }
 
-    fn expect_not_resolved2(expr: &Expr, error_message: &str) {
+    fn expect_not_resolved(expr: &Expr, error_message: &str) {
         let registry = MockColumnTypeRegistry::new();
-        let expr_str = format!("{}", expr);
-        let result = resolve_expr_type(expr, &registry);
 
-        assert!(result.is_err(), "Expected a type error. Expr: {}. Result: {:?}", expr_str, result);
+        let result = resolve_expr_type(expr, &registry);
+        assert!(result.is_err(), "Expected a type error. Expr: {}. Result: {:?}", expr, result);
 
         let error = result.unwrap_err();
         let actual_error = format!("{}", error);
