@@ -30,7 +30,7 @@ pub enum ScalarValue {
     Interval(Option<Interval>),
     /// Tuple and its type [DataType::Tuple].
     Tuple(Option<Vec<ScalarValue>>, Box<DataType>),
-    /// Array and the type of its elements (see [DataType::Array]).
+    /// Array and the type of this array (see [DataType::Array]).
     Array(Option<Array>, Box<DataType>),
 }
 
