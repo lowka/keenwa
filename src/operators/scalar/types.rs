@@ -184,8 +184,7 @@ where
             let expr_types = expr_types?;
 
             if expr_types.is_empty() {
-                //TODO: Untyped array case.
-                not_supported!("Empty array expression")
+                return Err(type_error("Cannot determine type of empty array"));
             }
 
             let mut element_type = None;
@@ -877,6 +876,10 @@ mod test {
         // multidimensional array
         let expr = Expr::Array(vec![Expr::Array(vec![int_value()]), Expr::Array(vec![bool_value()])]);
         expect_not_resolved(&expr);
+
+        // empty array
+        let expr = Expr::Array(vec![]);
+        expect_not_resolved(&expr);
     }
 
     #[test]
@@ -1420,19 +1423,21 @@ mod test {
             }
             DataType::Timestamp(tz) => timestamp_value(tz),
             DataType::Tuple(ref types) => {
-                let first_field = &types[0];
-                if let Expr::Scalar(value) = get_value_expr(first_field.clone()) {
-                    let tuple = ScalarValue::Tuple(Some(vec![value]), Box::new(tpe.clone()));
-                    Expr::Scalar(tuple)
-                } else {
-                    unreachable!()
-                }
+                let values: Vec<_> = types
+                    .iter()
+                    .cloned()
+                    .map(|t| match get_value_expr(t) {
+                        Expr::Scalar(value) => value,
+                        _ => unreachable!(),
+                    })
+                    .collect();
+                let tuple = ScalarValue::Tuple(Some(values), Box::new(tpe));
+                Expr::Scalar(tuple)
             }
             DataType::Array(ref element_type) => {
                 let element_type = (**element_type).clone();
                 if let Expr::Scalar(value) = get_value_expr(element_type.clone()) {
-                    let array_data_type = DataType::Array(Box::new(element_type));
-                    let array = ScalarValue::Array(Some(Array { elements: vec![value] }), Box::new(array_data_type));
+                    let array = ScalarValue::Array(Some(Array { elements: vec![value] }), Box::new(tpe));
                     Expr::Scalar(array)
                 } else {
                     unreachable!()
@@ -1465,7 +1470,7 @@ mod test {
     }
 
     fn get_cmp_ops() -> Vec<BinaryOp> {
-        vec![BinaryOp::Lt, BinaryOp::Gt, BinaryOp::LtEq, BinaryOp::GtEq]
+        vec![BinaryOp::Eq, BinaryOp::NotEq, BinaryOp::Lt, BinaryOp::Gt, BinaryOp::LtEq, BinaryOp::GtEq]
     }
 
     fn valid_bin_expr(lhs_type: DataType, op: BinaryOp, rhs_type: DataType, expected_type: DataType) {
