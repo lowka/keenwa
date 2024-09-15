@@ -578,7 +578,7 @@ mod test {
     #[test]
     fn test_column_name_type_should_not_be_resolved() {
         let col = Expr::ColumnName("a".into());
-        expect_not_resolved(&col)
+        expect_not_resolved2(&col, "Internal error: Expr col:a should have been replaced with Column(id)")
     }
 
     #[test]
@@ -606,39 +606,42 @@ mod test {
 
     #[test]
     fn test_subquery_type() {
-        fn expect_subquery_type(col_type: DataType) {
-            let mut registry = MockColumnTypeRegistry::new();
-            let subquery = new_subquery_from_column(&mut registry, col_type.clone());
+        let mut registry = MockColumnTypeRegistry::new();
+
+        for tpe in get_data_types() {
+            let subquery = new_subquery_from_column(&mut registry, tpe.clone());
             let expr = Expr::SubQuery(subquery);
 
-            expect_resolved(&expr, &registry, &col_type);
+            expect_resolved(&expr, &registry, &tpe);
         }
-
-        expect_subquery_type(DataType::Bool);
-        expect_subquery_type(DataType::Int32);
-        expect_subquery_type(DataType::String);
     }
 
     #[test]
     fn test_exists_subquery() {
         let mut registry = MockColumnTypeRegistry::new();
-        let query = new_subquery_from_column(&mut registry, DataType::Int32);
-        let expr = Expr::Exists { not: false, query };
 
-        expect_resolved(&expr, &registry, &DataType::Bool);
+        for tpe in get_data_types() {
+            let query = new_subquery_from_column(&mut registry, tpe);
+            let expr = Expr::Exists { not: false, query };
+
+            expect_resolved(&expr, &registry, &DataType::Bool);
+        }
     }
 
     #[test]
     fn test_in_subquery() {
         let mut registry = MockColumnTypeRegistry::new();
-        let query = new_subquery_from_column(&mut registry, DataType::Int32);
-        let expr = Expr::InSubQuery {
-            expr: Box::new(col_name("a")),
-            not: false,
-            query,
-        };
 
-        expect_resolved(&expr, &registry, &DataType::Bool);
+        for tpe in get_data_types() {
+            let query = new_subquery_from_column(&mut registry, tpe);
+            let expr = Expr::InSubQuery {
+                expr: Box::new(col_name("a")),
+                not: false,
+                query,
+            };
+
+            expect_resolved(&expr, &registry, &DataType::Bool);
+        }
     }
 
     #[test]
@@ -1403,6 +1406,23 @@ mod test {
         let expr_str = format!("{}", expr);
         let result = resolve_expr_type(expr, &registry);
         assert!(result.is_err(), "Expected an error. Expr: {}. Result: {:?}", expr_str, result)
+    }
+
+    fn expect_not_resolved2(expr: &Expr, error_message: &str) {
+        let registry = MockColumnTypeRegistry::new();
+        let expr_str = format!("{}", expr);
+        let result = resolve_expr_type(expr, &registry);
+
+        assert!(result.is_err(), "Expected a type error. Expr: {}. Result: {:?}", expr_str, result);
+
+        let error = result.unwrap_err();
+        let actual_error = format!("{}", error);
+        assert!(
+            actual_error.contains(error_message),
+            "Type error message mismatch. Expected a message that includes:\n{}\nBut got:\n{}",
+            error_message,
+            actual_error
+        )
     }
 
     fn expect_expr(expr: &Expr, expected_str: &str) {
