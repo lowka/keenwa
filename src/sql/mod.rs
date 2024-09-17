@@ -21,11 +21,11 @@ use crate::operators::{ExprMemo, Operator, OperatorMemoBuilder, OperatorMetadata
 use crate::statistics::StatisticsBuilder;
 use itertools::Itertools;
 use sqlparser::ast::{
-    BinaryOperator, Cte, DataType as SqlDataType, DateTimeField, Distinct, Expr, Function, FunctionArg,
-    FunctionArgExpr, GroupByExpr, Ident, Interval as SqlInterval, Join, JoinConstraint, JoinOperator, ObjectName,
-    OrderByExpr, Query, Select, SelectItem, SetExpr, SetOperator, SetQuantifier, Statement,
-    TableAlias as SqlTableAlias, TableFactor, TableWithJoins, TimezoneInfo, UnaryOperator, Value, Values,
-    WildcardAdditionalOptions, WindowSpec, WindowType, With,
+    BinaryOperator, CastKind, Cte, DataType as SqlDataType, DateTimeField, Distinct, DuplicateTreatment, Expr,
+    Function, FunctionArg, FunctionArgExpr, FunctionArguments, GroupByExpr, Ident, Interval as SqlInterval, Join,
+    JoinConstraint, JoinOperator, ObjectName, OrderBy, OrderByExpr, Query, Select, SelectItem, SetExpr, SetOperator,
+    SetQuantifier, Statement, Subscript, TableAlias as SqlTableAlias, TableFactor, TableWithJoins, TimezoneInfo,
+    UnaryOperator, Value, Values, WildcardAdditionalOptions, WindowSpec, WindowType, With,
 };
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::{Parser, ParserError};
@@ -151,7 +151,11 @@ fn build_query(builder: OperatorBuilder, query: Query) -> Result<OperatorBuilder
     };
 
     let builder = build_set_expr(builder, *query.body)?;
-    let builder = build_order_by(builder, query.order_by)?;
+    let builder = if let Some(order_by) = query.order_by {
+        build_order_by(builder, order_by)?
+    } else {
+        builder
+    };
 
     let builder = if let Some(offset) = query.offset {
         let rows = build_limit_offset_argument("OFFSET", offset.value, builder.clone())?;
@@ -333,8 +337,11 @@ fn build_select(builder: OperatorBuilder, select: Select) -> Result<OperatorBuil
 
     if !is_aggregate {
         is_aggregate = match &select.group_by {
-            GroupByExpr::All => not_supported!("GROUP BY ALL"),
-            GroupByExpr::Expressions(exprs) => !exprs.is_empty(),
+            GroupByExpr::All(_) => not_supported!("GROUP BY ALL"),
+            GroupByExpr::Expressions(_, with_modifiers) if !with_modifiers.is_empty() => {
+                not_supported!("GROUP BY expressions with modifiers")
+            }
+            GroupByExpr::Expressions(exprs, _) => !exprs.is_empty(),
         }
     }
 
@@ -355,8 +362,11 @@ fn build_select(builder: OperatorBuilder, select: Select) -> Result<OperatorBuil
         }
 
         match select.group_by {
-            GroupByExpr::All => not_supported!("GROUP BY ALL"),
-            GroupByExpr::Expressions(exprs) => {
+            GroupByExpr::All(_) => not_supported!("GROUP BY ALL"),
+            GroupByExpr::Expressions(_, with_modifiers) if !with_modifiers.is_empty() => {
+                not_supported!("GROUP BY expressions with modifiers")
+            }
+            GroupByExpr::Expressions(exprs, _) => {
                 for group_by_expr in exprs {
                     let group_by_expr: Expr = group_by_expr;
                     let expr = build_scalar_expr(group_by_expr, scalar_expr_builder.clone())?;
@@ -388,12 +398,14 @@ fn build_select(builder: OperatorBuilder, select: Select) -> Result<OperatorBuil
 
 fn validate_wildcard_options(opts: &WildcardAdditionalOptions) -> Result<(), OptimizerError> {
     let WildcardAdditionalOptions {
+        opt_ilike,
         opt_exclude,
         opt_except,
         opt_rename,
         opt_replace,
     } = opts;
 
+    not_supported!(opt_ilike.is_some(), "Wildcard: ILIKE is not supported.");
     not_supported!(opt_exclude.is_some(), "Wildcard: EXCLUDE is not supported.");
     not_supported!(opt_replace.is_some(), "Wildcard: REPLACE is not supported.");
     not_supported!(opt_rename.is_some(), "Wildcard: RENAME is not supported.");
@@ -461,6 +473,7 @@ fn build_from(builder: OperatorBuilder, from: TableWithJoins) -> Result<Operator
             JoinOperator::RightSemi(constraint) => (JoinType::RightSemi, Some(constraint)),
             JoinOperator::LeftAnti(_) => not_supported!("LEFT ANTI"),
             JoinOperator::RightAnti(_) => not_supported!("RIGHT ANTI"),
+            JoinOperator::AsOf { .. } => not_supported!("AS OF"),
         };
         let right = build_relation(join_builder.clone(), join.relation)?;
         match constraint {
@@ -500,11 +513,13 @@ fn build_relation(builder: OperatorBuilder, relation: TableFactor) -> Result<Ope
             args,
             with_hints,
             version,
+            with_ordinality,
             partitions,
         } => {
             not_implemented!(args.is_some(), "FROM table. Table valued-function arguments");
             not_implemented!(!with_hints.is_empty(), "FROM table WITH hints");
             not_implemented!(version.is_some(), "FROM table WITH version");
+            not_implemented!(with_ordinality, "FROM table WITH ordinality");
             not_implemented!(!partitions.is_empty(), "FROM table WITH partitions");
 
             let alias = build_table_alias(alias)?;
@@ -548,6 +563,7 @@ fn build_relation(builder: OperatorBuilder, relation: TableFactor) -> Result<Ope
         TableFactor::Pivot { .. } => not_supported!("FROM table PIVOT(..,)"),
         TableFactor::Unpivot { .. } => not_supported!("FROM table UNPIVOT(...)"),
         TableFactor::Function { .. } => not_supported!("FROM function(...)"),
+        TableFactor::MatchRecognize { .. } => not_supported!("FROM .. MATCH_RECOGNIZE"),
     };
     Ok(builder)
 }
@@ -565,10 +581,10 @@ fn build_table_alias(table_alias: Option<SqlTableAlias>) -> Result<Option<TableA
     Ok(alias)
 }
 
-fn build_order_by(
-    builder: OperatorBuilder,
-    order_by_exprs: Vec<OrderByExpr>,
-) -> Result<OperatorBuilder, OptimizerError> {
+fn build_order_by(builder: OperatorBuilder, order_by: OrderBy) -> Result<OperatorBuilder, OptimizerError> {
+    not_supported!(order_by.interpolate.is_some(), "ORDER BY ... INTERPOLATE. Clickhouse specific");
+
+    let order_by_exprs = order_by.exprs;
     if order_by_exprs.is_empty() {
         Ok(builder)
     } else {
@@ -656,10 +672,17 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
         Expr::AllOp { .. } => not_implemented!("ALL expression"),
         Expr::UnaryOp { op, expr } => build_unary_expr(op, *expr, builder)?,
         Expr::Cast {
+            kind,
             expr,
             data_type,
             format,
         } => {
+            match kind {
+                CastKind::Cast => {}
+                CastKind::TryCast => not_implemented!("TRY CAST / SAFE CAST expression"),
+                CastKind::SafeCast => not_implemented!("SAFE CAST expression"),
+                CastKind::DoubleColon => {}
+            }
             let expr = build_scalar_expr(*expr, builder)?;
             let data_type = convert_data_type(data_type)?;
 
@@ -670,7 +693,6 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
                 data_type,
             }
         }
-        Expr::TryCast { .. } => not_implemented!("TRY CAST expression"),
         Expr::Extract { .. } => not_supported!("EXTRACT expression"),
         Expr::Position { .. } => not_supported!("POSITION expression"),
         Expr::Substring { .. } => not_implemented!("SUBSTRING expression"),
@@ -741,7 +763,6 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
             let subquery = builder.build()?;
             ScalarExpr::SubQuery(RelNode::try_from(subquery)?)
         }
-        Expr::ListAgg(_) => not_supported!("ListAgg expression"),
         Expr::GroupingSets(_) => not_supported!("GROUPING SETS expression"),
         Expr::Cube(_) => not_supported!("CUBE expression"),
         Expr::Rollup(_) => not_supported!("ROLLUP expression"),
@@ -751,13 +772,40 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
             ScalarExpr::Tuple(values?)
         }
         Expr::InUnnest { .. } => not_supported!("InUnnest expression"),
-        Expr::ArrayIndex { obj, indexes } => {
-            let expr = build_scalar_expr(*obj, builder.clone())?;
-            let indexes: Result<Vec<ScalarExpr>, OptimizerError> =
-                indexes.into_iter().map(|expr| build_scalar_expr(expr, builder.clone())).collect();
-            ScalarExpr::ArrayIndex {
-                array: Box::new(expr),
-                indexes: indexes?,
+        Expr::Subscript { expr, subscript } => {
+            let expr = build_scalar_expr(*expr, builder.clone())?;
+            match *subscript {
+                Subscript::Index { index } => {
+                    let index = build_scalar_expr(index, builder.clone())?;
+                    ScalarExpr::ArrayIndex {
+                        expr: Box::new(expr),
+                        index: Box::new(index),
+                    }
+                }
+                Subscript::Slice {
+                    lower_bound,
+                    upper_bound,
+                    stride,
+                } => {
+                    let lower_bound = match lower_bound {
+                        Some(e) => Some(build_scalar_expr(e, builder.clone())?),
+                        None => None,
+                    };
+                    let upper_bound = match upper_bound {
+                        Some(e) => Some(build_scalar_expr(e, builder.clone())?),
+                        None => None,
+                    };
+                    let stride = match stride {
+                        Some(e) => Some(build_scalar_expr(e, builder.clone())?),
+                        None => None,
+                    };
+                    ScalarExpr::ArraySlice {
+                        expr: Box::new(expr),
+                        lower_bound: lower_bound.map(Box::new),
+                        upper_bound: upper_bound.map(Box::new),
+                        stride: stride.map(Box::new),
+                    }
+                }
             }
         }
         Expr::Array(array) => {
@@ -869,18 +917,15 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
         }
         Expr::RLike { .. } => not_supported!("RLike function. MySQL specific"),
         Expr::Convert { .. } => not_supported!("CONVERT function"),
-        Expr::SafeCast { .. } => not_supported!("SAFE_CAST expression"),
         Expr::AtTimeZone { .. } => not_supported!("AT TIME ZONE expression"),
         Expr::Ceil { .. } => not_supported!("CEIL expression"),
         Expr::Floor { .. } => not_supported!("FLOOR expression"),
         Expr::Overlay { .. } => not_supported!("OVERLAY expression"),
         Expr::IntroducedString { .. } => not_supported!("Introduced string expression. MySQL specific"),
-        Expr::AggregateExpressionWithFilter { .. } => not_implemented!("Aggregate with filter expression"),
-        Expr::ArraySubquery(_) => not_implemented!("Array subquery expression"),
-        Expr::ArrayAgg(_) => not_implemented!("ArrayAgg expression"),
         Expr::Struct { .. } => not_supported!("Struct expression. BigQuery specific"),
         Expr::Named { .. } => not_supported!("Named expression in a typeless struct. BigQuery specific"),
         Expr::Dictionary(_) => not_supported!("Literal struct expression. Duckdb specific"),
+        Expr::Map(_) => not_supported!("Literal struct expression. Duckdb specific"),
         Expr::MatchAgainst { .. } => not_implemented!("MATCH (<col>, <col>, ...) AGAINST (<expr> [<search modifier>])"),
         Expr::Wildcard => ScalarExpr::Wildcard(None),
         Expr::QualifiedWildcard(name) => {
@@ -890,6 +935,8 @@ fn build_scalar_expr(expr: Expr, builder: OperatorBuilder) -> Result<ScalarExpr,
             ScalarExpr::Wildcard(Some(name))
         }
         Expr::OuterJoin(_) => not_supported!("Outer join syntax (+)"),
+        Expr::Prior(_) => not_supported!("A reference to the prior level in a CONNECT BY clause"),
+        Expr::Lambda(_) => not_supported!("A lambda function"),
     };
     Ok(expr)
 }
@@ -938,6 +985,18 @@ fn build_binary_expr(
         BinaryOperator::PGNotILikeMatch => not_supported!("Binary operator: a !~~* b (Postgres)"),
         BinaryOperator::PGStartsWith => not_supported!("Binary operator: a ^@ b (Postgres)"),
         BinaryOperator::PGCustomBinaryOperator(_) => not_supported!("Binary operator: custom operator (Postgres)"),
+        BinaryOperator::Arrow => not_supported!("Binary operator: -> (Postgres)"),
+        BinaryOperator::LongArrow => not_supported!("Binary operator: ->> (Postgres)"),
+        BinaryOperator::HashArrow => not_supported!("Binary operator: #> (Postgres)"),
+        BinaryOperator::HashLongArrow => not_supported!("Binary operator: #>> (Postgres)"),
+        BinaryOperator::AtAt => not_supported!("Binary operator: @@ (Postgres)"),
+        BinaryOperator::AtArrow => not_supported!("Binary operator: @> (Postgres)"),
+        BinaryOperator::ArrowAt => not_supported!("Binary operator: <@ (Postgres)"),
+        BinaryOperator::HashMinus => not_supported!("Binary operator: #- (Postgres)"),
+        BinaryOperator::AtQuestion => not_supported!("Binary operator: @? (Postgres)"),
+        BinaryOperator::Question => not_supported!("Binary operator: ? (Postgres)"),
+        BinaryOperator::QuestionAnd => not_supported!("Binary operator: ?& (Postgres)"),
+        BinaryOperator::QuestionPipe => not_supported!("Binary operator: ?| (Postgres)"),
     };
     let lhs = build_scalar_expr(lhs, builder.clone())?;
     let rhs = build_scalar_expr(rhs, builder)?;
@@ -991,14 +1050,37 @@ fn build_value_expr(value: Value) -> Result<ScalarExpr, OptimizerError> {
         Value::Null => ScalarValue::Null,
         Value::DollarQuotedString(_) => not_supported!("Dollar quoted string"),
         Value::EscapedStringLiteral(_) => not_supported!("Escaped string literal (e'string value')"),
+        Value::SingleQuotedRawStringLiteral(_) => {
+            not_supported!("Single quoted bytes string literal (R'abc')")
+        }
         Value::SingleQuotedByteStringLiteral(_) => {
-            not_implemented!("Single quoted bytes string literal (B'string value')")
+            not_supported!("Single quoted bytes string literal (B'string value')")
+        }
+        Value::DoubleQuotedRawStringLiteral(_) => {
+            not_supported!("Double quoted bytes string literal (R\"abc\")")
         }
         Value::DoubleQuotedByteStringLiteral(_) => {
-            not_implemented!("Single quoted bytes string literal (B\"string value\")")
+            not_supported!("Double quoted bytes string literal (B\"string value\")")
         }
-        Value::RawStringLiteral(_) => not_supported!("Raw string literal (r'string value')"),
-        Value::UnQuotedString(_) => not_supported!("Unquoted string"),
+        Value::TripleSingleQuotedString(_) => {
+            not_supported!("Triple quoted string literal ('''abc''')")
+        }
+        Value::TripleSingleQuotedRawStringLiteral(_) => {
+            not_implemented!("Triple quoted raw string literal (R'''abc''')")
+        }
+        Value::TripleSingleQuotedByteStringLiteral(_) => {
+            not_supported!("Triple quoted bytes string literal (B'''abc'')")
+        }
+        Value::TripleDoubleQuotedString(_) => {
+            not_supported!("Triple double quoted string literal (\"\"\"abc\"\"\")")
+        }
+        Value::TripleDoubleQuotedRawStringLiteral(_) => {
+            not_supported!("Triple double quoted string literal (R\"\"\"abc\"\"\"\"")
+        }
+        Value::TripleDoubleQuotedByteStringLiteral(_) => {
+            not_supported!("Triple double quoted string literal (B\"\"\"abc\"\"\")")
+        }
+        Value::UnicodeStringLiteral(_) => not_supported!("Unicode string literal u&'string value'"),
         Value::Placeholder(_) => not_implemented!("Placeholder"),
     };
     Ok(ScalarExpr::Scalar(value))
@@ -1144,7 +1226,9 @@ fn build_interval_literal(
 
 fn build_function_expr(func: Function, builder: OperatorBuilder) -> Result<ScalarExpr, OptimizerError> {
     let name = func.name.to_string().to_lowercase();
-    let distinct = func.distinct;
+
+    not_implemented!(!func.within_group.is_empty(), "Aggregate function WITHIN GROUP ordering");
+
     let window_spec = match func.over {
         None => None,
         Some(WindowType::WindowSpec(spec)) => Some(build_window_spec(builder.clone(), spec)?),
@@ -1155,26 +1239,43 @@ fn build_function_expr(func: Function, builder: OperatorBuilder) -> Result<Scala
 
     let mut args = vec![];
     let mut count_all = false;
+    let mut distinct = false;
 
-    for arg in func.args {
-        let arg: FunctionArg = arg;
-        match arg {
-            FunctionArg::Named { .. } => not_supported!("FUNCTION: named function arguments"),
-            FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => {
-                let expr = build_scalar_expr(expr, builder.clone())?;
-                args.push(expr);
+    match func.args {
+        FunctionArguments::None => {}
+        FunctionArguments::Subquery(subquery) => {
+            let builder = build_query(builder.sub_query_builder(), *subquery)?;
+            let subquery = builder.build()?;
+            let subquery_expr = ScalarExpr::SubQuery(RelNode::try_from(subquery)?);
+            args.push(subquery_expr);
+        }
+        FunctionArguments::List(list) => {
+            match list.duplicate_treatment {
+                Some(DuplicateTreatment::Distinct) => distinct = true,
+                Some(DuplicateTreatment::All) => not_supported!("ALL argument option"),
+                _ => {}
             }
-            FunctionArg::Unnamed(FunctionArgExpr::Wildcard) => {
-                if name.eq_ignore_ascii_case("count") {
-                    args.push(scalar(1));
-                    count_all = true;
-                } else {
-                    not_implemented!("FUNCTION: wildcard expression in argument list")
+
+            for arg in list.args {
+                match arg {
+                    FunctionArg::Named { .. } => not_supported!("FUNCTION: named function arguments"),
+                    FunctionArg::Unnamed(FunctionArgExpr::Expr(expr)) => {
+                        let expr = build_scalar_expr(expr, builder.clone())?;
+                        args.push(expr);
+                    }
+                    FunctionArg::Unnamed(FunctionArgExpr::Wildcard) => {
+                        if name.eq_ignore_ascii_case("count") {
+                            args.push(scalar(1));
+                            count_all = true;
+                        } else {
+                            not_implemented!("FUNCTION: wildcard expression in argument list")
+                        }
+                    }
+                    FunctionArg::Unnamed(FunctionArgExpr::QualifiedWildcard(expr)) => {
+                        let msg = format!("FUNCTION: qualified wildcard {} expression in argument list", expr);
+                        not_implemented!(true, msg)
+                    }
                 }
-            }
-            FunctionArg::Unnamed(FunctionArgExpr::QualifiedWildcard(expr)) => {
-                let msg = format!("FUNCTION: qualified wildcard {} expression in argument list", expr);
-                not_implemented!(true, msg)
             }
         }
     }
