@@ -88,7 +88,14 @@ where
     /// An array expression.
     Array(Vec<Expr<T>>),
     /// Array access expression. (eg. `arr[0]` ).
-    ArrayIndex { array: Box<Expr<T>>, indexes: Vec<Expr<T>> },
+    ArrayIndex { expr: Box<Expr<T>>, index: Box<Expr<T>> },
+    /// Array slice expression `arr[0:1]` with an optional stride `[0:10:2]`.
+    ArraySlice {
+        expr: Box<Expr<T>>,
+        lower_bound: Option<Box<Expr<T>>>,
+        upper_bound: Option<Box<Expr<T>>>,
+        stride: Option<Box<Expr<T>>>,
+    },
     /// A scalar function expression.
     ScalarFunction { func: ScalarFunction, args: Vec<Expr<T>> },
     /// A `[NOT] LIKE <pattern> [ESCAPE <escape_character>]` expression.
@@ -100,7 +107,7 @@ where
         /// A pattern.
         pattern: Box<Expr<T>>,
         /// An escape character.
-        escape_char: Option<char>,
+        escape_char: Option<String>,
         /// Case-insensitive or not.
         case_insensitive: bool,
     },
@@ -244,9 +251,24 @@ where
                     expr.accept(visitor)?
                 }
             }
-            Expr::ArrayIndex { array, indexes } => {
-                array.accept(visitor)?;
-                for expr in indexes {
+            Expr::ArrayIndex { expr, index } => {
+                expr.accept(visitor)?;
+                index.accept(visitor)?;
+            }
+            Expr::ArraySlice {
+                expr,
+                lower_bound,
+                upper_bound,
+                stride,
+            } => {
+                expr.accept(visitor)?;
+                if let Some(expr) = lower_bound {
+                    expr.accept(visitor)?;
+                }
+                if let Some(expr) = upper_bound {
+                    expr.accept(visitor)?;
+                }
+                if let Some(expr) = stride {
                     expr.accept(visitor)?;
                 }
             }
@@ -339,10 +361,27 @@ where
                 let exprs = rewrite_vec(exprs, rewriter)?;
                 Expr::InList { not, expr, exprs }
             }
-            Expr::ArrayIndex { array, indexes } => {
-                let array = rewrite_boxed(*array, rewriter)?;
-                let indexes = rewrite_vec(indexes, rewriter)?;
-                Expr::ArrayIndex { array, indexes }
+            Expr::ArrayIndex { expr, index } => {
+                let expr = rewrite_boxed(*expr, rewriter)?;
+                let index = rewrite_boxed(*index, rewriter)?;
+                Expr::ArrayIndex { expr, index }
+            }
+            Expr::ArraySlice {
+                expr,
+                lower_bound,
+                upper_bound,
+                stride,
+            } => {
+                let expr = rewrite_boxed(*expr, rewriter)?;
+                let lower_bound = rewrite_boxed_option(lower_bound, rewriter)?;
+                let upper_bound = rewrite_boxed_option(upper_bound, rewriter)?;
+                let stride = rewrite_boxed_option(stride, rewriter)?;
+                Expr::ArraySlice {
+                    expr,
+                    lower_bound,
+                    upper_bound,
+                    stride,
+                }
             }
             Expr::IsNull { not, expr } => {
                 let expr = rewrite_boxed(*expr, rewriter)?;
@@ -489,10 +528,26 @@ where
             }
             Expr::Tuple(exprs) => exprs.clone(),
             Expr::Array(exprs) => exprs.clone(),
-            Expr::ArrayIndex { array, indexes } => {
-                let mut result = Vec::with_capacity(1 + indexes.len());
-                result.push(*array.clone());
-                result.extend(indexes.clone());
+            Expr::ArrayIndex { expr, index } => {
+                vec![*expr.clone(), *index.clone()]
+            }
+            Expr::ArraySlice {
+                expr,
+                lower_bound,
+                upper_bound,
+                stride,
+            } => {
+                let mut result = vec![];
+                result.push(*expr.clone());
+                if let Some(expr) = &lower_bound {
+                    result.push(*expr.clone());
+                }
+                if let Some(expr) = &upper_bound {
+                    result.push(*expr.clone());
+                }
+                if let Some(expr) = &stride {
+                    result.push(*expr.clone());
+                }
                 result
             }
             Expr::ScalarFunction { args, .. } => args.clone(),
@@ -671,11 +726,47 @@ where
                 expect_children("Array", children.len(), exprs.len())?;
                 Expr::Array(children)
             }
-            Expr::ArrayIndex { indexes, .. } => {
-                expect_children("ArrayIndex", children.len(), 1 + indexes.len())?;
+            Expr::ArrayIndex { .. } => {
+                expect_children("ArrayIndex", children.len(), 2)?;
                 Expr::ArrayIndex {
-                    array: Box::new(children.swap_remove(0)),
-                    indexes: children,
+                    expr: Box::new(children.swap_remove(0)),
+                    index: Box::new(children.swap_remove(0)),
+                }
+            }
+            Expr::ArraySlice {
+                lower_bound,
+                upper_bound,
+                stride,
+                ..
+            } => {
+                let opt_num = lower_bound.as_ref().map(|_| 1).unwrap_or_default()
+                    + upper_bound.as_ref().map(|_| 1).unwrap_or_default()
+                    + stride.as_ref().map(|_| 1).unwrap_or_default();
+
+                expect_children("ArraySlice", children.len(), 1 + opt_num)?;
+
+                let expr = children.swap_remove(0);
+                let lower_bound = if let Some(_) = lower_bound {
+                    Some(children.swap_remove(0))
+                } else {
+                    None
+                };
+                let upper_bound = if let Some(_) = upper_bound {
+                    Some(children.swap_remove(0))
+                } else {
+                    None
+                };
+                let stride = if let Some(_) = stride {
+                    Some(children.swap_remove(0))
+                } else {
+                    None
+                };
+
+                Expr::ArraySlice {
+                    expr: Box::new(expr),
+                    lower_bound: lower_bound.map(Box::new),
+                    upper_bound: upper_bound.map(Box::new),
+                    stride: stride.map(Box::new),
                 }
             }
             Expr::ScalarFunction { func, args } => {
@@ -800,7 +891,7 @@ where
             not: false,
             expr: Box::new(self),
             pattern: Box::new(pattern),
-            escape_char,
+            escape_char: escape_char.map(|c| c.to_string()),
             case_insensitive: false,
         }
     }
@@ -811,7 +902,7 @@ where
             not: false,
             expr: Box::new(self),
             pattern: Box::new(pattern),
-            escape_char,
+            escape_char: escape_char.map(|c| c.to_string()),
             case_insensitive: true,
         }
     }
@@ -1195,12 +1286,28 @@ where
             Expr::Array(exprs) => {
                 write!(f, "[{}]", exprs.iter().join(", "))
             }
-            Expr::ArrayIndex { array, indexes } => {
-                write!(f, "{}", array)?;
-                for expr in indexes.iter() {
-                    write!(f, "[{}]", expr)?;
+            Expr::ArrayIndex { expr, index } => {
+                write!(f, "{}[{}]", expr, index)
+            }
+            Expr::ArraySlice {
+                expr,
+                lower_bound,
+                upper_bound,
+                stride,
+            } => {
+                write!(f, "{}[", expr)?;
+                for (i, expr) in vec![lower_bound, upper_bound, stride]
+                    .into_iter()
+                    .filter(|e| e.is_some())
+                    .map(|e| e.as_ref().unwrap())
+                    .enumerate()
+                {
+                    if i > 0 {
+                        write!(f, ":")?;
+                    }
+                    write!(f, "{}", expr)?;
                 }
-                Ok(())
+                write!(f, "]")
             }
             Expr::Ordering {
                 expr,
@@ -1353,6 +1460,7 @@ where
             Expr::Tuple(_) => Expr::Not(Box::new(self)),
             Expr::Array(_) => Expr::Not(Box::new(self)),
             Expr::ArrayIndex { .. } => Expr::Not(Box::new(self)),
+            Expr::ArraySlice { .. } => Expr::Not(Box::new(self)),
             Expr::ScalarFunction { .. } => Expr::Not(Box::new(self)),
             Expr::Like {
                 not,
@@ -1851,6 +1959,70 @@ mod test {
                 "pre:col:a1",
                 "post:col:a1",
                 "post:[true, false, col:a1]",
+            ],
+        )
+    }
+
+    #[test]
+    fn array_slice() {
+        let expr = Expr::ArraySlice {
+            expr: Box::new(col("a")),
+            lower_bound: None,
+            upper_bound: None,
+            stride: None,
+        };
+        expect_traversal_order(&expr, vec!["pre:col:a[]", "pre:col:a", "post:col:a", "post:col:a[]"]);
+
+        let expr = Expr::ArraySlice {
+            expr: Box::new(col("a")),
+            lower_bound: Some(Box::new(int_val(0))),
+            upper_bound: None,
+            stride: None,
+        };
+        expect_traversal_order(
+            &expr,
+            vec!["pre:col:a[0]", "pre:col:a", "post:col:a", "pre:0", "post:0", "post:col:a[0]"],
+        );
+
+        let expr = Expr::ArraySlice {
+            expr: Box::new(col("a")),
+            lower_bound: Some(Box::new(int_val(0))),
+            upper_bound: Some(Box::new(int_val(5))),
+            stride: None,
+        };
+        expect_traversal_order(
+            &expr,
+            vec![
+                "pre:col:a[0:5]",
+                "pre:col:a",
+                "post:col:a",
+                "pre:0",
+                "post:0",
+                "pre:5",
+                "post:5",
+                "post:col:a[0:5]",
+            ],
+        );
+
+        let expr = Expr::ArraySlice {
+            expr: Box::new(col("a")),
+            lower_bound: Some(Box::new(int_val(0))),
+            upper_bound: Some(Box::new(int_val(5))),
+            stride: Some(Box::new(int_val(2))),
+        };
+        expect_traversal_order(
+            &expr,
+            vec![
+                "pre:col:a[0:5:2]",
+                "pre:col:a",
+                "post:col:a",
+                "pre:0",
+                "post:0",
+                "pre:5",
+                "post:5",
+                "pre:2",
+                "post:2",
+                "post:col:a[0:5:2]",
             ],
         )
     }

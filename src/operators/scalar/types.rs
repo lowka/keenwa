@@ -197,24 +197,48 @@ where
                 Ok(DataType::array(DataType::Null))
             }
         }
-        Expr::ArrayIndex { array, indexes } => {
-            let arr_type = resolve_expr_type(array, column_registry)?;
+        Expr::ArrayIndex { expr, index } => {
+            let arr_type = resolve_expr_type(expr, column_registry)?;
             if let DataType::Array(element_type) = arr_type {
-                let mut item_type = *element_type;
-                for (i, expr) in indexes.iter().enumerate() {
-                    let index_type = resolve_expr_type(expr, column_registry)?;
-                    if index_type != DataType::Int32 {
-                        return Err(type_error(format!("Invalid array index type {}", index_type)));
-                    }
-
-                    if i > 0 {
-                        match item_type.element_type() {
-                            Some(elem) => item_type = elem.clone(),
-                            None => return Err(type_error(format!("Expected a nested array but got {}", item_type))),
-                        }
+                let index_type = resolve_expr_type(index, column_registry)?;
+                if index_type != DataType::Int32 {
+                    return Err(type_error(format!("Invalid array index type {}", index_type)));
+                }
+                Ok(element_type.as_ref().clone())
+            } else {
+                Err(type_error(format!("Expected array but got {}", arr_type)))
+            }
+        }
+        Expr::ArraySlice {
+            expr,
+            lower_bound,
+            upper_bound,
+            stride,
+        } => {
+            let arr_type = resolve_expr_type(expr, column_registry)?;
+            if let DataType::Array(element_type) = arr_type {
+                if let Some(expr) = lower_bound {
+                    let tpe = resolve_expr_type(expr, column_registry)?;
+                    if tpe != DataType::Int32 {
+                        return Err(type_error(format!("Invalid array slice index type {}", tpe)));
                     }
                 }
-                Ok(item_type)
+
+                if let Some(expr) = upper_bound {
+                    let tpe = resolve_expr_type(expr, column_registry)?;
+                    if tpe != DataType::Int32 {
+                        return Err(type_error(format!("Invalid array slice index type {}", tpe)));
+                    }
+                }
+
+                if let Some(expr) = stride {
+                    let tpe = resolve_expr_type(expr, column_registry)?;
+                    if tpe != DataType::Int32 {
+                        return Err(type_error(format!("Invalid array slice stride type {}", tpe)));
+                    }
+                }
+
+                Ok(DataType::array(element_type.as_ref().clone()))
             } else {
                 Err(type_error(format!("Expected array but got {}", arr_type)))
             }
@@ -904,50 +928,94 @@ mod test {
     fn test_array_index() {
         use DataType::*;
 
-        let arr_expr = Expr::Array(vec![bool_value(), bool_value()]);
-        let expr = Expr::ArrayIndex {
-            array: Box::new(arr_expr),
-            indexes: vec![int_value()],
-        };
-        expect_type(&expr, &Bool);
+        let data_types = get_data_types();
 
-        let arr_expr = Expr::Array(vec![Expr::Array(vec![bool_value()]), Expr::Array(vec![bool_value()])]);
-        let expr = Expr::ArrayIndex {
-            array: Box::new(arr_expr),
-            indexes: vec![int_value()],
-        };
-        expect_type(&expr, &DataType::array(Bool));
+        for element_type in data_types.iter() {
+            let arr_expr = Expr::Array(vec![get_value_expr(&element_type)]);
+            let expr = Expr::ArrayIndex {
+                expr: Box::new(arr_expr),
+                index: Box::new(int_value()),
+            };
+            expect_type(&expr, element_type);
+        }
 
-        let arr_expr = Expr::Array(vec![Expr::Array(vec![bool_value()]), Expr::Array(vec![bool_value()])]);
-        let expr = Expr::ArrayIndex {
-            array: Box::new(arr_expr),
-            indexes: vec![int_value(), int_value()],
-        };
-        expect_type(&expr, &Bool);
+        // Reject non-int index type
+        for index_type in data_types.iter().filter(|t| *t != &Int32) {
+            let arr_expr = Expr::Array(vec![int_value()]);
+            let expr = Expr::ArrayIndex {
+                expr: Box::new(arr_expr),
+                index: Box::new(get_value_expr(index_type)),
+            };
+            let mismatch_error = format!("Invalid array index type {}", index_type);
+            expect_not_resolved(&expr, &mismatch_error);
+        }
+    }
 
-        // invalid index type
-        let arr_expr = Expr::Array(vec![int_value(), int_value()]);
-        let expr = Expr::ArrayIndex {
-            array: Box::new(arr_expr),
-            indexes: vec![bool_value()],
-        };
-        expect_not_resolved(&expr, "Invalid array index type Bool");
+    #[test]
+    pub fn array_slice() {
+        use DataType::*;
 
-        // Reject arr[i][j] when array contains no nested arrays
-        let arr_expr = Expr::Array(vec![bool_value()]);
-        let expr = Expr::ArrayIndex {
-            array: Box::new(arr_expr),
-            indexes: vec![int_value(), int_value()],
-        };
-        expect_not_resolved(&expr, "Expected a nested array but got Bool");
+        let data_types = get_data_types();
 
-        // Reject arr[i][j][k] when array contains only one level of nested arrays [[a], [b]]
-        let arr_expr = Expr::Array(vec![Expr::Array(vec![bool_value()]), Expr::Array(vec![bool_value()])]);
-        let expr = Expr::ArrayIndex {
-            array: Box::new(arr_expr),
-            indexes: vec![int_value(), int_value(), int_value()],
-        };
-        expect_not_resolved(&expr, "Expected a nested array but got Bool");
+        // Valid slice types
+        // lower, upper, stride
+        let slices = vec![
+            (Some(int_value()), None, None),
+            (Some(int_value()), Some(int_value()), None),
+            (Some(int_value()), Some(int_value()), Some(int_value())),
+        ];
+        for slice in slices {
+            for element_type in data_types.iter() {
+                let arr_expr = Expr::Array(vec![get_value_expr(&element_type)]);
+                let (lower_bound, upper_bound, stride) = slice.clone();
+                let expr = Expr::ArraySlice {
+                    expr: Box::new(arr_expr),
+                    lower_bound: lower_bound.map(Box::new),
+                    upper_bound: upper_bound.map(Box::new),
+                    stride: stride.map(Box::new),
+                };
+                expect_type(&expr, &DataType::array(element_type.clone()));
+            }
+        }
+
+        //
+
+        for index_type in data_types.iter().filter(|t| *t != &Int32) {
+            let arr_expr = Expr::Array(vec![get_value_expr(&Bool)]);
+            let lower_bound = get_value_expr(&index_type);
+            let upper_bound = get_value_expr(&index_type);
+
+            // Reject non-int lower bound
+            let expr = Expr::ArraySlice {
+                expr: Box::new(arr_expr.clone()),
+                lower_bound: Some(Box::new(lower_bound)),
+                upper_bound: None,
+                stride: None,
+            };
+            let mismatch_error = format!("Invalid array slice index type {}", index_type);
+            expect_not_resolved(&expr, &mismatch_error);
+
+            // Reject non int-upper bound
+            let expr = Expr::ArraySlice {
+                expr: Box::new(arr_expr.clone()),
+                lower_bound: Some(Box::new(int_value())),
+                upper_bound: Some(Box::new(upper_bound)),
+                stride: None,
+            };
+            let mismatch_error = format!("Invalid array slice index type {}", index_type);
+            expect_not_resolved(&expr, &mismatch_error);
+
+            // Reject non-int stride
+            let stride = get_value_expr(&index_type);
+            let expr = Expr::ArraySlice {
+                expr: Box::new(arr_expr),
+                lower_bound: Some(Box::new(int_value())),
+                upper_bound: Some(Box::new(int_value())),
+                stride: Some(Box::new(stride)),
+            };
+            let mismatch_error = format!("Invalid array slice stride type {}", index_type);
+            expect_not_resolved(&expr, &mismatch_error);
+        }
     }
 
     #[test]
