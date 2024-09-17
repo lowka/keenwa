@@ -9,6 +9,7 @@ use crate::operators::relational::logical::{
     LogicalJoin, LogicalLimit, LogicalOffset, LogicalProjection, LogicalSelect, LogicalUnion, LogicalValues,
     LogicalWindowAggregate,
 };
+use crate::operators::relational::physical::exchanger::Exchanger;
 use crate::operators::relational::physical::{PhysicalExpr, Sort};
 use crate::operators::relational::{RelExpr, RelNode, SetOperator};
 use crate::operators::scalar::{exprs, ScalarNode};
@@ -456,6 +457,19 @@ where
                     let PhysicalProperties { required, presentation } = input.props().physical().clone();
                     let physical = PhysicalProperties {
                         required: required.map(|r| r.without_ordering()),
+                        // Use the same presentation as the input operator.
+                        presentation,
+                    };
+
+                    Ok(Properties::Relational(RelationalProperties { logical, physical }))
+                } else if let PhysicalExpr::Exchanger(Exchanger { input, .. }) = &**expr {
+                    // Enforcer returns the same logical properties as its input
+                    let logical = input.props().logical().clone();
+                    // Sort operator does not have any ordering requirements.
+                    let PhysicalProperties { required, presentation } = input.props().physical().clone();
+
+                    let physical = PhysicalProperties {
+                        required: required.map(|r| r.without_partitioning()),
                         // Use the same presentation as the input operator.
                         presentation,
                     };

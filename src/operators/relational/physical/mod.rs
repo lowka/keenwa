@@ -7,6 +7,7 @@ use crate::properties::physical::RequiredProperties;
 use crate::error::OptimizerError;
 pub use append::Append;
 pub use empty::Empty;
+use exchanger::Exchanger;
 pub use hash_aggregate::HashAggregate;
 pub use hash_join::HashJoin;
 pub use hash_set_op::HashedSetOp;
@@ -25,6 +26,7 @@ pub use values::Values;
 
 mod append;
 mod empty;
+pub mod exchanger;
 mod hash_aggregate;
 mod hash_join;
 mod hash_set_op;
@@ -81,6 +83,7 @@ pub enum PhysicalExpr {
     Values(Values),
     /// Relation that produces no rows.
     Empty(Empty),
+    Exchanger(Exchanger),
 }
 
 impl PhysicalExpr {
@@ -107,6 +110,7 @@ impl PhysicalExpr {
             PhysicalExpr::Offset(expr) => expr.copy_in(visitor, expr_ctx),
             PhysicalExpr::Values(expr) => expr.copy_in(visitor, expr_ctx),
             PhysicalExpr::Empty(expr) => expr.copy_in(visitor, expr_ctx),
+            PhysicalExpr::Exchanger(expr) => expr.copy_in(visitor, expr_ctx),
         }
     }
 
@@ -129,6 +133,7 @@ impl PhysicalExpr {
             PhysicalExpr::Offset(expr) => PhysicalExpr::Offset(expr.with_new_inputs(inputs)?),
             PhysicalExpr::Values(expr) => PhysicalExpr::Values(expr.with_new_inputs(inputs)?),
             PhysicalExpr::Empty(expr) => PhysicalExpr::Empty(expr.with_new_inputs(inputs)?),
+            PhysicalExpr::Exchanger(expr) => PhysicalExpr::Exchanger(expr.with_new_inputs(inputs)?),
         };
         Ok(expr)
     }
@@ -152,6 +157,7 @@ impl PhysicalExpr {
             PhysicalExpr::Offset(expr) => expr.num_children(),
             PhysicalExpr::Values(expr) => expr.num_children(),
             PhysicalExpr::Empty(expr) => expr.num_children(),
+            PhysicalExpr::Exchanger(expr) => expr.num_children(),
         }
     }
 
@@ -174,6 +180,7 @@ impl PhysicalExpr {
             PhysicalExpr::Offset(expr) => expr.get_child(i),
             PhysicalExpr::Values(expr) => expr.get_child(i),
             PhysicalExpr::Empty(expr) => expr.get_child(i),
+            PhysicalExpr::Exchanger(expr) => expr.get_child(i),
         }
     }
 
@@ -196,6 +203,7 @@ impl PhysicalExpr {
             PhysicalExpr::Offset(expr) => expr.get_required_input_properties(),
             PhysicalExpr::Values(expr) => expr.get_required_input_properties(),
             PhysicalExpr::Empty(expr) => expr.get_required_input_properties(),
+            PhysicalExpr::Exchanger(expr) => expr.get_required_input_properties(),
         }
     }
 
@@ -221,6 +229,7 @@ impl PhysicalExpr {
             PhysicalExpr::Offset(expr) => expr.format_expr(f),
             PhysicalExpr::Values(expr) => expr.format_expr(f),
             PhysicalExpr::Empty(expr) => expr.format_expr(f),
+            PhysicalExpr::Exchanger(expr) => expr.format_expr(f),
         }
     }
 }

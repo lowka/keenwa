@@ -16,7 +16,7 @@ Cost-based query optimizer (WIP).
 ### Physical properties/Enforcers
 
 - [x] Ordering.
-- [ ] Partitioning.
+- [x] Partitioning.
 - TODO
 
 ### TODO

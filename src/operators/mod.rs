@@ -25,6 +25,7 @@ use crate::statistics::StatisticsBuilder;
 
 pub mod builder;
 pub mod format;
+// mod partitioning;
 pub mod properties;
 pub mod relational;
 pub mod scalar;

@@ -3,9 +3,11 @@
 use std::fmt::{Debug, Formatter};
 
 use crate::cost::{Cost, CostEstimationContext, CostEstimator};
+use crate::operators::relational::physical::exchanger::Exchanger;
 use crate::operators::relational::physical::{
     HashAggregate, HashedSetOp, Limit, Offset, PhysicalExpr, StreamingAggregate, Unique, Values,
 };
+use crate::properties::partitioning::Partitioning;
 use crate::statistics::Statistics;
 
 /// A very simple implementation of a [CostEstimator].
@@ -154,6 +156,23 @@ impl CostEstimator for SimpleCostEstimator {
                 values.len() as f64
             }
             PhysicalExpr::Empty(_) => 0.0,
+            PhysicalExpr::Exchanger(Exchanger { partitioning, .. }) => {
+                let input_stats = ctx.child_statistics(0).unwrap();
+                let input_row_count = input_stats.row_count();
+
+                match partitioning {
+                    Partitioning::Singleton => input_row_count,
+                    Partitioning::Partitioned(cols)
+                    | Partitioning::OrderedPartitioning(cols)
+                    | Partitioning::HashPartitioning(cols) => {
+                        // let's assume that the cost of partitioning
+                        // is a linear function of the number of columns + some overhead.
+                        let partitioning_cost = cols.len() as f64;
+                        let overhead = 0.01f64;
+                        input_row_count * (partitioning_cost + overhead)
+                    }
+                }
+            }
         }
     }
 }
